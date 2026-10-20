@@ -21,6 +21,8 @@ export default defineConfig(
         { property: 'toFixed', message: 'No float formatting on money. Use fromMinorUnits().' },
       ],
       '@typescript-eslint/restrict-template-expressions': ['error', { allowNumber: true }],
+      // Fastify plugins/handlers are async by contract even when they do not await.
+      '@typescript-eslint/require-await': 'off',
       eqeqeq: ['error', 'always'],
       'no-console': 'error',
     },
@@ -29,5 +31,5 @@ export default defineConfig(
     files: ['**/test/**'],
     rules: { '@typescript-eslint/no-unsafe-member-access': 'off', '@typescript-eslint/no-unsafe-assignment': 'off' },
   },
-  { files: ['*.config.js', '*.config.ts'], extends: [tseslint.configs.disableTypeChecked] },
+  { files: ['**/*.config.js', '**/*.config.ts'], extends: [tseslint.configs.disableTypeChecked] },
 );

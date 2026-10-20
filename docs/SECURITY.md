@@ -10,6 +10,20 @@ Every file with a `// MONEY-CRITICAL` header is listed here and in the coverage 
 |---|---|---|
 | `packages/core/src/money.ts` | decimal string ↔ bigint minor units | M0 |
 
+## Security-critical files (mandatory human review)
+
+Not money-moving, but a bug here breaks authentication, tenant isolation or audit integrity.
+
+| File | Purpose | Since |
+|---|---|---|
+| `apps/server/db/migrations/0001_security.sql` | DB roles, append-only audit, hash chain, RLS | M1 |
+| `apps/server/src/common/db.ts` | tenant / system transaction context | M1 |
+| `apps/server/src/common/crypto/*.ts` | envelope encryption, TOTP, argon2id, constant-time compare | M1 |
+| `apps/server/src/modules/auth/*.ts` | sessions, refresh rotation, CSRF, guards, lockout, admin auth | M1 |
+| `apps/server/src/modules/api-keys/api-keys.ts` | API key format, hashing, authentication | M1 |
+| `apps/server/src/common/logger.ts` | secret redaction | M0 |
+| `packages/core/src/rbac.ts` | permission matrix | M1 |
+
 ## Assets
 
 Merchant and customer funds; platform HD seed (custodial); hot/cold wallet keys; merchant xpubs (integrity, not secrecy);
@@ -32,7 +46,8 @@ Status: `planned` until the mitigation's milestone lands, then the test that pro
 | Webhook spoof (merchant side) | HMAC-SHA256 over `timestamp.rawBody`; constant-time compare; verification snippets | planned | M6 |
 | Webhook replay | Timestamp skew > 5 min rejected; stable event id for dedup | planned | M6 |
 | SSRF via webhook URL | Block private/loopback/link-local/metadata ranges; IP pinned at connect (DNS rebinding); no redirects; size + time caps | planned | M6 |
-| Insider misuse | RBAC; two-person approval above threshold; hash-chained audit log; DB roles without UPDATE/DELETE on ledger/audit | planned | M1/M5/M7 |
+| Insider tampering with audit trail | App role has no UPDATE/DELETE/TRUNCATE on `audit_logs`; trigger blocks even the owner; SHA-256 hash chain verified by `audit_verify()` | `db-security.test.ts` | M1 |
+| Insider misuse (approvals) | RBAC; two-person approval above threshold | planned | M5b/M7 |
 | Key theft | Seed only in signer; signer caps + allowlist; hot wallet cap; cold multisig | planned | M7 |
 | Dust / address poisoning | Ignore below `min_amount`; never display unsolicited transfers | planned | M4 |
 | Invoice / index race | Atomic index allocation; unique `(chain, address)`; idempotency keys | planned | M2/M3 |
@@ -40,22 +55,47 @@ Status: `planned` until the mitigation's milestone lands, then the test that pro
 | Xpub substitution | 2FA + email + cooldown on change; ownership signature at `0/0`; audit + alert | planned | M8 |
 | Private key submitted as xpub | Detect xprv/tprv/WIF/hex/mnemonic; refuse, never store, security event | planned | M8 |
 | Widget postMessage spoofing | Origin verification both directions | planned | M10 |
-| API key leak | Hash-only storage; prefix lookup; scopes; IP allowlist; revocation; last-used tracking; value-pattern log redaction | partial: log redaction (`apps/server/test/logger.test.ts`) | M0/M1 |
-| Cross-tenant access (IDOR) | Repository scoping + Postgres RLS; cross-tenant test on every endpoint | planned | M1/M9 |
-| Secret leakage via logs | Key-name + value-pattern redaction in logger; config errors print key names only | `logger.test.ts`, `config.test.ts` | M0 |
+| API key leak | HMAC-SHA256(pepper) storage, shown once; prefix lookup with constant-time compare even for unknown prefixes; scopes; IP allowlist; expiry; revocation; suspended merchant = dead keys; 2FA step-up to create; value-pattern log redaction | `api-keys.test.ts`, `crypto.test.ts`, `logger.test.ts` | M1 |
+| Credential brute force | argon2id (m=19 MiB, t=2, p=1); per-account lockout (5 fails → 15 min, doubling, 24 h cap); per-IP rate limit 10/min on auth routes; identical errors + dummy hash for unknown accounts | `auth.test.ts` | M1 |
+| Session theft / refresh replay | 10-min access JWT; httpOnly SameSite=Strict cookies; refresh rotation with reuse detection that revokes the whole family | `auth.test.ts` | M1 |
+| CSRF / login CSRF | Double-submit token + Origin allowlist on all cookie-authenticated state changes; Origin check on signup/login | `auth.test.ts` | M1 |
+| TOTP replay | Last accepted time step persisted; codes at or below it refused | `crypto.test.ts`, `auth.test.ts`, `api-keys.test.ts` | M1 |
+| TOTP secret theft from DB | Envelope encryption (per-value DEK, AES-256-GCM, KEK wrap, AAD bound to row) | `crypto.test.ts`, `auth.test.ts` | M1 |
+| Cross-tenant access (IDOR) | Repository scoping by `merchant_id` + Postgres RLS (no context = no rows; wrong-tenant writes rejected) | `db-security.test.ts`, `api-keys.test.ts` | M1 (extended each milestone) |
+| Admin takeover via merchant session | Separate table, JWT secret, audience, cookie names/path and origin; password + TOTP every login; disabled admins cut off on next request; optional IP allowlist (404 outside) | `admin.test.ts` | M1 |
+| Privilege escalation (role) | Server-side permission matrix on every route; mass-assignment blocked by strict schemas | `ids-rbac.test.ts`, `api-keys.test.ts`, `auth.test.ts` | M1 |
+| Secret leakage via logs / audit | Key-name + value-pattern redaction applied to logs and audit payloads; config errors print key names only | `logger.test.ts`, `config.test.ts`, `db-security.test.ts` | M0/M1 |
 | Error detail leakage | Unknown errors → generic 500 `internal_error`; full error only in server logs | `app.test.ts` | M0 |
 | Log injection via request id | Caller request id accepted only if `[A-Za-z0-9._-]{8,128}` | `app.test.ts` | M0 |
+| Client IP spoofing | `X-Forwarded-For` trusted only for `TRUST_PROXY_HOPS` hops | `admin.test.ts` | M1 |
 | Float money bugs | bigint only; lint bans `parseFloat`, `Number.parseFloat`, `.toFixed` | `money.test.ts` + eslint | M0 |
+| Vulnerable base-image tooling | npm/corepack removed from runtime image; trivy image scan in CI | trivy (0 HIGH/CRITICAL) | M1 |
+
+## Known limits (accepted, revisit before launch)
+
+- **RLS is a bug guard, not a privilege boundary.** The app role can set `app.system`; RLS catches forgotten
+  `WHERE merchant_id = …`, not arbitrary SQL execution. SQL injection is prevented by parameterized queries only.
+- **Hash chain cannot detect deletion of the newest rows** by someone who bypasses the trigger as superuser.
+  Mitigation before launch: periodically export the latest `(seq, hash)` to write-once storage (anchoring).
+- **Access JWTs are not revocable** for their 10-minute lifetime (logout/reuse detection kill the refresh token only).
+- **Rate limiting fails open** if Redis is down (DB lockout still protects credentials). Alert on Redis health.
+- **Two tabs refreshing at the same instant** look like refresh-token reuse and log the user out. Safe failure.
+- **Signup has no email verification yet** (emails arrive in M10). Signup is rate limited and can be disabled (`SIGNUP_ENABLED`).
 
 ## Rules
 
 - Never log secrets, private keys, mnemonics, full API keys, or webhook secrets. The logger redacts by key name and by value pattern (`sk_*`, `pk_*`, extended private keys).
 - The API never accepts secrets in query strings: request logs include the URL.
 - Env is validated at boot; the process exits on invalid config. Only `.env.example` is committed.
-- Containers run as non-root with read-only filesystems, `no-new-privileges`, and all capabilities dropped.
-- CI: lint, typecheck, tests with coverage gate, `pnpm audit`, gitleaks, semgrep, trivy (fs + image).
+- The app connects as a non-owner role (member of `gw_app`); migrations run as the owner. The app cannot create, alter or drop tables.
+- Every DB access runs inside `withTenant` (one merchant) or `withSystem` (cross-tenant; auth lookups, admin, workers).
+- Containers run as non-root with read-only filesystems, `no-new-privileges`, all capabilities dropped, and no package manager.
+- CI: lint, typecheck, unit + integration tests (Testcontainers) with coverage gate, `pnpm audit`, gitleaks, semgrep, trivy (fs + image).
 
 ## Key management
 
 Key ceremony, backup, rotation, recovery and the multisig/cold-wallet treasury policy are written in M7, after the KMS
 decision (D-010). Non-custodial mode (M8) involves no private keys.
+
+Data KEK (envelope encryption): `DATA_KEK` + `DATA_KEK_ID` from the secret manager. Rotation: add the new KEK first in the
+list, keep the old one for decryption, re-seal rows in the background, then remove the old KEK.

@@ -1,6 +1,6 @@
 import { Writable } from 'node:stream';
 import { describe, expect, it } from 'vitest';
-import { createLogger, redact } from '../src/common/logger.js';
+import { createLogger, redact } from '../../src/common/logger.js';
 
 describe('redact', () => {
   it('redacts secret-named keys at any depth', () => {

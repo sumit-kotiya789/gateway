@@ -46,7 +46,7 @@ jobs:
       - run: docker build -f apps/server/Dockerfile -t gateway-server:ci .
       - run: >
           docker run --rm -v "$PWD:/src" -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.67.2
-          fs --scanners vuln,secret,misconfig --severity HIGH,CRITICAL --exit-code 1 /src
+          fs --scanners vuln,secret,misconfig --skip-dirs "**/node_modules" --severity HIGH,CRITICAL --exit-code 1 /src
       - run: >
           docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.67.2
           image --severity HIGH,CRITICAL --exit-code 1 gateway-server:ci

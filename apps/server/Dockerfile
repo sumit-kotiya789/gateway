@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-# Build context: repo root. Same image runs api / worker / watcher (different CMD).
+# Build context: repo root. Same image runs api / worker / watcher / migrate (different CMD).
 FROM node:22-alpine AS build
 WORKDIR /src
 RUN corepack enable
@@ -13,10 +13,13 @@ RUN pnpm --filter @gw/server build
 
 FROM node:22-alpine
 ENV NODE_ENV=production
+# Runtime never needs a package manager: drop npm/corepack (and their CVE surface) from the final image.
+RUN rm -rf /usr/local/lib/node_modules /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack /opt/yarn* /usr/local/bin/yarn /usr/local/bin/yarnpkg
 WORKDIR /app
-# Bundle is self-contained (esbuild); no node_modules in the runtime image.
+# Bundles are self-contained (esbuild); no node_modules in the runtime image.
 COPY --from=build /src/apps/server/dist/ ./
+COPY --from=build /src/apps/server/db/migrations ./db/migrations
 USER node
 EXPOSE 3000
 HEALTHCHECK --interval=10s --timeout=3s CMD wget -qO- http://127.0.0.1:3000/healthz || exit 1
-CMD ["node", "--enable-source-maps", "api.cjs"]
+CMD ["node", "--enable-source-maps", "main-api.cjs"]

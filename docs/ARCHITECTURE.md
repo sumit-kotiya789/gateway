@@ -49,9 +49,32 @@ flowchart LR
 packages/core     pure domain: money, errors, state machine, fee math, interfaces, zod schemas. No IO.
 apps/server       api / worker / watcher entrypoints, modules, migrations, tests
 apps/signer       isolated signing service (M7)
-apps/dashboard    Vite + React SPA (M10)
+apps/dashboard    merchant dashboard, Vite + React SPA (M3b)
+apps/admin        admin console, Vite + React SPA, separate origin + auth domain (M5b)
 docs/             this folder
 ```
+
+## Milestones
+
+MVP (in order): M0 → M1 → M2 → M3 → M3b → M4 → M5 → M5b → M6 → M8. Pause after M8 for owner review.
+
+| # | Scope |
+|---|---|
+| M0 | Scaffold, CI, config validation, logger, error model, docs |
+| M1 | DB schema + migrations, merchants, auth, API keys, RBAC, 2FA, audit log, rate limiting |
+| M2 | Chain/token registry, EVM adapter, HD + xpub derivation, custody strategy layer, address allocation |
+| M3 | Invoices, state machine, idempotency, expiry, hosted checkout, payment links |
+| M3b | Minimal merchant dashboard: login, 2FA, API keys, invoices, webhooks, xpub, test/live toggle |
+| M4 | Watcher: scanner, cursors, reorg handling, confirmations, matching, leader election |
+| M5 | Ledger, fees, balances, outbox, reconciliation |
+| M5b | Minimal admin console: merchants, kill switches, audit log, risk flags, manual resolve underpaid/late |
+| M6 | Webhooks: signing, retries, SSRF guard, replay, secret rotation |
+| M8 | Non-custodial xpub mode: xpub management, fee models, derivation visibility |
+| M7 | Custodial settlement (after review; feature flag, off in production) |
+| M9 | Platform/sub-merchant mode, admin API completion, risk hooks, metrics, alerts |
+| M10 | Full dashboard, reports/exports, emails, widget, SDKs, WooCommerce plugin |
+| M11 | Hardening: security, chaos, load tests, HA doc, runbook, launch checklist |
+| M12 | Forwarder custody mode (stretch, experimental) |
 
 ## Rules
 

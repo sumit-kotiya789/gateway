@@ -74,6 +74,49 @@ Revisit: pin `actions/*` by commit SHA before launch.
 ## D-022 Mailpit instead of MailHog for local email (2026-10-20)
 MailHog is unmaintained. Mailpit is the maintained drop-in.
 
+## D-024 MVP adds two UI milestones (2026-10-20, owner)
+M3b minimal merchant dashboard and M5b minimal admin console join the MVP. Order otherwise unchanged.
+Admin endpoints needed by M5b (kill switches, risk flags, manual resolve) are pulled forward from M9.
+
+## D-025 Admin console is a separate app on a separate origin (2026-10-20)
+`apps/admin` is served from its own origin with its own session cookie and auth domain (`admin_users`), mandatory 2FA,
+optional IP allowlist. A merchant-dashboard XSS or session cannot reach admin routes.
+
+## D-026 Schema grows per milestone (2026-10-20)
+Forward-only migrations; each milestone adds the tables it uses. drizzle-kit generates table DDL from
+`src/db/schema.ts`; roles, RLS, triggers live in hand-written `*_security.sql`-style custom migrations.
+
+## D-027 argon2id via hash-wasm (2026-10-20)
+WebAssembly, no native addon, so the server stays a single esbuild bundle. Node 22 has no built-in argon2.
+Params: OWASP minimum m=19 MiB, t=2, p=1.
+
+## D-028 TOTP and API-key crypto on node:crypto; JWT via jose (2026-10-20)
+TOTP (RFC 6238) and base32 are ~60 lines, tested against RFC vectors. JWT handling uses a maintained library.
+
+## D-029 Dashboard and admin served same-origin with the API path they call (2026-10-20)
+A reverse proxy serves each SPA and forwards its API path, so cookies are first-party, double-submit CSRF works, and no
+CORS is needed (the CORS plugin was removed). Origins are still allowlisted for the Origin check.
+
+## D-030 Step-up 2FA is per action (2026-10-20)
+Sensitive actions (API key creation; later withdrawals, payout addresses, xpub changes) need a fresh TOTP code in
+`x-totp-code`. Replay protection means a user may wait up to 30 s after a login code. No "recent MFA" window.
+
+## D-031 Rate limiting fails open on Redis outage (2026-10-20)
+Availability over strictness for API traffic; DB-backed account lockout still stops credential brute force.
+
+## D-032 Deferred out of M1 (2026-10-20)
+- Idempotency keys: M3 (first state-changing merchant-API POST).
+- Team invite/management endpoints: M3b with the dashboard (needs email; RBAC is enforced and tested now).
+- Email verification, new-device emails, password reset, 2FA disable/reset, recovery-code regeneration: M10 (emails).
+- Admin refresh tokens: none by design; admins re-login every 15 min.
+- Platforms table: M9.
+
+## D-033 Recovery codes: 10 × 64-bit, SHA-256 hashed (2026-10-20)
+High-entropy random codes do not need a slow hash. Case and dashes are ignored on input.
+
+## D-034 Runtime image has no package manager (2026-10-20)
+npm/corepack/yarn are deleted from the final stage. They carried the only HIGH CVEs trivy found and are never used at runtime.
+
 ## D-023 Log redaction by key name, plus value patterns for API keys and extended private keys (2026-10-20)
 Hex strings are never value-redacted: tx hashes and raw private keys share a format, so private keys are protected
 by never holding them outside the signer and by key-name rules. API never accepts secrets in query strings

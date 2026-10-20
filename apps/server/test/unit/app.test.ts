@@ -1,8 +1,8 @@
 import { AppError } from '@gw/core';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { buildApp } from '../src/app.js';
-import { createLogger } from '../src/common/logger.js';
+import { buildApp } from '../../src/app.js';
+import { createLogger } from '../../src/common/logger.js';
 
 function app() {
   const a = buildApp(createLogger('silent'));

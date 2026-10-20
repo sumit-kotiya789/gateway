@@ -6,16 +6,39 @@ x-hardened: &hardened
   cap_drop: ["ALL"]
   tmpfs: ["/tmp"]
 
+x-app-env: &app-env
+  NODE_ENV: development
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+  DATABASE_URL: postgres://gateway_app:${APP_DB_PASSWORD:?}@postgres:5432/gateway
+  REDIS_URL: redis://:${REDIS_PASSWORD:?}@redis:6379
+  JWT_SECRET: ${JWT_SECRET:?set in .env}
+  ADMIN_JWT_SECRET: ${ADMIN_JWT_SECRET:?set in .env}
+  API_KEY_PEPPER: ${API_KEY_PEPPER:?set in .env}
+  DATA_KEK: ${DATA_KEK:?set in .env}
+  DASHBOARD_ORIGINS: ${DASHBOARD_ORIGINS:-}
+  ADMIN_ORIGINS: ${ADMIN_ORIGINS:-}
+
 services:
+  migrate:
+    <<: *hardened
+    build: { context: ., dockerfile: apps/server/Dockerfile }
+    command: ["node", "cli/migrate.cjs"]
+    environment:
+      DATABASE_MIGRATION_URL: postgres://gateway:${POSTGRES_PASSWORD:?}@postgres:5432/gateway
+    depends_on:
+      postgres: { condition: service_healthy }
+    restart: "no"
+
   api:
     <<: *hardened
     build: { context: ., dockerfile: apps/server/Dockerfile }
     environment:
-      NODE_ENV: development
+      <<: *app-env
       PORT: "3000"
-      LOG_LEVEL: ${LOG_LEVEL:-info}
     ports: ["127.0.0.1:3000:3000"]
-    depends_on: [postgres, redis]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_started }
 
   postgres:
     image: postgres:17-alpine
@@ -23,16 +46,21 @@ services:
       POSTGRES_USER: gateway
       POSTGRES_DB: gateway
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
-    ports: ["127.0.0.1:5432:5432"]
-    volumes: [pgdata:/var/lib/postgresql/data]
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?set APP_DB_PASSWORD in .env}
+    ports: ["127.0.0.1:${PG_HOST_PORT:-5432}:5432"]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./infra/postgres/init-roles.sh:/docker-entrypoint-initdb.d/10-init-roles.sh:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U gateway"]
+      test: ["CMD-SHELL", "pg_isready -U gateway -d gateway"]
       interval: 5s
+      retries: 10
+      start_period: 30s
 
   redis:
     image: redis:7-alpine
     command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}"]
-    ports: ["127.0.0.1:6379:6379"]
+    ports: ["127.0.0.1:${REDIS_HOST_PORT:-6379}:6379"]
     volumes: [redisdata:/data]
 
   anvil:

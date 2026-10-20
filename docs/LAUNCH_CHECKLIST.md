@@ -14,7 +14,13 @@ Every item needs an owner and a date before launch.
 - [ ] Alerts wired and test-fired (scanner lag, reconciliation, webhook failures, RPC disagreement)
 - [ ] Runbook procedures rehearsed
 - [ ] Secrets in secret manager; none in env files on hosts
-- [ ] TLS, HSTS, CORS allowlist, CSP verified in production config
+- [ ] TLS, HSTS, Origin allowlists, CSP verified in production config
+- [ ] `TRUST_PROXY_HOPS` matches the real proxy chain (wrong value = spoofable client IPs)
+- [ ] Audit-chain anchoring: latest `(seq, hash)` exported to write-once storage on a schedule
+- [ ] `DATA_KEK` held in the secret manager (or KMS provider implemented); KEK rotation rehearsed
+- [ ] Signup decision: email verification live (M10) or `SIGNUP_ENABLED=false`
+- [ ] App DB user is a member of `gw_app` only; owner credentials used by migrations only
+- [ ] `ADMIN_IP_ALLOWLIST` set (VPN / office ranges)
 
 ## Custodial only (M7)
 - [ ] KMS decision implemented (D-010); key ceremony performed and recorded

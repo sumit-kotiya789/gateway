@@ -12,20 +12,23 @@ Node 22+, pnpm 10 (`corepack enable`), Docker.
 ```sh
 corepack enable
 pnpm install
-cp .env.example .env        # set dev passwords
-pnpm dev                    # api on http://localhost:3000/healthz
-docker compose up --build   # api + postgres + redis + anvil + mailpit
+cp .env.example .env        # set dev passwords; generate JWT_SECRET, ADMIN_JWT_SECRET, API_KEY_PEPPER, DATA_KEK
+docker compose up --build   # postgres, redis, anvil, mailpit, migrate (one-shot), api on :3000
+pnpm admin:create you@example.com superadmin   # first admin (prints password + TOTP URI once)
 ```
 
 ## Scripts
 | Script | Does |
 |---|---|
-| `pnpm dev` | api with reload |
-| `pnpm test` / `pnpm test:coverage` | unit + integration tests (coverage gate on money-critical files) |
+| `pnpm dev` | api with reload (reads `.env`) |
+| `pnpm migrate` | apply migrations as the schema owner (`DATABASE_MIGRATION_URL`) |
+| `pnpm admin:create <email> <role>` | bootstrap an admin |
+| `pnpm test` / `pnpm test:coverage` | unit + integration (integration needs Docker); coverage gate on money-critical files |
+| `pnpm test:unit` / `pnpm test:integration` | one project only |
 | `pnpm lint` | eslint (type-aware, bans float money helpers) |
 | `pnpm typecheck` | tsc strict on every package |
 | `pnpm audit` | dependency audit, fails on high/critical |
-| `pnpm build` | esbuild bundles per app |
+| `pnpm build` | esbuild bundles (api + CLIs) |
 
 ## Docs
 `docs/ARCHITECTURE.md`, `SECURITY.md`, `API.md`, `CUSTODY.md`, `DECISIONS.md`, `RUNBOOK.md`, `INTEGRATION.md`,
