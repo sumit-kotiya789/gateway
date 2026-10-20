@@ -1,0 +1,52 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+# Third-party actions avoided on purpose: scanners run from pinned container images.
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test:coverage
+      - run: pnpm audit --audit-level=high
+
+  gitleaks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - run: docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:v8.28.0 git /repo --redact --verbose
+
+  semgrep:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: >
+          docker run --rm -v "$PWD:/src" semgrep/semgrep:latest
+          semgrep scan --config p/typescript --config p/nodejs --config p/secrets --error --metrics=off
+
+  trivy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: docker build -f apps/server/Dockerfile -t gateway-server:ci .
+      - run: >
+          docker run --rm -v "$PWD:/src" -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.67.2
+          fs --scanners vuln,secret,misconfig --severity HIGH,CRITICAL --exit-code 1 /src
+      - run: >
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.67.2
+          image --severity HIGH,CRITICAL --exit-code 1 gateway-server:ci
