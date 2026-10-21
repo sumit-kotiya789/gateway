@@ -36,6 +36,20 @@ codes, an admin reset flow arrives with M5b; until then it is a manual, audited 
 - Several workers may run; jobs are idempotent and use `SKIP LOCKED`.
 - Pending invoices past `expires_at` that are still `pending` = worker down or Redis unavailable. Check `docker compose logs worker`.
 
+## Dashboard
+- Compose service `dashboard` (nginx) serves the SPA on :8080 (host port `DASHBOARD_HOST_PORT`) and proxies `/v1/dashboard/*` to the api. Put the TLS edge
+  proxy in front of it; the dashboard origin must be listed in `DASHBOARD_ORIGINS` (exact scheme + host + port).
+- The api sees nginx as an extra proxy hop: set `TRUST_PROXY_HOPS` to the real hop count (edge + nginx) or rate limits and
+  audit IPs see the proxy address. Never set it higher than the real count (client IPs become spoofable).
+- 403 `origin not allowed` on every POST = origin missing from `DASHBOARD_ORIGINS`.
+- Dev without Docker for the SPA: `pnpm --filter @gw/dashboard dev` (http://localhost:5173, proxies to the api on :3000).
+
+## Wrong merchant xpub registered
+New invoices derive from the active xpub immediately. The owner registers the correct xpub (Payout wallet page, needs
+TOTP); the wrong one is retired, never deleted. Invoices already issued on the wrong key keep their addresses: find them
+with `select i.id, i.status from invoices i join deposit_addresses d on d.id = i.deposit_address_id where d.merchant_xpub_id = '<retired id>'`
+and cancel any still `pending`. Funds already paid there are only spendable by whoever holds that key.
+
 ## Scanner stuck (M4)
 ## RPC outage (M4)
 ## Reconciliation mismatch (M5)

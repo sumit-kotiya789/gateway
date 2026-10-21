@@ -18,6 +18,7 @@ Every file with a `// MONEY-CRITICAL` header is listed here and in the coverage 
 | `packages/core/src/invoice.ts` | invoice state machine, underpay/overpay classification | M3 |
 | `apps/server/src/modules/invoices/invoices.ts` | invoice creation (amount parsing, address allocation), transitions, expiry | M3 |
 | `apps/server/db/migrations/0005_invoices_security.sql` | DB transition table, invoice immutability, trigger-only history, custody-mode lock | M3 |
+| `apps/server/src/modules/xpubs/xpubs.routes.ts` | merchant xpub registration/rotation (decides every future deposit address) | M3b |
 
 ## Security-critical files (mandatory human review)
 
@@ -35,6 +36,9 @@ Not money-moving, but a bug here breaks authentication, tenant isolation or audi
 | `apps/server/src/modules/checkout/*.ts` | public pages: escaping, nonce CSP, data exposure | M3 |
 | `apps/server/src/modules/payment-links/payment-links.routes.ts` | public invoice creation guards | M3 |
 | `packages/core/src/rbac.ts` | permission matrix | M1 |
+| `apps/server/src/modules/webhooks/webhooks.routes.ts` | webhook signing-secret generation and encryption | M3b |
+| `apps/dashboard/src/api.ts` | CSRF header, single-flight refresh (reuse detection would revoke the session) | M3b |
+| `apps/dashboard/nginx.conf`, `security-headers.conf` | dashboard CSP and the only proxied API path | M3b |
 
 ## Assets
 

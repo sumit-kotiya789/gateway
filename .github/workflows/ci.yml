@@ -22,6 +22,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
       - run: pnpm typecheck
+      - run: pnpm --filter @gw/dashboard build
       - run: pnpm test:coverage
       - run: pnpm audit --audit-level=high
 
@@ -46,9 +47,13 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - run: docker build -f apps/server/Dockerfile -t gateway-server:ci .
+      - run: docker build -f apps/dashboard/Dockerfile -t gateway-dashboard:ci .
       - run: >
           docker run --rm -v "$PWD:/src" -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.67.2
           fs --scanners vuln,secret,misconfig --skip-dirs "**/node_modules" --severity HIGH,CRITICAL --exit-code 1 /src
       - run: >
           docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.67.2
           image --severity HIGH,CRITICAL --exit-code 1 gateway-server:ci
+      - run: >
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.67.2
+          image --severity HIGH,CRITICAL --exit-code 1 gateway-dashboard:ci

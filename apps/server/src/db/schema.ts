@@ -466,6 +466,30 @@ export const invoiceStatusHistory = pgTable(
   (t) => [index('invoice_status_history_invoice_idx').on(t.invoiceId, t.id)],
 );
 
+// ---------------------------------------------------------------- M3b: webhook endpoints (delivery, signing, retries: M6)
+
+export const webhookEndpoints = pgTable(
+  'webhook_endpoints',
+  {
+    id: id(),
+    merchantId: uuid('merchant_id')
+      .notNull()
+      .references(() => merchants.id),
+    livemode: boolean('livemode').notNull(),
+    url: text('url').notNull(),
+    description: text('description'),
+    // HMAC signing secret, envelope-encrypted (it must be recoverable to sign; never stored or logged in clear).
+    secretEnc: text('secret_enc').notNull(),
+    createdBy: uuid('created_by').references(() => merchantUsers.id),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index('webhook_endpoints_merchant_idx').on(t.merchantId, t.livemode),
+    check('webhook_endpoints_url_len', sql`char_length(${t.url}) between 8 and 2000`),
+    check('webhook_endpoints_description_len', sql`${t.description} is null or char_length(${t.description}) <= 200`),
+  ],
+);
+
 export const idempotencyKeys = pgTable(
   'idempotency_keys',
   {

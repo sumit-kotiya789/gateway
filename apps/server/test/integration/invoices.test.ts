@@ -87,6 +87,7 @@ describe('POST /v1/invoices', () => {
     [{ metadata: { nested: { a: 1 } } }, 'validation_error'],
     [{ metadata: Object.fromEntries(Array.from({ length: 51 }, (_, i) => [`k${String(i)}`, 'v'])) }, 'validation_error'],
     [{ success_url: 'javascript:alert(1)' }, 'validation_error'],
+    [{ success_url: 'not a url' }, 'validation_error'],
     [{ success_url: 'https://user:pw@shop.example/ok' }, 'validation_error'],
     [{ unknown_field: 1 }, 'validation_error'],
   ])('rejects %j with %s', async (over, code) => {

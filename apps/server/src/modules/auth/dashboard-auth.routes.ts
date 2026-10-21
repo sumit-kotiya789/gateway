@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { AppError, uuidv7 } from '@gw/core';
+import QRCode from 'qrcode';
 import { and, eq, isNull, sql } from 'drizzle-orm';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -184,7 +185,8 @@ export function dashboardAuthRoutes(deps: Deps): FastifyPluginAsyncZod {
         const secret = generateTotpSecret();
         await tx.update(merchantUsers).set({ totpPendingEnc: await deps.envelope.seal(secret, pendingAad(u.id)) }).where(eq(merchantUsers.id, u.id));
         await audit(tx, { actorType: 'merchant_user', actorId: u.id, merchantId: u.merchantId, action: 'auth.2fa_setup_started' }, req);
-        return { secret, otpauth_uri: totpUri(secret, u.email, 'Gateway') };
+        const uri = totpUri(secret, u.email, 'Gateway');
+        return { secret, otpauth_uri: uri, qr_svg: await QRCode.toString(uri, { type: 'svg', errorCorrectionLevel: 'M', margin: 1 }) };
       });
     });
 

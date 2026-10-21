@@ -181,3 +181,30 @@ would deadlock. The audit row lands immediately after the rollback; failures are
 Hex strings are never value-redacted: tx hashes and raw private keys share a format, so private keys are protected
 by never holding them outside the signer and by key-name rules. API never accepts secrets in query strings
 (request logs include the URL).
+
+## D-049 Dashboard test/live mode is per request, not per session (2026-10-21)
+Each dashboard call carries `livemode` (query or body). One login sees both modes; switching remounts the page so no
+state crosses modes. The API key, not the session, decides the mode on the merchant API.
+
+## D-050 Minimal xpub registration pulled into M3b from M8 (2026-10-21)
+Without it a non-custodial merchant cannot create any invoice. Flow: preview the first 5 addresses, merchant confirms they
+match the wallet, then register with a fresh TOTP (`custody:manage`, owner only). Registering retires the previous active
+xpub in the same transaction. The full xpub is never returned (hint, fingerprint and first address identify it). Ownership
+proof and gap tooling stay in M8.
+
+## D-051 Webhook endpoint configuration ships in M3b; delivery in M6 (2026-10-21)
+Secret `whsec_` + 40 base62, envelope-encrypted with AAD bound to the row id, shown once. Creation needs a fresh TOTP.
+Max 16 endpoints per mode. Hard delete for now; revisit when M6 delivery rows reference endpoints. URL rules = redirect URLs
+(https only in production); the SSRF guard runs at delivery time (M6), where DNS is resolved.
+
+## D-052 Team management moves to M10 (amends D-032) (2026-10-21)
+Invites need email delivery, which ships in M10. The owner can run the account alone in the MVP; RBAC is enforced and tested.
+
+## D-053 Dashboard: Vite + React, no router, served by nginx (2026-10-21)
+Hash routes (five pages) instead of a router library. Vite's built-in JSX transform, no React plugin (no Fast Refresh).
+Production image: static files + reverse proxy for `/v1/dashboard/*` only, strict CSP (no inline script or style).
+Dev: Vite's proxy gives the same single-origin setup. nginx (`nginx-unprivileged`, non-root) over Caddy: the newest
+Caddy build old enough to adopt still shipped a Go stdlib with HIGH CVEs (trivy gate); nginx follows Alpine patches.
+
+## D-054 Dashboard invoice creation has no Idempotency-Key (2026-10-21)
+A person clicking a button, not a retrying backend. Audited as `invoice.created` with the user as actor.

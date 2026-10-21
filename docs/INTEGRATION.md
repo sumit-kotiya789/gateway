@@ -5,7 +5,9 @@ For merchants and developers integrating the gateway. Everything below runs in *
 ## Quick start (10 minutes)
 
 1. **Sign up** in the dashboard and enable two-factor authentication (required to create API keys).
-2. **Register your wallet's account xpub** for test mode (non-custodial: payments go straight to your wallet).
+2. **Register your wallet's account xpub** for test mode on the dashboard's *Payout wallet* page (non-custodial: payments
+   go straight to your wallet). Check that the previewed addresses match your wallet before confirming. Use a different
+   key for live mode.
    Export the account-level xpub (`m/44'/60'/0'`) from a hardware wallet or a wallet that supports it.
    Never paste a seed phrase or a private key (`xprv`): the gateway refuses them.
 3. **Create a secret test key** (`sk_test_…`) with scopes `read` and `invoices:write`. It is shown once.

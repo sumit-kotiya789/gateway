@@ -105,6 +105,17 @@ Statuses: `pending → detected → confirming → paid | underpaid | overpaid �
 | POST | `/v1/dashboard/api-keys/` | session + **2FA** | `api_keys:write` (returns full key once) | M1 |
 | DELETE | `/v1/dashboard/api-keys/:id` | session | `api_keys:write` | M1 |
 | GET | `/v1/dashboard/audit-logs/` | session | `audit:read` | M1 |
+| GET | `/v1/dashboard/invoices/` | session | `invoices:read` (`livemode`, `limit`, `starting_after`, `status`, `external_order_id`) | M3b |
+| GET | `/v1/dashboard/invoices/:id` | session | `invoices:read` (includes status `history`) | M3b |
+| POST | `/v1/dashboard/invoices/` | session | `invoices:write` (`livemode` in body; no idempotency key) | M3b |
+| POST | `/v1/dashboard/invoices/:id/cancel` | session | `invoices:write` | M3b |
+| GET | `/v1/dashboard/tokens/` | session | – (`livemode`) | M3b |
+| GET | `/v1/dashboard/xpubs/` | session | `account:read` (`livemode`; full xpub never returned) | M3b |
+| POST | `/v1/dashboard/xpubs/preview` | session | `custody:manage` (first 5 addresses, no side effects) | M3b |
+| POST | `/v1/dashboard/xpubs/` | session + **2FA** | `custody:manage` (retires the previous active xpub) | M3b |
+| GET | `/v1/dashboard/webhooks/` | session | `webhooks:manage` (`livemode`) | M3b |
+| POST | `/v1/dashboard/webhooks/` | session + **2FA** | `webhooks:manage` (returns signing secret once) | M3b |
+| DELETE | `/v1/dashboard/webhooks/:id` | session | `webhooks:manage` | M3b |
 | POST | `/admin/v1/auth/login` | none | password + TOTP | M1 |
 | POST | `/admin/v1/auth/logout` | admin session | `admin:read` | M1 |
 | GET | `/admin/v1/auth/me` | admin session | `admin:read` | M1 |
