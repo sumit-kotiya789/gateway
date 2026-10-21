@@ -1,5 +1,5 @@
 # Local development stack. Ports bind to 127.0.0.1 only.
-# worker, watcher, signer services are added in the milestones that create them (M3/M4/M7).
+# watcher and signer services are added in the milestones that create them (M4/M7).
 x-hardened: &hardened
   read_only: true
   security_opt: ["no-new-privileges:true"]
@@ -36,6 +36,17 @@ services:
       <<: *app-env
       PORT: "3000"
     ports: ["127.0.0.1:3000:3000"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_started }
+
+  worker:
+    <<: *hardened
+    build: { context: ., dockerfile: apps/server/Dockerfile }
+    command: ["node", "--enable-source-maps", "main-worker.cjs"]
+    environment:
+      <<: *app-env
+    healthcheck: { disable: true }
     depends_on:
       migrate: { condition: service_completed_successfully }
       redis: { condition: service_started }

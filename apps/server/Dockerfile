@@ -4,10 +4,13 @@ FROM node:22-alpine AS build
 WORKDIR /src
 RUN corepack enable
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc tsconfig.base.json ./
+# Every workspace package the server depends on must be listed here (manifest first for layer caching).
 COPY packages/core/package.json packages/core/
+COPY packages/chains/package.json packages/chains/
 COPY apps/server/package.json apps/server/
 RUN pnpm install --frozen-lockfile
 COPY packages/core packages/core
+COPY packages/chains packages/chains
 COPY apps/server apps/server
 RUN pnpm --filter @gw/server build
 

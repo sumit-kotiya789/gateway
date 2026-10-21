@@ -1,0 +1,9 @@
+# Default gitleaks rules plus one narrow allowlist: a finding whose secret is EXACTLY a 20-byte EVM address
+# (public contract or wallet address) is not a secret. Anything longer (e.g. 32-byte private keys) still alerts.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Public EVM addresses"
+regexTarget = "secret"
+regexes = ['''^0x[0-9a-fA-F]{40}$''']

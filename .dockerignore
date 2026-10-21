@@ -5,3 +5,7 @@
 .env
 .env.*
 docs
+
+# test-only Solidity sources/artifacts
+contracts
+**/test

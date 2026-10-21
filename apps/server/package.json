@@ -5,13 +5,14 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch --env-file=../../.env src/main-api.ts",
-    "build": "esbuild src/main-api.ts src/cli/migrate.ts src/cli/admin-create.ts src/cli/seed.ts src/cli/chains-verify.ts --bundle --platform=node --target=node22 --format=cjs --sourcemap --outdir=dist --out-extension:.js=.cjs",
+    "build": "esbuild src/main-api.ts src/main-worker.ts src/cli/migrate.ts src/cli/admin-create.ts src/cli/seed.ts src/cli/chains-verify.ts --bundle --platform=node --target=node22 --format=cjs --sourcemap --outdir=dist --out-extension:.js=.cjs",
     "typecheck": "tsc -p tsconfig.json",
     "db:generate": "drizzle-kit generate",
     "migrate": "tsx --env-file=../../.env src/cli/migrate.ts",
     "admin:create": "tsx --env-file=../../.env src/cli/admin-create.ts",
     "db:seed": "tsx --env-file=../../.env src/cli/seed.ts",
-    "chains:verify": "tsx --env-file=../../.env src/cli/chains-verify.ts"
+    "chains:verify": "tsx --env-file=../../.env src/cli/chains-verify.ts",
+    "dev:worker": "tsx watch --env-file=../../.env src/main-worker.ts"
   },
   "dependencies": {
     "@fastify/cookie": "11.1.3",
@@ -20,6 +21,7 @@
     "@fastify/swagger": "9.9.2",
     "@gw/chains": "workspace:*",
     "@gw/core": "workspace:*",
+    "bullmq": "6.3.19",
     "drizzle-orm": "0.45.4",
     "fastify": "5.12.7",
     "fastify-type-provider-zod": "7.0.0",
@@ -28,6 +30,7 @@
     "jose": "6.2.13",
     "pg": "8.23.1",
     "pino": "10.4.0",
+    "qrcode": "1.5.4",
     "viem": "2.57.7",
     "zod": "4.6.7"
   },
@@ -35,6 +38,7 @@
     "@testcontainers/postgresql": "12.2.1",
     "@testcontainers/redis": "12.2.1",
     "@types/pg": "8.23.1",
+    "@types/qrcode": "1.5.6",
     "drizzle-kit": "0.31.11",
     "esbuild": "0.28.2",
     "testcontainers": "12.2.1",

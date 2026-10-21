@@ -29,6 +29,20 @@
       "when": 1792499098901,
       "tag": "0003_registry_security",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1792556662460,
+      "tag": "0004_invoices",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1792556665103,
+      "tag": "0005_invoices_security",
+      "breakpoints": true
     }
   ]
 }

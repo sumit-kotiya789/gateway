@@ -30,7 +30,9 @@ OpenAPI 3.1 is generated from route schemas and served at `GET /v1/openapi.json`
 - **Rate limits**: 300 requests/min per API key (or per IP when unauthenticated); 10/min per IP on auth routes.
   Headers: `x-ratelimit-limit`, `x-ratelimit-remaining`, `x-ratelimit-reset`, and `retry-after` on 429.
 - **Pagination**: `limit` (max 100) + `starting_after` cursor; responses carry `has_more` and `next_cursor`.
-- **Idempotency** (`Idempotency-Key` header) on state-changing merchant-API POSTs arrives with M3.
+- **Idempotency**: send `Idempotency-Key: <1-255 printable ASCII>` on any state-changing merchant-API POST. A retry with
+  the same key and body returns the original response with `idempotent-replayed: true`; the same key with a different
+  body returns `409 idempotency_conflict`. Failed requests do not consume the key. Keys are scoped per merchant and mode.
 - **Secrets never go in query strings.**
 
 ## Authentication
@@ -54,6 +56,43 @@ Step-up: endpoints marked **2FA** need header `x-totp-code` with a fresh code (a
 | GET | `/v1/account` | API key | `read` | M1 |
 | GET | `/v1/chains` | API key | `read` (test keys: testnets only; live keys: mainnets only) | M2 |
 | GET | `/v1/tokens` | API key | `read` (same filter; `min_amount` is a decimal string) | M2 |
+| POST | `/v1/invoices` | API key | `invoices:write` | M3 |
+| GET | `/v1/invoices` | API key | `read` (`limit`, `starting_after`, `status`, `external_order_id`) | M3 |
+| GET | `/v1/invoices/:id` | API key | `read` | M3 |
+| POST | `/v1/invoices/:id/cancel` | API key | `invoices:write` (pending only) | M3 |
+| POST | `/v1/payment-links` | API key | `invoices:write` | M3 |
+| GET | `/v1/payment-links`, `/v1/payment-links/:id` | API key | `read` | M3 |
+| PATCH | `/v1/payment-links/:id` | API key | `invoices:write` (affects future invoices only) | M3 |
+| DELETE | `/v1/payment-links/:id` | API key | `invoices:write` (deactivates) | M3 |
+| GET | `/checkout/:id`, `/checkout/:id/status` | public (invoice id) | – | M3 |
+| GET, POST | `/pay/:id` | public (link id) | – (POST creates the invoice, 303 → checkout) | M3 |
+
+## Invoices
+
+```http
+POST /v1/invoices
+Authorization: Bearer sk_test_…
+Idempotency-Key: order-1001
+Content-Type: application/json
+
+{ "amount": "25.00", "token": "bsc-testnet:usdt", "external_order_id": "1001",
+  "expires_in": 1800, "success_url": "https://shop.example/thanks", "metadata": { "cart": "42" } }
+```
+
+Response `201` (abridged):
+
+```json
+{ "id": "01a1…", "object": "invoice", "status": "pending", "livemode": false, "custody_mode": "non_custodial_xpub",
+  "amount": "25", "amount_received": "0", "token": "bsc-testnet:usdt", "symbol": "USDT", "chain": "bsc-testnet",
+  "deposit_address": "0x…", "payment_uri": "ethereum:0xToken@97/transfer?address=0x…&uint256=25000000000000000000",
+  "checkout_url": "https://pay.example/checkout/01a1…", "expires_at": "…" }
+```
+
+Fields: `amount` decimal string (≤ token decimals, ≥ token minimum); `expires_in` 300–86400 s (default 1800);
+`metadata` ≤ 50 string keys/values, ≤ 4 KB; URLs http(s), https only in production.
+
+Statuses: `pending → detected → confirming → paid | underpaid | overpaid → settled`; also `expired`, `cancelled`,
+`failed`, `late_payment`. Payments after expiry become `late_payment` and are never auto-fulfilled.
 | POST | `/v1/dashboard/auth/signup` | none | – | M1 |
 | POST | `/v1/dashboard/auth/login` | none | – (returns `mfa_required` + `mfa_token` when 2FA on) | M1 |
 | POST | `/v1/dashboard/auth/login/2fa` | `mfa_token` | `code` or `recovery_code` | M1 |

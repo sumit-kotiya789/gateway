@@ -149,6 +149,34 @@ instead of overflowing.
 ## D-042 Custodial allocation fails as 503 when no platform wallet exists (2026-10-21)
 A missing platform wallet is an operator problem, not a merchant input error. Platform wallet registration ships with M7.
 
+## D-043 Invoice lifecycle details (2026-10-21)
+- Created in `created`, moved to `pending` in the same transaction once the address is allocated (both recorded).
+- Underpaid invoices do not expire to `expired`: funds were received, the merchant decides (accept → `paid`, or refund).
+- Late-payment watch window: deposit addresses stay watched 30 days after expiry (`watch_until`).
+- Tolerance: per-merchant `underpay_tolerance_bps` (default 50 = 0.5%, max 5%), snapshotted onto each invoice.
+- Amount must be ≥ the token's dust threshold (`min_amount`), else the payment could never be credited.
+
+## D-044 Idempotency semantics (2026-10-21)
+Optional `Idempotency-Key` (1–255 printable ASCII) on every state-changing merchant-API POST. Scope: merchant + mode.
+Stored only on success, in the same transaction as the side effect: a failed request never burns the key. Replays return
+the original status/body with `idempotent-replayed: true`. Retention: 24 h (worker job `purge-idempotency-keys`, hourly).
+
+## D-045 Hosted checkout: server-rendered, polling (2026-10-21)
+Status polling every 5 s (SSE optional later). The invoice id is the capability (UUIDv7, 74 random bits) and pages are
+rate-limited (60/min/IP). Signed return parameters on success/cancel redirects arrive with webhook secrets (M6).
+
+## D-046 Payment links create invoices via POST (2026-10-21)
+`GET /pay/:id` shows the offer; `POST /pay/:id` creates the invoice. Link unfurlers and prefetchers cannot burn addresses.
+Per-link `max_pending_invoices` (default 20) bounds the derivation gap; 5 creations / 10 min / IP.
+
+## D-047 Worker process uses BullMQ job schedulers (2026-10-21)
+`expire-invoices` every 15 s. Handlers are idempotent and concurrency-safe (`FOR UPDATE SKIP LOCKED`), so several workers
+can run without leader election.
+
+## D-048 Illegal-transition audit is written without awaiting (2026-10-21)
+The caller's transaction may hold the audit-chain advisory lock and is about to roll back; awaiting a second connection
+would deadlock. The audit row lands immediately after the rollback; failures are logged.
+
 ## D-023 Log redaction by key name, plus value patterns for API keys and extended private keys (2026-10-20)
 Hex strings are never value-redacted: tx hashes and raw private keys share a format, so private keys are protected
 by never holding them outside the signer and by key-name rules. API never accepts secrets in query strings

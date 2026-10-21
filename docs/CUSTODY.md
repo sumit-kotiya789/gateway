@@ -1,7 +1,8 @@
 # Custody modes
 
 Set per merchant (`custody_mode`). Same watcher, invoices and webhooks for all modes; behavior differs only in the
-`CustodyStrategy` implementation. Immutable after the first live invoice except through an audited admin migration.
+`CustodyStrategy` implementation. Immutable after the first live invoice (DB trigger `merchant_custody_guard`) except
+through an audited admin migration (later milestone). Each invoice snapshots `custody_mode`.
 
 | | custodial | non_custodial_xpub | non_custodial_forwarder |
 |---|---|---|---|

@@ -15,6 +15,9 @@ Every file with a `// MONEY-CRITICAL` header is listed here and in the coverage 
 | `apps/server/src/modules/custody/custody.ts` | custody strategy selection, atomic index allocation | M2 |
 | `apps/server/src/db/seed-registry.ts` | chain + token registry (contract addresses, decimals, tiers) | M2 |
 | `apps/server/db/migrations/0003_registry_security.sql` | address/xpub/token immutability, custody-mode and chain guards | M2 |
+| `packages/core/src/invoice.ts` | invoice state machine, underpay/overpay classification | M3 |
+| `apps/server/src/modules/invoices/invoices.ts` | invoice creation (amount parsing, address allocation), transitions, expiry | M3 |
+| `apps/server/db/migrations/0005_invoices_security.sql` | DB transition table, invoice immutability, trigger-only history, custody-mode lock | M3 |
 
 ## Security-critical files (mandatory human review)
 
@@ -28,6 +31,9 @@ Not money-moving, but a bug here breaks authentication, tenant isolation or audi
 | `apps/server/src/modules/auth/*.ts` | sessions, refresh rotation, CSRF, guards, lockout, admin auth | M1 |
 | `apps/server/src/modules/api-keys/api-keys.ts` | API key format, hashing, authentication | M1 |
 | `apps/server/src/common/logger.ts` | secret redaction | M0 |
+| `apps/server/src/common/idempotency.ts` | Idempotency-Key claim/replay in the work transaction | M3 |
+| `apps/server/src/modules/checkout/*.ts` | public pages: escaping, nonce CSP, data exposure | M3 |
+| `apps/server/src/modules/payment-links/payment-links.routes.ts` | public invoice creation guards | M3 |
 | `packages/core/src/rbac.ts` | permission matrix | M1 |
 
 ## Assets
@@ -62,7 +68,14 @@ Status: `planned` until the mitigation's milestone lands, then the test that pro
 | Insider misuse (approvals) | RBAC; two-person approval above threshold | planned | M5b/M7 |
 | Key theft | Seed only in signer; signer caps + allowlist; hot wallet cap; cold multisig | planned | M7 |
 | Dust / address poisoning | Ignore below `min_amount`; never display unsolicited transfers | planned | M4 |
-| Invoice / index race | Atomic index allocation; unique `(chain, address)`; idempotency keys | planned | M2/M3 |
+| Invoice / index race | Atomic index allocation; unique `(family, address)`; one address per invoice (unique FK) | `custody.test.ts`, `invoices.test.ts` | M2/M3 |
+| Duplicate invoice from client retries | Idempotency-Key claimed in the same transaction as the invoice; concurrent duplicates block on the unique index and replay; different body → 409 | `invoices.test.ts` (20 parallel same-key requests → 1 invoice) | M3 |
+| Illegal invoice status change (bug or insider) | One app transition function + DB trigger against the same table; history written only by trigger; amount/address/token immutable; no deletes | `invoice.test.ts` (all 144 pairs), `invoices.test.ts` | M3 |
+| Late payment auto-fulfilled | `expired`/`cancelled` → `late_payment` only; `late_payment` → `paid` is manual | `invoice.test.ts` | M3 |
+| Custody mode switched under live money | Trigger locks `custody_mode` after the first live invoice | `invoices.test.ts` | M3 |
+| Checkout XSS / data leak | Escape-everything templating, script data via escaped JSON, `default-src 'none'` + per-response nonce, `frame-ancestors 'none'`, no-store; page shows no metadata/order ids | `invoices.test.ts` (hostile merchant name) | M3 |
+| Address-burning via payment links | Invoice creation is POST-only (prefetch-safe), 5/10 min per IP, per-link cap on pending invoices (bounds wallet gap) | `invoices.test.ts` | M3 |
+| Open redirect / javascript: URLs | success/cancel URLs must be http(s) (https in prod) without credentials | `invoices.test.ts` | M3 |
 | Scanner DoS (log volume) | Adaptive chunking; in-memory address set; lag alerts | planned | M4 |
 | Xpub substitution | 2FA + email + cooldown on change; ownership signature at `0/0`; audit + alert; xpub identity immutable in place (trigger) | trigger: `custody.test.ts`; flow planned | M2/M8 |
 | Private key submitted as xpub | Deriver refuses xprv/tprv/SLIP-132 private versions before parsing, never echoes input; WIF/hex/mnemonic detection + security event in the M8 intake flow | `deriver.test.ts`; intake planned | M2/M8 |

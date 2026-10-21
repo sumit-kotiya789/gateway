@@ -31,6 +31,11 @@ A non-NULL result is a security incident: freeze admin access, preserve the DB s
 Lockout clears itself (15 min, doubling, max 24 h). Lost 2FA device: user signs in with a recovery code. Without recovery
 codes, an admin reset flow arrives with M5b; until then it is a manual, audited DB operation by two people.
 
+## Worker
+- `main-worker.cjs` (compose service `worker`) runs BullMQ schedulers. M3: `expire-invoices` every 15 s.
+- Several workers may run; jobs are idempotent and use `SKIP LOCKED`.
+- Pending invoices past `expires_at` that are still `pending` = worker down or Redis unavailable. Check `docker compose logs worker`.
+
 ## Scanner stuck (M4)
 ## RPC outage (M4)
 ## Reconciliation mismatch (M5)

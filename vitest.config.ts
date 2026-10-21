@@ -4,10 +4,12 @@ import { defineConfig } from 'vitest/config';
 const MONEY_CRITICAL = [
   'packages/core/src/money.ts',
   'packages/core/src/confirmations.ts',
+  'packages/core/src/invoice.ts',
   'packages/chains/src/evm/deriver.ts',
   'packages/chains/src/evm/transfers.ts',
   'apps/server/src/modules/custody/custody.ts',
   'apps/server/src/db/seed-registry.ts',
+  'apps/server/src/modules/invoices/invoices.ts',
 ];
 const gate = { lines: 90, functions: 90, branches: 90, statements: 90 };
 

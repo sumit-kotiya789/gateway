@@ -19,6 +19,9 @@ import { accountRoutes, apiKeyDashboardRoutes } from './modules/api-keys/api-key
 import { apiKeyPrefixFromHeader } from './modules/api-keys/api-keys.js';
 import { auditDashboardRoutes } from './modules/audit/audit.routes.js';
 import { registryRoutes } from './modules/registry/registry.routes.js';
+import { checkoutRoutes } from './modules/checkout/checkout.routes.js';
+import { invoiceRoutes } from './modules/invoices/invoices.routes.js';
+import { paymentLinkRoutes, publicPayRoutes } from './modules/payment-links/payment-links.routes.js';
 import { adminAuthRoutes } from './modules/auth/admin-auth.routes.js';
 import { dashboardAuthRoutes } from './modules/auth/dashboard-auth.routes.js';
 import { requireAdminNetwork } from './modules/auth/guards.js';
@@ -135,6 +138,10 @@ export function buildApp(logger: FastifyBaseLogger, deps?: Deps) {
   void app.register(auditDashboardRoutes(deps), { prefix: '/v1/dashboard/audit-logs' });
   void app.register(accountRoutes(deps), { prefix: '/v1' });
   void app.register(registryRoutes(deps), { prefix: '/v1' });
+  void app.register(invoiceRoutes(deps), { prefix: '/v1' });
+  void app.register(paymentLinkRoutes(deps), { prefix: '/v1' });
+  void app.register(checkoutRoutes(deps));
+  void app.register(publicPayRoutes(deps));
   void app.register(
     async (admin) => {
       admin.addHook('onRequest', requireAdminNetwork(deps));

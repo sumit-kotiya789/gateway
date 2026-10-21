@@ -60,7 +60,10 @@ describe('loadConfig', () => {
     const prod = { ...base, NODE_ENV: 'production' };
     expect(issues({ ...prod, DASHBOARD_ORIGINS: 'http://a.test' })).toContain('DASHBOARD_ORIGINS');
     expect(issues({ ...prod, DASHBOARD_ORIGINS: 'https://a.test', ADMIN_ORIGINS: 'https://a.test' })).toContain('ADMIN_ORIGINS');
-    expect(issues({ ...prod, DASHBOARD_ORIGINS: 'https://a.test', ADMIN_ORIGINS: 'https://admin.a.test' })).toBe('');
+    const ok = { ...prod, DASHBOARD_ORIGINS: 'https://a.test', ADMIN_ORIGINS: 'https://admin.a.test', PUBLIC_BASE_URL: 'https://pay.a.test/' };
+    expect(issues(ok)).toBe('');
+    expect(loadConfig(ok).PUBLIC_BASE_URL).toBe('https://pay.a.test'); // trailing slash trimmed
+    expect(issues({ ...ok, PUBLIC_BASE_URL: 'http://pay.a.test' })).toContain('PUBLIC_BASE_URL');
   });
 
   it('custodial feature flag is off unless explicitly enabled', () => {

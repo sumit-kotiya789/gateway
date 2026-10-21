@@ -35,6 +35,12 @@ const schema = z
     ADMIN_ORIGINS: csv,
     ADMIN_IP_ALLOWLIST: csv,
 
+    // Public origin of the api (hosted checkout and payment-link URLs are built from it).
+    PUBLIC_BASE_URL: z
+      .url()
+      .default('http://localhost:3000')
+      .transform((u) => u.replace(/\/+$/, '')),
+
     SIGNUP_ENABLED: z.stringbool().default(true),
     FEATURE_CUSTODIAL: z.stringbool().default(false),
   })
@@ -49,6 +55,9 @@ const schema = z
       }
     }
     if (c.NODE_ENV === 'production') {
+      if (!c.PUBLIC_BASE_URL.startsWith('https://')) {
+        ctx.addIssue({ code: 'custom', path: ['PUBLIC_BASE_URL'], message: 'must be https in production' });
+      }
       for (const key of ['DASHBOARD_ORIGINS', 'ADMIN_ORIGINS'] as const) {
         if (c[key].some((o) => !o.startsWith('https://'))) {
           ctx.addIssue({ code: 'custom', path: [key], message: 'origins must be https in production' });

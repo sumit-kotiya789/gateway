@@ -44,12 +44,14 @@ export const merchants = pgTable(
     status: merchantStatus('status').notNull().default('active'),
     custodyMode: custodyMode('custody_mode').notNull().default('non_custodial_xpub'),
     feeBps: integer('fee_bps').notNull().default(100),
+    underpayToleranceBps: integer('underpay_tolerance_bps').notNull().default(50),
     kyb: jsonb('kyb').notNull().default({}),
     createdAt: createdAt(),
   },
   (t) => [
     check('merchants_name_len', sql`char_length(${t.name}) between 1 and 200`),
     check('merchants_fee_bps_range', sql`${t.feeBps} between 0 and 10000`),
+    check('merchants_underpay_tolerance', sql`${t.underpayToleranceBps} between 0 and 500`),
   ],
 );
 
@@ -345,5 +347,142 @@ export const depositAddresses = pgTable(
       columns: [t.walletAccountId, t.livemode, t.family],
       foreignColumns: [walletAccounts.id, walletAccounts.livemode, walletAccounts.family],
     }),
+  ],
+);
+
+// ---------------------------------------------------------------- M3: invoices, payment links, idempotency
+
+export const invoiceStatus = pgEnum('invoice_status', [
+  'created',
+  'pending',
+  'detected',
+  'confirming',
+  'paid',
+  'underpaid',
+  'overpaid',
+  'settled',
+  'expired',
+  'cancelled',
+  'failed',
+  'late_payment',
+]);
+
+export const paymentLinks = pgTable(
+  'payment_links',
+  {
+    id: id(),
+    merchantId: uuid('merchant_id')
+      .notNull()
+      .references(() => merchants.id),
+    livemode: boolean('livemode').notNull(),
+    tokenId: text('token_id')
+      .notNull()
+      .references(() => tokens.id),
+    amount: money('amount').notNull(),
+    description: text('description'),
+    metadata: jsonb('metadata').notNull().default({}),
+    expiresInSeconds: integer('expires_in_seconds').notNull().default(1800),
+    successUrl: text('success_url'),
+    cancelUrl: text('cancel_url'),
+    // Bounds derivation-gap growth from abandoned visits (non-custodial wallets scan ~20 unused addresses ahead).
+    maxPendingInvoices: integer('max_pending_invoices').notNull().default(20),
+    active: boolean('active').notNull().default(true),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index('payment_links_merchant_idx').on(t.merchantId, t.livemode),
+    check('payment_links_amount', sql`${t.amount} > 0`),
+    check('payment_links_expiry', sql`${t.expiresInSeconds} between 300 and 86400`),
+    check('payment_links_max_pending', sql`${t.maxPendingInvoices} between 1 and 1000`),
+    check('payment_links_metadata_size', sql`octet_length(${t.metadata}::text) <= 4096`),
+  ],
+);
+
+export const invoices = pgTable(
+  'invoices',
+  {
+    id: id(),
+    merchantId: uuid('merchant_id')
+      .notNull()
+      .references(() => merchants.id),
+    livemode: boolean('livemode').notNull(),
+    externalOrderId: text('external_order_id'),
+    chainId: text('chain_id')
+      .notNull()
+      .references(() => chains.id),
+    tokenId: text('token_id')
+      .notNull()
+      .references(() => tokens.id),
+    amountExpected: money('amount_expected').notNull(),
+    amountReceived: money('amount_received').notNull().default(sql`0`),
+    depositAddressId: uuid('deposit_address_id')
+      .notNull()
+      .references(() => depositAddresses.id),
+    depositAddress: text('deposit_address').notNull(),
+    custodyMode: custodyMode('custody_mode').notNull(),
+    status: invoiceStatus('status').notNull().default('created'),
+    underpayToleranceBps: integer('underpay_tolerance_bps').notNull(),
+    description: text('description'),
+    metadata: jsonb('metadata').notNull().default({}),
+    successUrl: text('success_url'),
+    cancelUrl: text('cancel_url'),
+    paymentLinkId: uuid('payment_link_id').references(() => paymentLinks.id),
+    feeAmount: money('fee_amount'),
+    expiresAt: tstz('expires_at').notNull(),
+    statusChangedAt: tstz('status_changed_at').notNull().defaultNow(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('invoices_deposit_address_uq').on(t.depositAddressId),
+    uniqueIndex('invoices_external_order_uq')
+      .on(t.merchantId, t.livemode, t.externalOrderId)
+      .where(sql`${t.externalOrderId} is not null`),
+    index('invoices_merchant_list_idx').on(t.merchantId, t.livemode, t.id),
+    index('invoices_status_expiry_idx').on(t.status, t.expiresAt),
+    index('invoices_payment_link_idx').on(t.paymentLinkId, t.status),
+    check('invoices_amounts', sql`${t.amountExpected} > 0 and ${t.amountReceived} >= 0 and (${t.feeAmount} is null or ${t.feeAmount} >= 0)`),
+    check('invoices_tolerance', sql`${t.underpayToleranceBps} between 0 and 500`),
+    check('invoices_metadata_size', sql`octet_length(${t.metadata}::text) <= 4096`),
+    check('invoices_external_order_len', sql`${t.externalOrderId} is null or char_length(${t.externalOrderId}) between 1 and 200`),
+  ],
+);
+
+/** Append-only status history: every transition, who/why. */
+export const invoiceStatusHistory = pgTable(
+  'invoice_status_history',
+  {
+    id: bigint('id', { mode: 'bigint' }).primaryKey().generatedAlwaysAsIdentity(),
+    invoiceId: uuid('invoice_id')
+      .notNull()
+      .references(() => invoices.id),
+    merchantId: uuid('merchant_id')
+      .notNull()
+      .references(() => merchants.id),
+    fromStatus: invoiceStatus('from_status'),
+    toStatus: invoiceStatus('to_status').notNull(),
+    reason: text('reason').notNull(),
+    at: tstz('at').notNull().defaultNow(),
+  },
+  (t) => [index('invoice_status_history_invoice_idx').on(t.invoiceId, t.id)],
+);
+
+export const idempotencyKeys = pgTable(
+  'idempotency_keys',
+  {
+    id: id(),
+    merchantId: uuid('merchant_id')
+      .notNull()
+      .references(() => merchants.id),
+    livemode: boolean('livemode').notNull(),
+    key: text('key').notNull(),
+    requestHash: text('request_hash').notNull(),
+    responseStatus: integer('response_status').notNull(),
+    responseBody: jsonb('response_body').notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('idempotency_keys_uq').on(t.merchantId, t.livemode, t.key),
+    index('idempotency_keys_created_idx').on(t.createdAt),
+    check('idempotency_keys_key_len', sql`char_length(${t.key}) between 1 and 255`),
   ],
 );

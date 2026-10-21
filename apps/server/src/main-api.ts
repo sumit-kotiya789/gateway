@@ -16,7 +16,7 @@ async function main(): Promise<void> {
     logger.warn({ err }, 'redis error');
   });
   const envelope = new Envelope([new LocalKek(config.DATA_KEK_ID, Buffer.from(config.DATA_KEK, 'base64'))]);
-  const app = buildApp(logger, { config, db, redis, envelope, clock: Date.now });
+  const app = buildApp(logger, { config, db, redis, envelope, clock: Date.now, log: logger });
 
   const shutdown = (signal: string): void => {
     logger.info({ signal }, 'shutting down');

@@ -1,4 +1,7 @@
 import { randomBytes } from 'node:crypto';
+import { evmDeriver } from '@gw/chains';
+import { uuidv7 } from '@gw/core';
+import { HDKey } from 'viem/accounts';
 import { Redis } from 'ioredis';
 import pg from 'pg';
 import { inject } from 'vitest';
@@ -51,8 +54,9 @@ export function buildTestApp(env: Record<string, string> = {}) {
     redis,
     envelope: new Envelope([new LocalKek(config.DATA_KEK_ID, Buffer.from(config.DATA_KEK, 'base64'))]),
     clock,
+    log: createLogger('silent'),
   };
-  const app = buildApp(createLogger('silent'), deps);
+  const app = buildApp(deps.log, deps);
   const close = async () => {
     await app.close();
     await pool.end();
@@ -122,4 +126,61 @@ export async function enable2fa(agent: Agent, clock: ReturnType<typeof makeClock
   const en = await agent.req('POST', '/v1/dashboard/auth/2fa/enable', { code: totpNow(secret, clock()) });
   if (en.statusCode !== 200) throw new Error(`2fa enable failed: ${en.body}`);
   return { secret, recoveryCodes: en.json<{ recovery_codes: string[] }>().recovery_codes };
+}
+
+/** Shared local mock-USDT token row (same address in every test file: token identity is immutable). */
+export const LOCAL_USDT = '0x5FbDB2315678afecb367f032d93F642f64180aa3';
+
+/** Registry rows for the local chain + token. Idempotent across test files. */
+export async function ensureLocalRegistry(owner: pg.Pool): Promise<void> {
+  await owner.query(`insert into chains (id, family, name, evm_chain_id, rpc_urls, native_symbol, native_decimals, block_time_ms,
+      default_confirmations, reorg_depth, finality, testnet, enabled)
+    values ('evm-local', 'evm', 'Local Anvil', 31337, $1, 'ETH', 18, 1000, 2, 16, 'tag', true, true)
+    on conflict do nothing`, [['${EVM_LOCAL_RPC_URL}']]);
+  await owner.query(`insert into tokens (id, chain_id, symbol, name, contract_address, decimals, min_confirmations, min_amount, enabled)
+    values ('evm-local:usdt', 'evm-local', 'USDT', 'Local mock USDT', $1, 18, 2, 10000000000000000, true)
+    on conflict do nothing`, [LOCAL_USDT]);
+}
+
+/** Random account-level xpub (fresh key every call). */
+export function randomXpub(): string {
+  return HDKey.fromMasterSeed(randomBytes(32)).derive("m/44'/60'/0'").publicExtendedKey;
+}
+
+/**
+ * Merchant ready for the merchant API: signed-up owner with 2FA, an API key with the given scopes/mode,
+ * and an active EVM xpub for that mode.
+ */
+export async function merchantWithKey(
+  app: ReturnType<typeof buildApp>,
+  clock: ReturnType<typeof makeClock>,
+  owner: pg.Pool,
+  opts: { livemode?: boolean; scopes?: string[]; name?: string } = {},
+) {
+  const s = await signup(app, opts.name ?? 'Shop');
+  const { secret } = await enable2fa(s.agent, clock);
+  const livemode = opts.livemode ?? false;
+  const xpub = randomXpub();
+  await owner.query(`insert into merchant_xpubs (id, merchant_id, family, livemode, xpub, key_fingerprint) values ($1, $2, 'evm', $3, $4, $5)`, [
+    uuidv7(),
+    s.merchantId,
+    livemode,
+    xpub,
+    evmDeriver.keyFingerprint(xpub),
+  ]);
+  const mintKey = async (scopes: string[], mode = livemode) => {
+    clock.advance(30_000);
+    const r = await s.agent.req('POST', '/v1/dashboard/api-keys/', { name: 'k', kind: 'secret', livemode: mode, scopes }, { 'x-totp-code': totpNow(secret, clock()) });
+    if (r.statusCode !== 201) throw new Error(`key creation failed: ${r.body}`);
+    return r.json<{ key: string }>().key;
+  };
+  const key = await mintKey(opts.scopes ?? ['read', 'invoices:write']);
+  const api = (method: 'GET' | 'POST' | 'PATCH' | 'DELETE', url: string, payload?: unknown, headers: Record<string, string> = {}, k = key) =>
+    app.inject({
+      method,
+      url,
+      headers: { authorization: `Bearer ${k}`, ...headers },
+      ...(payload === undefined ? {} : { payload: payload as Record<string, unknown> }),
+    });
+  return { ...s, key, xpub, secret, api, mintKey };
 }
