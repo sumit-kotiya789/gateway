@@ -303,7 +303,9 @@ describe('GET /v1/chains and /v1/tokens', () => {
     const auth = { authorization: `Bearer ${key}` };
 
     const ch = (await app.inject({ url: '/v1/chains', headers: auth })).json<{ data: { id: string; testnet: boolean }[] }>();
-    expect(ch.data.map((c) => c.id).sort()).toEqual(['bsc-testnet', 'evm-local']);
+    // Other test files register extra testnet chains in the shared DB: assert the rule, not an exact list.
+    expect(ch.data.map((c) => c.id)).toEqual(expect.arrayContaining(['bsc-testnet', 'evm-local']));
+    expect(ch.data.map((c) => c.id)).not.toContain('bsc');
     expect(ch.data.every((c) => c.testnet)).toBe(true);
 
     const tk = (await app.inject({ url: '/v1/tokens', headers: auth })).json<{ data: { id: string; min_amount: string }[] }>();
