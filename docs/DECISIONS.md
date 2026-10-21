@@ -117,6 +117,38 @@ High-entropy random codes do not need a slow hash. Case and dashes are ignored o
 ## D-034 Runtime image has no package manager (2026-10-20)
 npm/corepack/yarn are deleted from the final stage. They carried the only HIGH CVEs trivy found and are never used at runtime.
 
+## D-035 Confirmation depth = latest - txBlock (2026-10-21)
+Spec rule taken literally: credit when `latest - txBlock >= required` (one stricter than counting the mining block),
+AND the tx block is at or below the `finalized` tag when the chain reports one (D-008).
+
+## D-036 BSC registry defaults (2026-10-21)
+USDT BEP-20 `0x55d398326f99059fF775485246999027B3197955`, 18 decimals. Min confirmations 15; tiers ≥10k USDT → 30,
+≥100k → 60. Dust threshold 0.01 USDT. Reorg depth 64. Mainnet chain seeded **disabled** (launch checklist enables it).
+BSC testnet has no official USDT: we deploy our own mock and register it via `BSC_TESTNET_USDT_ADDRESS`.
+
+## D-037 RPC URLs hold `${ENV}` placeholders (2026-10-21)
+Provider API keys stay in the secret manager. URLs with unset variables are dropped, never called with a blank key.
+Verification output never prints URLs.
+
+## D-038 Extended keys unique by fingerprint across merchants and platform (2026-10-21)
+`sha256(pubkey || chaincode)`, so xpub and tpub encodings of one key collide. Enforced by unique indexes plus a
+cross-table trigger. Prevents a merchant registering the platform's (public) xpub, and two merchants sharing addresses.
+
+## D-039 Strict Transfer decoding in our code, not viem's ABI decoder (2026-10-21)
+Exactly 3 topics (ERC-721 Transfer has 4), exactly 32 bytes of data, clean address topics, mined and not removed.
+Emitter address re-checked after the RPC's own filter.
+
+## D-040 Test contracts compiled once with Foundry; artifacts committed (2026-10-21)
+`contracts/src/Mocks.sol` (MockERC20, FeeOnTransferERC20, FakeTransferEmitter). `pnpm contracts:build` recompiles in
+the Foundry container and refreshes `packages/chains/test/fixtures/mocks.json`. Tests need no Solidity toolchain.
+
+## D-041 Derivation counters are BIGINT (2026-10-21)
+`next_index` can reach 2^31 (= exhausted) which does not fit INTEGER. Allocation refuses rows at the limit (clean 409)
+instead of overflowing.
+
+## D-042 Custodial allocation fails as 503 when no platform wallet exists (2026-10-21)
+A missing platform wallet is an operator problem, not a merchant input error. Platform wallet registration ships with M7.
+
 ## D-023 Log redaction by key name, plus value patterns for API keys and extended private keys (2026-10-20)
 Hex strings are never value-redacted: tx hashes and raw private keys share a format, so private keys are protected
 by never holding them outside the signer and by key-name rules. API never accepts secrets in query strings

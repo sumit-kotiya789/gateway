@@ -1,3 +1,5 @@
+export * from './chain.js';
+export * from './confirmations.js';
 export * from './errors.js';
 export * from './ids.js';
 export * from './money.js';

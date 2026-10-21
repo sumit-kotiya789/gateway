@@ -5,7 +5,9 @@ Every item needs an owner and a date before launch.
 ## Blocking
 - [ ] Independent security audit completed; findings resolved or accepted in writing
 - [ ] Human review of every file in SECURITY.md "Money-critical files"
-- [ ] Token contract addresses verified against issuer + explorer; startup `decimals()` check passing
+- [ ] Token contract addresses verified against issuer + explorer; `pnpm chains:verify` passing in production config
+- [ ] At least two independent mainnet RPC providers configured (`BSC_RPC_URL` + public fallback), each verified
+- [ ] `bsc` chain enabled deliberately (seeded disabled, D-036)
 - [ ] Custodial feature flag OFF unless legal clearance for custodial operation is documented
 - [ ] Node upgraded to 24 LTS (D-004)
 - [ ] GitHub Actions pinned by commit SHA (D-021)

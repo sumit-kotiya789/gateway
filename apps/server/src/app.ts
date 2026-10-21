@@ -18,6 +18,7 @@ import type { Deps } from './deps.js';
 import { accountRoutes, apiKeyDashboardRoutes } from './modules/api-keys/api-keys.routes.js';
 import { apiKeyPrefixFromHeader } from './modules/api-keys/api-keys.js';
 import { auditDashboardRoutes } from './modules/audit/audit.routes.js';
+import { registryRoutes } from './modules/registry/registry.routes.js';
 import { adminAuthRoutes } from './modules/auth/admin-auth.routes.js';
 import { dashboardAuthRoutes } from './modules/auth/dashboard-auth.routes.js';
 import { requireAdminNetwork } from './modules/auth/guards.js';
@@ -133,6 +134,7 @@ export function buildApp(logger: FastifyBaseLogger, deps?: Deps) {
   void app.register(apiKeyDashboardRoutes(deps), { prefix: '/v1/dashboard/api-keys' });
   void app.register(auditDashboardRoutes(deps), { prefix: '/v1/dashboard/audit-logs' });
   void app.register(accountRoutes(deps), { prefix: '/v1' });
+  void app.register(registryRoutes(deps), { prefix: '/v1' });
   void app.register(
     async (admin) => {
       admin.addHook('onRequest', requireAdminNetwork(deps));

@@ -9,6 +9,12 @@ Every file with a `// MONEY-CRITICAL` header is listed here and in the coverage 
 | File | Purpose | Since |
 |---|---|---|
 | `packages/core/src/money.ts` | decimal string ↔ bigint minor units | M0 |
+| `packages/core/src/confirmations.ts` | tiered confirmation depth + finality rule | M2 |
+| `packages/chains/src/evm/deriver.ts` | xpub validation (private keys refused), address derivation, key fingerprint | M2 |
+| `packages/chains/src/evm/transfers.ts` | Transfer log decoding, exact-contract filter | M2 |
+| `apps/server/src/modules/custody/custody.ts` | custody strategy selection, atomic index allocation | M2 |
+| `apps/server/src/db/seed-registry.ts` | chain + token registry (contract addresses, decimals, tiers) | M2 |
+| `apps/server/db/migrations/0003_registry_security.sql` | address/xpub/token immutability, custody-mode and chain guards | M2 |
 
 ## Security-critical files (mandatory human review)
 
@@ -40,7 +46,13 @@ Status: `planned` until the mitigation's milestone lands, then the test that pro
 
 | Attack | Mitigation | Test | Milestone |
 |---|---|---|---|
-| Fake token / spoofed Transfer log | Credit only logs emitted by allowlisted contract address; receipt status checked; log re-verified at confirmation | planned | M4 |
+| Fake token / spoofed Transfer log | Adapter keeps only logs emitted by the exact allowlisted contract (re-checked even after the RPC's address filter); strict decoding (3 topics, 32-byte data, mined, not removed); receipt status; re-verify at confirmation | `transfers.test.ts`, `evm-adapter.test.ts` (fake emitter); re-verify planned M4 | M2/M4 |
+| Wrong network behind an RPC URL | `chains:verify` checks every RPC individually reports the configured chain id; watcher refuses to start otherwise (M4) | `custody.test.ts` (registry verification) | M2 |
+| Wrong token decimals (10¹² error) | Seed pins decimals; on-chain `decimals()` checked by `chains:verify`; decimals immutable under a token id (trigger) | `custody.test.ts`, `evm-adapter.test.ts` | M2 |
+| Token contract swap under an existing id | DB trigger: chain, contract, decimals immutable; app role cannot delete tokens/chains | `custody.test.ts` | M2 |
+| Address reuse / index collision | One counter per key space, row-locked `UPDATE … RETURNING`; counters only move forward (trigger); unique (family, address) and (source, index); address rows immutable and undeletable | `custody.test.ts` (50 concurrent allocations, rollback, exhaustion) | M2 |
+| Cross-merchant address attribution | Composite FK (xpub id, merchant, mode, family); key fingerprint unique across ALL merchants and the platform wallet (xpub/tpub encodings of one key collide) | `custody.test.ts` | M2 |
+| Non-custodial merchant on platform keys | DB guard: address source must match custody mode; strategy selection exhaustive; custodial behind feature flag | `custody.test.ts` | M2 |
 | Reorg double-credit | Block-hash ring per chain; unique `(chain_id, tx_hash, log_index)`; credit only after finality + confirmations | planned | M4 |
 | Lying RPC | Multi-provider failover; quorum of two providers above value threshold; fresh re-verify at confirmation | planned | M4 |
 | Webhook spoof (merchant side) | HMAC-SHA256 over `timestamp.rawBody`; constant-time compare; verification snippets | planned | M6 |
@@ -52,8 +64,8 @@ Status: `planned` until the mitigation's milestone lands, then the test that pro
 | Dust / address poisoning | Ignore below `min_amount`; never display unsolicited transfers | planned | M4 |
 | Invoice / index race | Atomic index allocation; unique `(chain, address)`; idempotency keys | planned | M2/M3 |
 | Scanner DoS (log volume) | Adaptive chunking; in-memory address set; lag alerts | planned | M4 |
-| Xpub substitution | 2FA + email + cooldown on change; ownership signature at `0/0`; audit + alert | planned | M8 |
-| Private key submitted as xpub | Detect xprv/tprv/WIF/hex/mnemonic; refuse, never store, security event | planned | M8 |
+| Xpub substitution | 2FA + email + cooldown on change; ownership signature at `0/0`; audit + alert; xpub identity immutable in place (trigger) | trigger: `custody.test.ts`; flow planned | M2/M8 |
+| Private key submitted as xpub | Deriver refuses xprv/tprv/SLIP-132 private versions before parsing, never echoes input; WIF/hex/mnemonic detection + security event in the M8 intake flow | `deriver.test.ts`; intake planned | M2/M8 |
 | Widget postMessage spoofing | Origin verification both directions | planned | M10 |
 | API key leak | HMAC-SHA256(pepper) storage, shown once; prefix lookup with constant-time compare even for unknown prefixes; scopes; IP allowlist; expiry; revocation; suspended merchant = dead keys; 2FA step-up to create; value-pattern log redaction | `api-keys.test.ts`, `crypto.test.ts`, `logger.test.ts` | M1 |
 | Credential brute force | argon2id (m=19 MiB, t=2, p=1); per-account lockout (5 fails → 15 min, doubling, 24 h cap); per-IP rate limit 10/min on auth routes; identical errors + dummy hash for unknown accounts | `auth.test.ts` | M1 |

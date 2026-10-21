@@ -15,6 +15,20 @@
       "when": 1792492061552,
       "tag": "0001_security",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1792499096231,
+      "tag": "0002_registry_addresses",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1792499098901,
+      "tag": "0003_registry_security",
+      "breakpoints": true
     }
   ]
 }

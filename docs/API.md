@@ -52,6 +52,8 @@ Step-up: endpoints marked **2FA** need header `x-totp-code` with a fresh code (a
 | GET | `/readyz` | none | – (db, redis) | M1 |
 | GET | `/v1/openapi.json` | none | – | M1 |
 | GET | `/v1/account` | API key | `read` | M1 |
+| GET | `/v1/chains` | API key | `read` (test keys: testnets only; live keys: mainnets only) | M2 |
+| GET | `/v1/tokens` | API key | `read` (same filter; `min_amount` is a decimal string) | M2 |
 | POST | `/v1/dashboard/auth/signup` | none | – | M1 |
 | POST | `/v1/dashboard/auth/login` | none | – (returns `mfa_required` + `mfa_token` when 2FA on) | M1 |
 | POST | `/v1/dashboard/auth/login/2fa` | `mfa_token` | `code` or `recovery_code` | M1 |

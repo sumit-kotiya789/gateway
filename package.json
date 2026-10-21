@@ -17,7 +17,10 @@
     "migrate": "pnpm --filter @gw/server migrate",
     "admin:create": "pnpm --filter @gw/server admin:create",
     "test:unit": "vitest run --project unit",
-    "test:integration": "vitest run --project integration"
+    "test:integration": "vitest run --project integration",
+    "contracts:build": "docker run --rm -v \"$PWD/contracts:/c\" -w /c ghcr.io/foundry-rs/foundry:stable \"forge build\" && node scripts/export-contract-artifacts.mjs",
+    "db:seed": "pnpm --filter @gw/server db:seed",
+    "chains:verify": "pnpm --filter @gw/server chains:verify"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

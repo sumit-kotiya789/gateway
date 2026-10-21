@@ -7,14 +7,17 @@ import {
   boolean,
   check,
   customType,
+  foreignKey,
   index,
   inet,
   integer,
   jsonb,
+  numeric,
   pgEnum,
   pgTable,
   text,
   timestamp,
+  unique,
   uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core';
@@ -23,6 +26,8 @@ const bytea = customType<{ data: Buffer }>({ dataType: () => 'bytea' });
 const tstz = (name: string) => timestamp(name, { withTimezone: true, mode: 'date' });
 const id = () => uuid('id').primaryKey().$defaultFn(uuidv7);
 const createdAt = () => tstz('created_at').notNull().defaultNow();
+/** Token minor units: NUMERIC(78,0), bigint in code. Never float. */
+const money = (name: string) => numeric(name, { precision: 78, scale: 0, mode: 'bigint' });
 
 export const custodyMode = pgEnum('custody_mode', ['custodial', 'non_custodial_xpub', 'non_custodial_forwarder']);
 export const merchantStatus = pgEnum('merchant_status', ['active', 'suspended']);
@@ -184,4 +189,161 @@ export const auditLogs = pgTable(
     hash: bytea('hash').notNull().default(sql`'\\x'::bytea`),
   },
   (t) => [uniqueIndex('audit_logs_id_uq').on(t.id), index('audit_logs_merchant_seq_idx').on(t.merchantId, t.seq)],
+);
+
+// ---------------------------------------------------------------- M2: registry + addresses
+
+export const chainFamily = pgEnum('chain_family', ['evm', 'tron', 'solana']);
+export const chainFinality = pgEnum('chain_finality', ['tag', 'confirmations']);
+export const addressSource = pgEnum('address_source', ['platform', 'merchant_xpub']);
+export const xpubStatus = pgEnum('xpub_status', ['active', 'retired']);
+
+export const chains = pgTable(
+  'chains',
+  {
+    id: text('id').primaryKey(),
+    family: chainFamily('family').notNull(),
+    name: text('name').notNull(),
+    evmChainId: integer('evm_chain_id'),
+    // May contain ${ENV_VAR} placeholders; provider keys never live in the DB.
+    rpcUrls: text('rpc_urls').array().notNull(),
+    explorerUrl: text('explorer_url'),
+    nativeSymbol: text('native_symbol').notNull(),
+    nativeDecimals: integer('native_decimals').notNull(),
+    blockTimeMs: integer('block_time_ms').notNull(),
+    defaultConfirmations: integer('default_confirmations').notNull(),
+    reorgDepth: integer('reorg_depth').notNull(),
+    finality: chainFinality('finality').notNull(),
+    testnet: boolean('testnet').notNull(),
+    enabled: boolean('enabled').notNull().default(false),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    check('chains_id_format', sql`${t.id} ~ '^[a-z0-9-]{2,32}$'`),
+    check('chains_evm_chain_id', sql`${t.family} <> 'evm' or ${t.evmChainId} > 0`),
+    check(
+      'chains_numbers',
+      sql`${t.nativeDecimals} between 0 and 77 and ${t.blockTimeMs} > 0 and ${t.defaultConfirmations} >= 1 and ${t.reorgDepth} >= 1`,
+    ),
+  ],
+);
+
+export const tokens = pgTable(
+  'tokens',
+  {
+    id: text('id').primaryKey(),
+    chainId: text('chain_id')
+      .notNull()
+      .references(() => chains.id),
+    symbol: text('symbol').notNull(),
+    name: text('name').notNull(),
+    contractAddress: text('contract_address').notNull(),
+    decimals: integer('decimals').notNull(),
+    minConfirmations: integer('min_confirmations').notNull(),
+    // [{ "min_amount": "<minor units>", "confirmations": n }]
+    confirmationTiers: jsonb('confirmation_tiers').notNull().default([]),
+    minAmount: money('min_amount').notNull(),
+    enabled: boolean('enabled').notNull().default(false),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('tokens_chain_contract_uq').on(t.chainId, sql`lower(${t.contractAddress})`),
+    uniqueIndex('tokens_chain_symbol_uq').on(t.chainId, t.symbol),
+    check('tokens_id_format', sql`${t.id} ~ '^[a-z0-9-]{2,32}:[a-z0-9]{2,16}$'`),
+    check('tokens_numbers', sql`${t.decimals} between 0 and 77 and ${t.minConfirmations} >= 1 and ${t.minAmount} >= 0`),
+  ],
+);
+
+/** Platform HD accounts (custodial). xpub only; the seed never touches the app servers. */
+export const walletAccounts = pgTable(
+  'wallet_accounts',
+  {
+    id: id(),
+    family: chainFamily('family').notNull(),
+    livemode: boolean('livemode').notNull(),
+    basePath: text('base_path').notNull(), // e.g. m/44'/60'/0'
+    xpub: text('xpub').notNull(),
+    keyFingerprint: text('key_fingerprint').notNull(),
+    nextIndex: bigint('next_index', { mode: 'number' }).notNull().default(0),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('wallet_accounts_family_mode_uq').on(t.family, t.livemode),
+    uniqueIndex('wallet_accounts_fingerprint_uq').on(t.keyFingerprint),
+    unique('wallet_accounts_fk_target').on(t.id, t.livemode, t.family),
+    check('wallet_accounts_next_index', sql`${t.nextIndex} between 0 and 2147483648`),
+  ],
+);
+
+/** Merchant-supplied account xpubs (non-custodial). Registration flow (2FA, ownership proof) is M8. */
+export const merchantXpubs = pgTable(
+  'merchant_xpubs',
+  {
+    id: id(),
+    merchantId: uuid('merchant_id')
+      .notNull()
+      .references(() => merchants.id),
+    family: chainFamily('family').notNull(),
+    livemode: boolean('livemode').notNull(),
+    xpub: text('xpub').notNull(),
+    // sha256(pubkey || chaincode): the same key in xpub and tpub encodings has one fingerprint.
+    keyFingerprint: text('key_fingerprint').notNull(),
+    nextIndex: bigint('next_index', { mode: 'number' }).notNull().default(0),
+    status: xpubStatus('status').notNull().default('active'),
+    retiredAt: tstz('retired_at'),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('merchant_xpubs_fingerprint_uq').on(t.keyFingerprint),
+    uniqueIndex('merchant_xpubs_one_active_uq').on(t.merchantId, t.family, t.livemode).where(sql`${t.status} = 'active'`),
+    unique('merchant_xpubs_fk_target').on(t.id, t.merchantId, t.livemode, t.family),
+    check('merchant_xpubs_next_index', sql`${t.nextIndex} between 0 and 2147483648`),
+  ],
+);
+
+export const depositAddresses = pgTable(
+  'deposit_addresses',
+  {
+    id: id(),
+    merchantId: uuid('merchant_id')
+      .notNull()
+      .references(() => merchants.id),
+    livemode: boolean('livemode').notNull(),
+    family: chainFamily('family').notNull(),
+    chainId: text('chain_id')
+      .notNull()
+      .references(() => chains.id),
+    source: addressSource('source').notNull(),
+    walletAccountId: uuid('wallet_account_id'),
+    merchantXpubId: uuid('merchant_xpub_id'),
+    derivationIndex: integer('derivation_index').notNull(),
+    derivationPath: text('derivation_path').notNull(),
+    address: text('address').notNull(),
+    watchUntil: tstz('watch_until'),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    // One address = one invoice across every chain of the family (shared key space, D-018).
+    uniqueIndex('deposit_addresses_family_address_uq').on(t.family, sql`lower(${t.address})`),
+    uniqueIndex('deposit_addresses_wallet_index_uq').on(t.walletAccountId, t.derivationIndex),
+    uniqueIndex('deposit_addresses_xpub_index_uq').on(t.merchantXpubId, t.derivationIndex),
+    index('deposit_addresses_merchant_idx').on(t.merchantId),
+    check(
+      'deposit_addresses_one_source',
+      sql`(${t.source} = 'platform' and ${t.walletAccountId} is not null and ${t.merchantXpubId} is null)
+       or (${t.source} = 'merchant_xpub' and ${t.merchantXpubId} is not null and ${t.walletAccountId} is null)`,
+    ),
+    check('deposit_addresses_index', sql`${t.derivationIndex} between 0 and 2147483647`),
+    // Composite FKs: an address can only come from THIS merchant's xpub, in the same mode and family.
+    foreignKey({
+      name: 'deposit_addresses_merchant_xpub_fk',
+      columns: [t.merchantXpubId, t.merchantId, t.livemode, t.family],
+      foreignColumns: [merchantXpubs.id, merchantXpubs.merchantId, merchantXpubs.livemode, merchantXpubs.family],
+    }),
+    foreignKey({
+      name: 'deposit_addresses_wallet_account_fk',
+      columns: [t.walletAccountId, t.livemode, t.family],
+      foreignColumns: [walletAccounts.id, walletAccounts.livemode, walletAccounts.family],
+    }),
+  ],
 );

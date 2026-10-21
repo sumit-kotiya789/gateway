@@ -31,5 +31,5 @@ export default defineConfig(
     files: ['**/test/**'],
     rules: { '@typescript-eslint/no-unsafe-member-access': 'off', '@typescript-eslint/no-unsafe-assignment': 'off' },
   },
-  { files: ['**/*.config.js', '**/*.config.ts'], extends: [tseslint.configs.disableTypeChecked] },
+  { files: ['**/*.config.js', '**/*.config.ts', 'scripts/**'], extends: [tseslint.configs.disableTypeChecked] },
 );

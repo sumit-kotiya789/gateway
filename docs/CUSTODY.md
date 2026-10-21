@@ -25,6 +25,28 @@ flowchart TB
   end
 ```
 
+## Address allocation (M2)
+
+`allocateDepositAddress` (in `apps/server/src/modules/custody/custody.ts`) runs inside the invoice-creation transaction:
+
+1. Reads the merchant's custody mode; suspended merchants are refused.
+2. `strategyFor(mode)`: `non_custodial_xpub` → merchant xpub; `custodial` → platform wallet (only with `FEATURE_CUSTODIAL`);
+   forwarder → refused until M12.
+3. `UPDATE … SET next_index = next_index + 1 … RETURNING` on the key's row: the row lock serializes concurrent invoices,
+   so each gets a distinct index. A rolled-back invoice rolls back its index too (no address was ever shown).
+4. Public derivation of `<account xpub>/0/<index>`, insert into `deposit_addresses`.
+
+Database guards that hold even if application code is wrong:
+
+| Guard | Effect |
+|---|---|
+| unique (family, address), unique (source key, index) | an address / index serves exactly one invoice, across all EVM chains |
+| composite FK (xpub, merchant, mode, family) | a merchant can only receive on addresses from its own xpub |
+| `deposit_address_guard` trigger | source must match custody mode; chain enabled, same family, testnet ⇔ test mode |
+| `xpub_row_guard` trigger | counters never move backwards; xpub identity never changes in place |
+| `key_fingerprint_unique` trigger + unique indexes | one key, one owner: across merchants and the platform wallet, in any encoding |
+| no DELETE/TRUNCATE + immutability trigger | address ↔ derivation mapping is permanent |
+
 ## Guarantees for non_custodial_xpub
 
 1. Build: the strategy module cannot import signer, settlement or withdrawal code (dependency rule in CI).

@@ -13,6 +13,12 @@ Each procedure is written when the component it covers ships. Headings are fixed
   `CREATE ROLE gateway_app LOGIN PASSWORD '…' IN ROLE gw_app;` (after the first migration created `gw_app`, or pre-create it as `infra/postgres/init-roles.sh` does).
 - Read-only reporting users: `GRANT gw_readonly TO <user>`.
 
+## Chain / token registry
+- `pnpm db:seed`: idempotent upsert of chains and tokens. Never re-enables a chain or token an operator disabled.
+- `pnpm chains:verify`: for every enabled chain, each RPC must report the configured chain id, and every enabled token's
+  on-chain `decimals()` must equal config. Non-zero exit = do not start watchers; fix config or RPC first.
+- Disable a token or chain: `update tokens set enabled = false where id = …` (admin UI in M5b). Never delete.
+
 ## Bootstrap the first admin
 `pnpm admin:create <email> superadmin` (compose: `docker compose run --rm api node cli/admin-create.cjs <email> superadmin`).
 Prints a generated password and a TOTP enrollment URI once. Store the password in a password manager and enroll TOTP immediately.
