@@ -50,8 +50,26 @@ TOTP); the wrong one is retired, never deleted. Invoices already issued on the w
 with `select i.id, i.status from invoices i join deposit_addresses d on d.id = i.deposit_address_id where d.merchant_xpub_id = '<retired id>'`
 and cancel any still `pending`. Funds already paid there are only spendable by whoever holds that key.
 
-## Scanner stuck (M4)
-## RPC outage (M4)
+## Scanner stuck
+- One watcher per chain leads (Postgres advisory lock `watcher:<chain>`); others wait. Several watcher processes are safe.
+- Progress: `select chain_id, block_number, block_time, leader_epoch, updated_at from chain_cursors;`. `updated_at` older than a
+  minute = stuck. Log line `scanner behind chain head` = catching up (500 blocks per tick).
+- Pending invoices do not expire while a chain's scanner is stuck (cursor block time below their deadline). This is on
+  purpose: a stuck watcher must not expire invoices that were paid on time.
+- `registry verification failed; not scanning`: RPC reports another chain id or token decimals differ. Fix config/RPC; the
+  watcher retries every minute.
+
+## RPC outage
+- Providers in `rpc_urls` are tried in order (failover). All down = ticks fail and are retried; nothing is credited from
+  partial data. Payments are confirmed only after a receipt re-check, so a lying or lagging RPC cannot credit on its own.
+
+## Deep reorg
+Log line `DEEP REORG: cursor block replaced beyond reorgDepth` means a reorg deeper than configured. Confirmed payments are
+final in the DB; check each payment confirmed in the affected range against an independent explorer:
+`select id, invoice_id, tx_hash, block_number from payments where chain_id = '<chain>' and status = 'confirmed' and block_number >= <block>;`
+Raise `chains.reorg_depth` / tiers for that chain. A credited payment that no longer exists on-chain is an incident (freeze
+the merchant's payouts, M5b).
+
 ## Reconciliation mismatch (M5)
 ## Webhook backlog (M6)
 ## Stuck transaction (M7)

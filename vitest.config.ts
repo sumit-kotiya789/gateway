@@ -11,6 +11,7 @@ const MONEY_CRITICAL = [
   'apps/server/src/db/seed-registry.ts',
   'apps/server/src/modules/invoices/invoices.ts',
   'apps/server/src/modules/xpubs/xpubs.routes.ts',
+  'apps/server/src/modules/watcher/scanner.ts',
 ];
 const gate = { lines: 90, functions: 90, branches: 90, statements: 90 };
 

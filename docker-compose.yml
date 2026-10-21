@@ -1,5 +1,5 @@
 # Local development stack. Ports bind to 127.0.0.1 only.
-# watcher and signer services are added in the milestones that create them (M4/M7).
+# signer service is added with M7.
 x-hardened: &hardened
   read_only: true
   security_opt: ["no-new-privileges:true"]
@@ -50,6 +50,20 @@ services:
     depends_on:
       migrate: { condition: service_completed_successfully }
       redis: { condition: service_started }
+
+  watcher:
+    <<: *hardened
+    build: { context: ., dockerfile: apps/server/Dockerfile }
+    command: ["node", "--enable-source-maps", "main-watcher.cjs"]
+    environment:
+      <<: *app-env
+      # Registry rpc_urls reference these as ${NAME}; unset = that URL is skipped.
+      EVM_LOCAL_RPC_URL: http://anvil:8545
+      BSC_RPC_URL: ${BSC_RPC_URL:-}
+      BSC_TESTNET_RPC_URL: ${BSC_TESTNET_RPC_URL:-}
+    healthcheck: { disable: true }
+    depends_on:
+      migrate: { condition: service_completed_successfully }
 
   # Dashboard SPA + same-origin proxy for /v1/dashboard/* (http://localhost:${DASHBOARD_HOST_PORT:-8080}).
   dashboard:

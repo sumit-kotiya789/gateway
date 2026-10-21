@@ -510,3 +510,61 @@ export const idempotencyKeys = pgTable(
     check('idempotency_keys_key_len', sql`char_length(${t.key}) between 1 and 255`),
   ],
 );
+
+// ---------------------------------------------------------------- M4: watcher (payments, chain cursors)
+
+export const paymentStatus = pgEnum('payment_status', ['detected', 'confirmed', 'orphaned']);
+
+/** One on-chain token transfer to an invoice's deposit address. Identity is immutable; confirmed is final. */
+export const payments = pgTable(
+  'payments',
+  {
+    id: id(),
+    merchantId: uuid('merchant_id')
+      .notNull()
+      .references(() => merchants.id),
+    livemode: boolean('livemode').notNull(),
+    invoiceId: uuid('invoice_id')
+      .notNull()
+      .references(() => invoices.id),
+    chainId: text('chain_id')
+      .notNull()
+      .references(() => chains.id),
+    tokenId: text('token_id')
+      .notNull()
+      .references(() => tokens.id),
+    txHash: text('tx_hash').notNull(),
+    logIndex: integer('log_index').notNull(),
+    fromAddress: text('from_address').notNull(),
+    toAddress: text('to_address').notNull(),
+    amount: money('amount').notNull(),
+    blockNumber: bigint('block_number', { mode: 'bigint' }).notNull(),
+    blockHash: text('block_hash').notNull(),
+    blockTime: tstz('block_time').notNull(),
+    requiredConfirmations: integer('required_confirmations').notNull(),
+    status: paymentStatus('status').notNull().default('detected'),
+    confirmedAt: tstz('confirmed_at'),
+    orphanedAt: tstz('orphaned_at'),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('payments_chain_tx_log_uq').on(t.chainId, t.txHash, t.logIndex),
+    index('payments_invoice_idx').on(t.invoiceId),
+    index('payments_chain_status_idx').on(t.chainId, t.status),
+    check('payments_amount', sql`${t.amount} > 0`),
+    check('payments_numbers', sql`${t.logIndex} >= 0 and ${t.blockNumber} >= 0 and ${t.requiredConfirmations} >= 1`),
+  ],
+);
+
+/** Scanner progress per chain. Writes are fenced by leader_epoch (D-017). */
+export const chainCursors = pgTable('chain_cursors', {
+  chainId: text('chain_id')
+    .primaryKey()
+    .references(() => chains.id),
+  blockNumber: bigint('block_number', { mode: 'bigint' }).notNull(),
+  blockHash: text('block_hash').notNull(),
+  // Timestamp of the cursor block: invoices expire only once the scanner has passed their deadline.
+  blockTime: tstz('block_time').notNull(),
+  leaderEpoch: bigint('leader_epoch', { mode: 'number' }).notNull().default(0),
+  updatedAt: tstz('updated_at').notNull().defaultNow(),
+});

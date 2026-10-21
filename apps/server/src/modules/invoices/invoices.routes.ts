@@ -1,4 +1,4 @@
-import { AppError, INVOICE_STATUSES } from '@gw/core';
+import { AppError, INVOICE_STATUSES, fromMinorUnits } from '@gw/core';
 import { and, asc, desc, eq, lt, type SQL } from 'drizzle-orm';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { audit } from '../../common/audit.js';
 import { withTenant, type Tx } from '../../common/db.js';
 import { requestHash, withIdempotency, type StoredResponse } from '../../common/idempotency.js';
-import { chains, invoiceStatusHistory, invoices, tokens } from '../../db/schema.js';
+import { chains, invoiceStatusHistory, invoices, payments, tokens } from '../../db/schema.js';
 import type { Deps } from '../../deps.js';
 import { requireApiKey, type AuthedApiKey } from '../api-keys/api-keys.js';
 import { requirePermission, requireUser } from '../auth/guards.js';
@@ -46,6 +46,22 @@ export function idempotencyKeyOf(req: FastifyRequest): string | undefined {
 export function sendStored(reply: FastifyReply, res: StoredResponse & { replayed: boolean }) {
   if (res.replayed) reply.header('idempotent-replayed', 'true');
   return reply.status(res.status).send(res.body);
+}
+
+/** On-chain payments of one invoice (detail views only; lists stay one query). */
+async function paymentsView(tx: Tx, invoiceId: string, decimals: number) {
+  const rows = await tx.select().from(payments).where(eq(payments.invoiceId, invoiceId)).orderBy(asc(payments.createdAt));
+  return rows.map((p) => ({
+    tx_hash: p.txHash,
+    log_index: p.logIndex,
+    from: p.fromAddress,
+    amount: fromMinorUnits(p.amount, decimals),
+    status: p.status,
+    block_number: p.blockNumber.toString(),
+    block_time: p.blockTime.toISOString(),
+    confirmations_required: p.requiredConfirmations,
+    confirmed_at: p.confirmedAt?.toISOString() ?? null,
+  }));
 }
 
 const ListQuery = z.strictObject({
@@ -124,11 +140,11 @@ export function invoiceRoutes(deps: Deps): FastifyPluginAsyncZod {
       { preHandler: requireApiKey(deps, 'read'), schema: { params: z.strictObject({ id: z.uuid() }) } },
       async (req) => {
         const k = requireKey(req);
-        const r = await withTenant(deps.db, k.merchantId, (tx) =>
-          loadInvoiceWithToken(tx, and(eq(invoices.id, req.params.id), eq(invoices.merchantId, k.merchantId), eq(invoices.livemode, k.livemode)) as SQL),
-        );
-        if (!r) throw new AppError('not_found', 'invoice not found');
-        return invoiceView(r.inv, r.token, r.chain, base);
+        return withTenant(deps.db, k.merchantId, async (tx) => {
+          const r = await loadInvoiceWithToken(tx, and(eq(invoices.id, req.params.id), eq(invoices.merchantId, k.merchantId), eq(invoices.livemode, k.livemode)) as SQL);
+          if (!r) throw new AppError('not_found', 'invoice not found');
+          return { ...invoiceView(r.inv, r.token, r.chain, base), payments: await paymentsView(tx, r.inv.id, r.token.decimals) };
+        });
       },
     );
 
@@ -202,6 +218,7 @@ export function invoiceDashboardRoutes(deps: Deps): FastifyPluginAsyncZod {
         return {
           ...invoiceView(r.inv, r.token, r.chain, base),
           history: history.map((h) => ({ from: h.fromStatus, to: h.toStatus, reason: h.reason, at: h.at.toISOString() })),
+          payments: await paymentsView(tx, r.inv.id, r.token.decimals),
         };
       });
     });

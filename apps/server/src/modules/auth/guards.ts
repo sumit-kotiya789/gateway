@@ -71,6 +71,12 @@ export function requireUser(deps: Deps): preHandlerAsyncHookHandler {
   };
 }
 
+/** The session user set by requireUser; throws if a route forgot that guard. */
+export function authedUser(req: FastifyRequest): AuthedUser {
+  if (!req.user) throw new AppError('unauthorized', 'authentication required');
+  return req.user;
+}
+
 export function requirePermission(permission: MerchantPermission): preHandlerAsyncHookHandler {
   return async (req: FastifyRequest) => {
     if (!req.user) throw new AppError('unauthorized', 'authentication required');

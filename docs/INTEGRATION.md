@@ -26,6 +26,8 @@ For merchants and developers integrating the gateway. Everything below runs in *
 6. **Learn the outcome**: poll `GET /v1/invoices/:id` for now; signed webhooks (`invoice.paid`, …) arrive with M6.
 
 Treat an order as paid only when status is `paid` or `overpaid` (later `settled`). Never on `detected`/`confirming`.
+`GET /v1/invoices/:id` lists the on-chain `payments` (tx hash, amount, block, status). A payment mined before the deadline
+counts even if it is detected later; one mined after it turns the invoice into `late_payment` (never auto-fulfilled).
 
 ## Amounts
 Always decimal strings in token units: `"25.00"`. More decimals than the token supports are rejected, never rounded.

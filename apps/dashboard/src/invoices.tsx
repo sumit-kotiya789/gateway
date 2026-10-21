@@ -175,6 +175,27 @@ export function InvoiceDetail(props: { id: string; canWrite: boolean }) {
             <dt>Expires</dt><dd>{fmtDate(i.expires_at)}</dd>
             <dt>Created</dt><dd>{fmtDate(i.created_at)}</dd>
           </dl>
+          <h3>Payments</h3>
+          {(i.payments ?? []).length === 0 ? (
+            <p className="muted">No payment seen on-chain yet.</p>
+          ) : (
+            <div className="table-wrap">
+              <table>
+                <thead><tr><th>Transaction</th><th>From</th><th>Amount</th><th>Block</th><th>Status</th></tr></thead>
+                <tbody>
+                  {(i.payments ?? []).map((p) => (
+                    <tr key={p.tx_hash + p.block_number}>
+                      <td><code>{short(p.tx_hash, 8)}</code></td>
+                      <td><code>{short(p.from)}</code></td>
+                      <td className="num">{p.amount} {i.symbol}</td>
+                      <td>{p.block_number}</td>
+                      <td>{p.status === 'detected' ? `waiting for ${String(p.confirmations_required)} confirmations` : p.status}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
           <h3>History</h3>
           <div className="table-wrap">
             <table>

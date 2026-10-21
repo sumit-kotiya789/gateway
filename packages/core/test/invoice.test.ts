@@ -5,8 +5,11 @@ import {
   IllegalTransitionError,
   assertTransition,
   canTransition,
+  WATCHER_TRANSITIONS,
   classifyPayment,
+  planInvoice,
   type InvoiceStatus,
+  type PaymentTotals,
 } from '../src/index.js';
 
 describe('invoice state machine', () => {
@@ -96,5 +99,49 @@ describe('classifyPayment', () => {
     expect(() => classifyPayment(1n, -1n, 50)).toThrow(RangeError);
     expect(() => classifyPayment(1n, 1n, 501)).toThrow(RangeError);
     expect(() => classifyPayment(1n, 1n, 1.5)).toThrow(RangeError);
+  });
+});
+
+describe('planInvoice (watcher)', () => {
+  const E = 100n;
+  const t = (over: Partial<PaymentTotals> = {}): PaymentTotals => ({ confirmed: 0n, outstanding: 0, outstandingMined: false, allLate: false, ...over });
+
+  it('every watcher edge is a legal transition', () => {
+    for (const [from, tos] of Object.entries(WATCHER_TRANSITIONS)) {
+      for (const to of tos) expect(canTransition(from as InvoiceStatus, to)).toBe(true);
+    }
+  });
+
+  it.each<[InvoiceStatus, Partial<PaymentTotals>, InvoiceStatus[]]>([
+    ['pending', {}, []],
+    ['pending', { outstanding: 1 }, ['detected']],
+    ['pending', { outstanding: 1, outstandingMined: true }, ['detected', 'confirming']],
+    ['detected', { outstanding: 1, outstandingMined: true }, ['confirming']],
+    ['detected', { outstanding: 1 }, []],
+    ['confirming', { outstanding: 1 }, []], // a fresh top-up while confirming does not step back
+    ['confirming', { confirmed: 100n }, ['paid']],
+    ['confirming', { confirmed: 99n }, ['underpaid']],
+    ['confirming', { confirmed: 101n }, ['overpaid']],
+    ['pending', { confirmed: 100n }, ['detected', 'confirming', 'paid']], // watcher was behind
+    ['detected', {}, ['pending']], // reorged away
+    ['confirming', {}, ['pending']],
+    ['underpaid', { confirmed: 50n, outstanding: 1 }, ['detected']], // top-up seen
+    ['underpaid', { confirmed: 100n }, ['detected', 'confirming', 'paid']], // top-up confirmed
+    ['underpaid', { confirmed: 50n }, []],
+    ['detected', { confirmed: 50n }, ['confirming', 'underpaid']], // top-up reorged away
+    ['expired', { outstanding: 1 }, []], // late funds wait for confirmation
+    ['expired', { confirmed: 100n }, ['late_payment']],
+    ['cancelled', { confirmed: 1n }, ['late_payment']],
+    ['pending', { outstanding: 1, allLate: true }, ['expired']],
+    ['pending', { confirmed: 100n, allLate: true }, ['expired', 'late_payment']],
+    ['paid', { confirmed: 300n }, []], // extra funds after paid: recorded only
+    ['late_payment', { confirmed: 300n }, []],
+    ['settled', { outstanding: 2 }, []],
+  ])('case %# from %s', (status, over, path) => {
+    expect(planInvoice(status, E, 50, t(over))).toEqual(path);
+  });
+
+  it('never uses the manual underpaid -> paid shortcut', () => {
+    expect(planInvoice('underpaid', E, 0, t({ confirmed: 100n }))).not.toEqual(['paid']);
   });
 });

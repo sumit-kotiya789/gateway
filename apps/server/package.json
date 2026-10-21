@@ -5,14 +5,15 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch --env-file=../../.env src/main-api.ts",
-    "build": "esbuild src/main-api.ts src/main-worker.ts src/cli/migrate.ts src/cli/admin-create.ts src/cli/seed.ts src/cli/chains-verify.ts --bundle --platform=node --target=node22 --format=cjs --sourcemap --outdir=dist --out-extension:.js=.cjs",
+    "build": "esbuild src/main-api.ts src/main-worker.ts src/main-watcher.ts src/cli/migrate.ts src/cli/admin-create.ts src/cli/seed.ts src/cli/chains-verify.ts --bundle --platform=node --target=node22 --format=cjs --sourcemap --outdir=dist --out-extension:.js=.cjs",
     "typecheck": "tsc -p tsconfig.json",
     "db:generate": "drizzle-kit generate",
     "migrate": "tsx --env-file=../../.env src/cli/migrate.ts",
     "admin:create": "tsx --env-file=../../.env src/cli/admin-create.ts",
     "db:seed": "tsx --env-file=../../.env src/cli/seed.ts",
     "chains:verify": "tsx --env-file=../../.env src/cli/chains-verify.ts",
-    "dev:worker": "tsx watch --env-file=../../.env src/main-worker.ts"
+    "dev:worker": "tsx watch --env-file=../../.env src/main-worker.ts",
+    "dev:watcher": "tsx watch --env-file=../../.env src/main-watcher.ts"
   },
   "dependencies": {
     "@fastify/cookie": "11.1.3",

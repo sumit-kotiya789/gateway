@@ -208,3 +208,25 @@ Caddy build old enough to adopt still shipped a Go stdlib with HIGH CVEs (trivy 
 
 ## D-054 Dashboard invoice creation has no Idempotency-Key (2026-10-21)
 A person clicking a button, not a retrying backend. Audited as `invoice.created` with the user as actor.
+
+## D-055 Scanner filters getLogs by recipient; no in-memory address set (amends D-016) (2026-10-21)
+Each tick reads the watched addresses (`watch_until > now`) from Postgres and asks the RPC only for Transfers of the
+invoice's token TO those addresses (topic OR-lists of 100). Watching all USDT transfers on BSC would mean tens of thousands
+of logs per tick. Range and recipient are re-checked locally. Revisit when one chain has more than ~50k watched addresses.
+
+## D-056 Reorg handling = rescan window + re-verification, no block table (2026-10-21)
+Every tick rescans the last `reorgDepth` blocks (finds transfers re-mined in replacement blocks) and re-checks each
+unconfirmed payment: block hash still canonical, else follow the receipt (moved) or orphan it. Orphans are re-checked for
+24 h, so a flaky RPC view cannot lose a payment. Confirmation needs a fresh receipt re-check in a later tick than detection.
+A cursor block replaced beyond `reorgDepth` is logged as DEEP REORG (operator action, see RUNBOOK).
+
+## D-057 Expiry waits for the scanner; lateness is by block time (2026-10-21)
+The expiry job expires a pending invoice only once its chain's cursor block time has passed `expires_at`: a payment mined
+in time is always recorded first, even if the watcher was down. A pending invoice whose payments all sit in blocks
+timestamped after the deadline is expired by the watcher and becomes `late_payment` on confirmation.
+
+## D-058 What the watcher credits (2026-10-21)
+Only transfers of the invoice's own token, at or above the token's dust threshold, to the invoice's deposit address.
+Required confirmations use the tier of max(payment, invoice amount). Payments after `paid`/`overpaid` are recorded, not
+acted on (manual resolution, M5b). Other tokens sent to a deposit address are not recorded (recovery is a custodial M7
+concern). First leadership starts at head - reorgDepth: no history backfill.

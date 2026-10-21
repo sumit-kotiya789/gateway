@@ -93,6 +93,7 @@ export interface Invoice {
   expires_at: string;
   created_at: string;
   history?: { from: string | null; to: string; reason: string; at: string }[];
+  payments?: { tx_hash: string; from: string; amount: string; status: string; block_number: string; confirmations_required: number; confirmed_at: string | null }[];
 }
 
 export interface Page<T> {

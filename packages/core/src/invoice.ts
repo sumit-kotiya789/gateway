@@ -78,3 +78,67 @@ export function classifyPayment(expected: bigint, received: bigint, toleranceBps
   const tolerance = (expected * BigInt(toleranceBps)) / 10_000n;
   return received >= expected - tolerance ? 'paid' : 'underpaid';
 }
+
+/** On-chain payment state of one invoice, as the watcher sees it (orphaned payments excluded). */
+export interface PaymentTotals {
+  /** Sum of confirmed payments, minor units. Never decreases. */
+  confirmed: bigint;
+  /** Payments seen but not yet confirmed. */
+  outstanding: number;
+  /** Some outstanding payment already has at least one confirmation. */
+  outstandingMined: boolean;
+  /** There are payments and every one is in a block timestamped after the invoice's expiry. */
+  allLate: boolean;
+}
+
+/**
+ * Edges the watcher may take on its own. Manual edges are excluded on purpose: underpaid -> paid (merchant accepts the
+ * shortfall) and late_payment -> paid (manual resolution) must never happen automatically.
+ */
+export const WATCHER_TRANSITIONS: Readonly<Partial<Record<InvoiceStatus, readonly InvoiceStatus[]>>> = {
+  pending: ['detected', 'expired'],
+  detected: ['confirming', 'pending'],
+  confirming: ['paid', 'underpaid', 'overpaid', 'pending'],
+  underpaid: ['detected'],
+  expired: ['late_payment'],
+  cancelled: ['late_payment'],
+};
+
+function watcherTarget(status: InvoiceStatus, expected: bigint, toleranceBps: number, t: PaymentTotals): InvoiceStatus {
+  // Funds after expiry/cancel are recorded once confirmed, never auto-fulfilled.
+  if (status === 'expired' || status === 'cancelled') return t.confirmed > 0n ? 'late_payment' : status;
+  if (!OPEN_STATUSES.includes(status)) return status; // paid, overpaid, settled, late_payment, failed: watcher only records
+  if (t.outstanding > 0) return t.outstandingMined || status === 'confirming' ? 'confirming' : 'detected';
+  if (t.confirmed === 0n) return 'pending'; // everything seen was reorged away
+  return classifyPayment(expected, t.confirmed, toleranceBps);
+}
+
+function watcherPath(from: InvoiceStatus, to: InvoiceStatus): InvoiceStatus[] {
+  if (from === to) return [];
+  const prev = new Map<InvoiceStatus, InvoiceStatus>();
+  const queue: InvoiceStatus[] = [from];
+  while (queue.length > 0) {
+    const s = queue.shift() as InvoiceStatus;
+    for (const n of WATCHER_TRANSITIONS[s] ?? []) {
+      if (n === from || prev.has(n)) continue;
+      prev.set(n, s);
+      if (n === to) {
+        const path: InvoiceStatus[] = [];
+        for (let c: InvoiceStatus | undefined = to; c !== undefined && c !== from; c = prev.get(c)) path.unshift(c);
+        return path;
+      }
+      queue.push(n);
+    }
+  }
+  throw new IllegalTransitionError(from, to);
+}
+
+/**
+ * The ordered status changes that bring an invoice in line with its payments. Empty = nothing to do.
+ * A pending invoice whose only payments arrived after its deadline is expired first, so they end up as late_payment.
+ */
+export function planInvoice(status: InvoiceStatus, expected: bigint, toleranceBps: number, t: PaymentTotals): InvoiceStatus[] {
+  const seen = t.outstanding > 0 || t.confirmed > 0n;
+  if (status === 'pending' && seen && t.allLate) return ['expired', ...watcherPath('expired', watcherTarget('expired', expected, toleranceBps, t))];
+  return watcherPath(status, watcherTarget(status, expected, toleranceBps, t));
+}

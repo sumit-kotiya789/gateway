@@ -51,14 +51,25 @@ export function createEvmAdapter(chain: ChainConfig, rpcUrls: readonly string[],
       return { number: b.number, hash: b.hash, parentHash: b.parentHash, timestamp: b.timestamp };
     },
 
-    async getTokenTransfers(token: TokenConfig, from: bigint, to: bigint): Promise<Transfer[]> {
-      if (to < from) return [];
+    async getTokenTransfers(token: TokenConfig, from: bigint, to: bigint, recipients?: readonly string[]): Promise<Transfer[]> {
+      if (to < from || recipients?.length === 0) return [];
+      // Topic 2 = recipient, left-padded to 32 bytes. An array is an OR filter.
+      const toTopics = recipients?.map((a) => `0x${getAddress(a).slice(2).toLowerCase().padStart(64, '0')}` as const);
       const logs = await client.request({
         method: 'eth_getLogs',
-        params: [{ address: token.contractAddress as Hex, topics: [TRANSFER_TOPIC], fromBlock: numberToHex(from), toBlock: numberToHex(to) }],
+        params: [
+          {
+            address: token.contractAddress as Hex,
+            topics: toTopics ? [TRANSFER_TOPIC, null, toTopics] : [TRANSFER_TOPIC],
+            fromBlock: numberToHex(from),
+            toBlock: numberToHex(to),
+          },
+        ],
       });
+      // Never trust the RPC's filters alone: re-check range and recipient.
+      const want = recipients && new Set(recipients.map((a) => a.toLowerCase()));
       return decodeTokenTransfers(chain.id, token.contractAddress, logs as unknown as RawLog[]).filter(
-        (t) => t.blockNumber >= from && t.blockNumber <= to,
+        (t) => t.blockNumber >= from && t.blockNumber <= to && (!want || want.has(t.to.toLowerCase())),
       );
     },
 

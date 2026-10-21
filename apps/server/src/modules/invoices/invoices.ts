@@ -10,7 +10,7 @@ import {
 import { and, eq, lte, sql } from 'drizzle-orm';
 import { audit } from '../../common/audit.js';
 import { withSystem, type Tx } from '../../common/db.js';
-import { chains, depositAddresses, invoices, merchants, tokens } from '../../db/schema.js';
+import { chainCursors, chains, depositAddresses, invoices, merchants, tokens } from '../../db/schema.js';
 import type { Deps } from '../../deps.js';
 import { allocateDepositAddress } from '../custody/custody.js';
 import { rowToChain } from '../registry/registry.js';
@@ -129,7 +129,11 @@ export async function transitionInvoice(deps: Deps, tx: Tx, invoiceId: string, t
   return next;
 }
 
-/** Expires pending invoices past their deadline. Safe to run concurrently (SKIP LOCKED). Returns ids expired. */
+/**
+ * Expires pending invoices past their deadline. Safe to run concurrently (SKIP LOCKED). Returns ids expired.
+ * Only once the chain's scanner has passed the deadline (cursor block time >= expires_at): a payment mined in time
+ * is always recorded first, so a lagging or stopped watcher can never expire an invoice that was paid on time.
+ */
 export async function expireDueInvoices(deps: Deps, batch = 500): Promise<string[]> {
   return withSystem(deps.db, async (tx) => {
     await setReason(tx, 'expired: no payment before deadline');
@@ -137,7 +141,13 @@ export async function expireDueInvoices(deps: Deps, batch = 500): Promise<string
     const due = tx
       .select({ id: invoices.id })
       .from(invoices)
-      .where(and(eq(invoices.status, 'pending'), lte(invoices.expiresAt, now)))
+      .where(
+        and(
+          eq(invoices.status, 'pending'),
+          lte(invoices.expiresAt, now),
+          sql`exists (select 1 from ${chainCursors} where ${chainCursors.chainId} = ${invoices.chainId} and ${chainCursors.blockTime} >= ${invoices.expiresAt})`,
+        ),
+      )
       .orderBy(invoices.expiresAt)
       .limit(batch)
       .for('update', { skipLocked: true });

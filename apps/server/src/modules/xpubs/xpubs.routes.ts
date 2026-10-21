@@ -11,7 +11,7 @@ import { audit } from '../../common/audit.js';
 import { withTenant } from '../../common/db.js';
 import { merchantXpubs, merchants } from '../../db/schema.js';
 import type { Deps } from '../../deps.js';
-import { requirePermission, requireTotp, requireUser } from '../auth/guards.js';
+import { authedUser, requirePermission, requireTotp, requireUser } from '../auth/guards.js';
 
 const PREVIEW_COUNT = 5;
 // Bounded before the deriver sees it; the deriver does the real validation and never echoes the input.
@@ -50,8 +50,7 @@ export function xpubDashboardRoutes(deps: Deps): FastifyPluginAsyncZod {
     app.addHook('preHandler', requireUser(deps));
 
     app.get('/', { preHandler: requirePermission('account:read'), schema: { querystring: z.strictObject({ livemode: Livemode }) } }, async (req) => {
-      const user = req.user;
-      if (!user) throw new AppError('unauthorized', 'authentication required');
+      const user = authedUser(req);
       const rows = await withTenant(deps.db, user.merchantId, (tx) =>
         tx
           .select()
@@ -76,8 +75,7 @@ export function xpubDashboardRoutes(deps: Deps): FastifyPluginAsyncZod {
         schema: { body: z.strictObject({ livemode: z.boolean(), xpub: Xpub }) },
       },
       async (req, reply) => {
-        const user = req.user;
-        if (!user) throw new AppError('unauthorized', 'authentication required');
+        const user = authedUser(req);
         const { livemode, xpub } = req.body;
         const fingerprint = evmDeriver.keyFingerprint(xpub);
         const row = await withTenant(deps.db, user.merchantId, async (tx) => {
@@ -97,6 +95,7 @@ export function xpubDashboardRoutes(deps: Deps): FastifyPluginAsyncZod {
             .insert(merchantXpubs)
             .values({ merchantId: user.merchantId, family: 'evm', livemode, xpub, keyFingerprint: fingerprint })
             .returning();
+          /* v8 ignore next -- invariant: INSERT ... RETURNING yields the row or throws */
           if (!x) throw new Error('xpub insert failed');
           const after = xpubView(x);
           await audit(

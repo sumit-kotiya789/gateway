@@ -215,11 +215,30 @@ describe('read, list, cancel', () => {
 });
 
 describe('expiry', () => {
+  /** Pretends the evm-local scanner has reached a block with this timestamp. */
+  const scannedUpTo = (at: Date) =>
+    owner.query(
+      `insert into chain_cursors (chain_id, block_number, block_hash, block_time) values ('evm-local', 1, '0x', $1)
+       on conflict (chain_id) do update set block_time = excluded.block_time`,
+      [at],
+    );
+
+  it('does not expire until the scanner has passed the deadline', async () => {
+    const m = await merchantWithKey(app, clock, owner);
+    const inv = (await m.api('POST', '/v1/invoices', body({ expires_in: 300 }))).json<InvoiceBody>();
+    clock.advance(301_000);
+    await scannedUpTo(new Date(Date.parse(inv.expires_at) - 1000));
+    expect(await expireDueInvoices(deps)).not.toContain(inv.id);
+    await scannedUpTo(new Date(Date.parse(inv.expires_at)));
+    expect(await expireDueInvoices(deps)).toContain(inv.id);
+  });
+
   it('expires pending invoices past their deadline, leaves others alone', async () => {
     const m = await merchantWithKey(app, clock, owner);
     const short = (await m.api('POST', '/v1/invoices', body({ expires_in: 300 }))).json<InvoiceBody>();
     const long = (await m.api('POST', '/v1/invoices', body({ expires_in: 3600 }))).json<InvoiceBody>();
     clock.advance(301_000);
+    await scannedUpTo(new Date(clock() + 3600_000 * 24 * 365));
     const expired = await expireDueInvoices(deps);
     expect(expired).toContain(short.id);
     expect(expired).not.toContain(long.id);
@@ -235,6 +254,7 @@ describe('expiry', () => {
     const m = await merchantWithKey(app, clock, owner);
     const inv = (await m.api('POST', '/v1/invoices', body({ expires_in: 300 }))).json<InvoiceBody>();
     clock.advance(301_000);
+    await scannedUpTo(new Date(clock() + 3600_000 * 24 * 365));
     const out = (await runMaintenanceJob(deps, 'expire-invoices')) as { expired: number };
     expect(out.expired).toBeGreaterThanOrEqual(1);
     expect((await m.api('GET', `/v1/invoices/${inv.id}`)).json<InvoiceBody>().status).toBe('expired');

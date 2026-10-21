@@ -94,7 +94,8 @@ export interface ChainAdapter {
   /** Highest finalized block, or null when the chain/RPC has no finality tag. */
   getFinalizedBlock(): Promise<bigint | null>;
   getBlock(n: bigint): Promise<BlockInfo>;
-  getTokenTransfers(token: TokenConfig, from: bigint, to: bigint): Promise<Transfer[]>;
+  /** Transfers of `token` in [from, to]; with `recipients`, only those sent to one of them (RPC-side filter, re-checked). */
+  getTokenTransfers(token: TokenConfig, from: bigint, to: bigint, recipients?: readonly string[]): Promise<Transfer[]>;
   getBalance(address: string, token: TokenConfig | null): Promise<bigint>;
   getTransactionReceipt(hash: string): Promise<Receipt | null>;
   readTokenDecimals(token: TokenConfig): Promise<number>;

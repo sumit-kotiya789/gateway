@@ -124,3 +124,20 @@ describe('EVM adapter on Anvil', () => {
     expect((await pub.waitForTransactionReceipt({ hash: hash as Hex })).status).toBe('success');
   });
 });
+
+describe('recipient filter', () => {
+  it('returns only transfers to the given addresses', async () => {
+    const a1 = evmDeriver.deriveFromXpub(xpub, 40).address;
+    const a2 = evmDeriver.deriveFromXpub(xpub, 41).address;
+    const other = evmDeriver.deriveFromXpub(xpub, 42).address;
+    const r1 = await pay(usdt, a1, 1n);
+    await pay(usdt, other, 2n);
+    const r3 = await pay(usdt, a2, 3n);
+    const got = await adapter().getTokenTransfers(tokenConfig(usdt), r1.blockNumber, r3.blockNumber, [a1, a2.toLowerCase()]);
+    expect(got.map((t) => [t.to, t.amount])).toEqual([
+      [a1, 1n],
+      [a2, 3n],
+    ]);
+    expect(await adapter().getTokenTransfers(tokenConfig(usdt), r1.blockNumber, r3.blockNumber, [])).toEqual([]);
+  });
+});

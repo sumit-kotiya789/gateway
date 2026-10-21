@@ -58,7 +58,7 @@ Step-up: endpoints marked **2FA** need header `x-totp-code` with a fresh code (a
 | GET | `/v1/tokens` | API key | `read` (same filter; `min_amount` is a decimal string) | M2 |
 | POST | `/v1/invoices` | API key | `invoices:write` | M3 |
 | GET | `/v1/invoices` | API key | `read` (`limit`, `starting_after`, `status`, `external_order_id`) | M3 |
-| GET | `/v1/invoices/:id` | API key | `read` | M3 |
+| GET | `/v1/invoices/:id` | API key | `read` (includes on-chain `payments`, M4) | M3 |
 | POST | `/v1/invoices/:id/cancel` | API key | `invoices:write` (pending only) | M3 |
 | POST | `/v1/payment-links` | API key | `invoices:write` | M3 |
 | GET | `/v1/payment-links`, `/v1/payment-links/:id` | API key | `read` | M3 |

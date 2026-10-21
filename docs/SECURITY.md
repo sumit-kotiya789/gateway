@@ -19,6 +19,8 @@ Every file with a `// MONEY-CRITICAL` header is listed here and in the coverage 
 | `apps/server/src/modules/invoices/invoices.ts` | invoice creation (amount parsing, address allocation), transitions, expiry | M3 |
 | `apps/server/db/migrations/0005_invoices_security.sql` | DB transition table, invoice immutability, trigger-only history, custody-mode lock | M3 |
 | `apps/server/src/modules/xpubs/xpubs.routes.ts` | merchant xpub registration/rotation (decides every future deposit address) | M3b |
+| `apps/server/src/modules/watcher/scanner.ts` | payment detection, reorg handling, confirmation, invoice reconciliation, fencing | M4 |
+| `apps/server/db/migrations/0009_payments_security.sql` | payment/invoice consistency, immutable amounts, confirmed is final | M4 |
 
 ## Security-critical files (mandatory human review)
 
