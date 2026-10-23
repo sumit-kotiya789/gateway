@@ -422,6 +422,8 @@ export const invoices = pgTable(
     custodyMode: custodyMode('custody_mode').notNull(),
     status: invoiceStatus('status').notNull().default('created'),
     underpayToleranceBps: integer('underpay_tolerance_bps').notNull(),
+    // Snapshot of the merchant's fee at creation: a later fee change never affects existing invoices.
+    feeBps: integer('fee_bps').notNull().default(100),
     description: text('description'),
     metadata: jsonb('metadata').notNull().default({}),
     successUrl: text('success_url'),
@@ -442,6 +444,7 @@ export const invoices = pgTable(
     index('invoices_payment_link_idx').on(t.paymentLinkId, t.status),
     check('invoices_amounts', sql`${t.amountExpected} > 0 and ${t.amountReceived} >= 0 and (${t.feeAmount} is null or ${t.feeAmount} >= 0)`),
     check('invoices_tolerance', sql`${t.underpayToleranceBps} between 0 and 500`),
+    check('invoices_fee_bps', sql`${t.feeBps} between 0 and 10000`),
     check('invoices_metadata_size', sql`octet_length(${t.metadata}::text) <= 4096`),
     check('invoices_external_order_len', sql`${t.externalOrderId} is null or char_length(${t.externalOrderId}) between 1 and 200`),
   ],
@@ -567,4 +570,111 @@ export const chainCursors = pgTable('chain_cursors', {
   blockTime: tstz('block_time').notNull(),
   leaderEpoch: bigint('leader_epoch', { mode: 'number' }).notNull().default(0),
   updatedAt: tstz('updated_at').notNull().defaultNow(),
+});
+
+// ---------------------------------------------------------------- M5: ledger, outbox, reconciliation
+
+export const ledgerAccountKind = pgEnum('ledger_account_kind', [
+  // Non-custodial memo pair: funds received into the merchant's own wallet (asset) / the merchant's sales (income).
+  'merchant_received',
+  'merchant_sales',
+  // What the merchant owes the platform in fees (asset of the platform; prepaid top-ups credit it, M8).
+  'merchant_fees_owed',
+  // Platform income from fees. merchant_id is null.
+  'platform_fee_revenue',
+]);
+export const ledgerJournalKind = pgEnum('ledger_journal_kind', ['payment', 'fee']);
+
+/** One account per (kind, merchant, mode, token). Platform accounts have merchant_id null. */
+export const ledgerAccounts = pgTable(
+  'ledger_accounts',
+  {
+    id: id(),
+    kind: ledgerAccountKind('kind').notNull(),
+    merchantId: uuid('merchant_id').references(() => merchants.id),
+    livemode: boolean('livemode').notNull(),
+    tokenId: text('token_id')
+      .notNull()
+      .references(() => tokens.id),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    unique('ledger_accounts_uq').on(t.kind, t.merchantId, t.livemode, t.tokenId).nullsNotDistinct(),
+    check('ledger_accounts_owner', sql`(${t.kind} = 'platform_fee_revenue') = (${t.merchantId} is null)`),
+  ],
+);
+
+/** A balanced set of entries (sum = 0, one token). Append-only. One payment journal per payment, one fee journal per invoice. */
+export const ledgerJournals = pgTable(
+  'ledger_journals',
+  {
+    id: id(),
+    kind: ledgerJournalKind('kind').notNull(),
+    merchantId: uuid('merchant_id')
+      .notNull()
+      .references(() => merchants.id),
+    livemode: boolean('livemode').notNull(),
+    tokenId: text('token_id')
+      .notNull()
+      .references(() => tokens.id),
+    invoiceId: uuid('invoice_id')
+      .notNull()
+      .references(() => invoices.id),
+    paymentId: uuid('payment_id').references(() => payments.id),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('ledger_journals_payment_uq').on(t.paymentId).where(sql`${t.kind} = 'payment'`),
+    uniqueIndex('ledger_journals_fee_uq').on(t.invoiceId).where(sql`${t.kind} = 'fee'`),
+    index('ledger_journals_merchant_idx').on(t.merchantId, t.livemode),
+    check('ledger_journals_payment_ref', sql`(${t.kind} = 'payment') = (${t.paymentId} is not null)`),
+  ],
+);
+
+/** Signed minor units: debit > 0, credit < 0. merchant_id copies the account's owner (RLS). */
+export const ledgerEntries = pgTable(
+  'ledger_entries',
+  {
+    id: bigint('id', { mode: 'bigint' }).primaryKey().generatedAlwaysAsIdentity(),
+    journalId: uuid('journal_id')
+      .notNull()
+      .references(() => ledgerJournals.id),
+    accountId: uuid('account_id')
+      .notNull()
+      .references(() => ledgerAccounts.id),
+    merchantId: uuid('merchant_id').references(() => merchants.id),
+    amount: money('amount').notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index('ledger_entries_journal_idx').on(t.journalId),
+    index('ledger_entries_account_idx').on(t.accountId),
+    check('ledger_entries_nonzero', sql`${t.amount} <> 0`),
+  ],
+);
+
+/** Written only by the invoices trigger, in the transaction that changed the status. Delivery (webhooks) is M6. */
+export const outboxEvents = pgTable(
+  'outbox_events',
+  {
+    seq: bigint('seq', { mode: 'bigint' }).primaryKey().generatedAlwaysAsIdentity(),
+    id: uuid('id').notNull().default(sql`gen_random_uuid()`),
+    merchantId: uuid('merchant_id')
+      .notNull()
+      .references(() => merchants.id),
+    livemode: boolean('livemode').notNull(),
+    type: text('type').notNull(),
+    invoiceId: uuid('invoice_id').references(() => invoices.id),
+    data: jsonb('data').notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex('outbox_events_id_uq').on(t.id), index('outbox_events_merchant_idx').on(t.merchantId, t.livemode, t.seq)],
+);
+
+export const reconciliationRuns = pgTable('reconciliation_runs', {
+  id: id(),
+  startedAt: tstz('started_at').notNull(),
+  finishedAt: tstz('finished_at').notNull(),
+  ok: boolean('ok').notNull(),
+  issues: jsonb('issues').notNull(),
 });

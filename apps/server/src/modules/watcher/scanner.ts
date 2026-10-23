@@ -13,6 +13,7 @@ import { withSystem, type Tx } from '../../common/db.js';
 import { chainCursors, depositAddresses, invoices, payments } from '../../db/schema.js';
 import type { Deps } from '../../deps.js';
 import { transitionInvoice } from '../invoices/invoices.js';
+import { postPayment, settleInvoice } from '../ledger/ledger.js';
 
 /** A newer leader owns this chain: the tick wrote nothing and this process must stop scanning. */
 export class FencedError extends Error {
@@ -238,10 +239,13 @@ export async function scanTick(s: Scanner) {
           : d.kind === 'orphan'
             ? { status: 'orphaned' as const, orphanedAt: now }
             : { status: 'detected' as const, orphanedAt: null, blockNumber: d.block.number, blockHash: d.block.hash, blockTime: blockTime(d.block) };
-      await tx
+      const [row] = await tx
         .update(payments)
         .set(set)
-        .where(and(eq(payments.id, d.id), d.kind === 'move' ? ne(payments.status, 'confirmed') : eq(payments.status, 'detected')));
+        .where(and(eq(payments.id, d.id), d.kind === 'move' ? ne(payments.status, 'confirmed') : eq(payments.status, 'detected')))
+        .returning();
+      // Ledger in the same transaction as the confirmation (ARCHITECTURE: invoice + payment + ledger + outbox).
+      if (row && d.kind === 'confirm') await postPayment(tx, row);
     }
 
     if (to > c.blockNumber) {
@@ -277,4 +281,5 @@ export async function reconcileInvoice(deps: Deps, tx: Tx, invoiceId: string, la
   for (const step of planInvoice(inv.status, inv.amountExpected, inv.underpayToleranceBps, totals)) {
     await transitionInvoice(deps, tx, invoiceId, step, REASON[step]);
   }
+  await settleInvoice(deps, tx, invoiceId); // non-custodial paid/overpaid -> fee -> settled; no-op otherwise
 }

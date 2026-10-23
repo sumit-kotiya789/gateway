@@ -58,6 +58,6 @@ Database guards that hold even if application code is wrong:
 
 Keep their seed safe; supply an account-level xpub (not an xprv or seed, which are refused); scan their wallet to the
 derivation index shown in the dashboard (invoices that expire unpaid create gaps beyond the usual 20-address limit);
-keep the prepaid fee balance above zero, or new invoices are blocked.
+keep the prepaid fee balance above zero, or new live invoices are blocked (enforced from M8, with fee top-ups).
 
 Full fee-model and key-exposure details are written in M8 (non-custodial) and M7 (custodial).

@@ -1,4 +1,4 @@
-// Worker process: BullMQ queues for background jobs. M3: invoice expiry, idempotency-key retention. Later: outbox dispatch, webhooks,
+// Worker process: BullMQ queues for background jobs. M3: invoice expiry, idempotency-key retention. M5: ledger reconciliation. Later: outbox dispatch, webhooks,
 // reconciliation, sweeps. Every job handler is idempotent and safe to run on several workers at once.
 import { Queue, Worker } from 'bullmq';
 import { Redis } from 'ioredis';
@@ -9,6 +9,7 @@ import { createLogger } from './common/logger.js';
 import type { Deps } from './deps.js';
 import { purgeIdempotencyKeys } from './common/idempotency.js';
 import { expireDueInvoices } from './modules/invoices/invoices.js';
+import { reconcileLedger } from './modules/ledger/reconciliation.js';
 
 const QUEUE = 'maintenance';
 const SHUTDOWN_TIMEOUT_MS = 30_000;
@@ -19,6 +20,10 @@ export async function runMaintenanceJob(deps: Deps, name: string): Promise<unkno
       const expired = await expireDueInvoices(deps);
       if (expired.length > 0) deps.log.info({ count: expired.length }, 'invoices expired');
       return { expired: expired.length };
+    }
+    case 'reconcile-ledger': {
+      const issues = await reconcileLedger(deps);
+      return { ok: issues.length === 0, issues: issues.length };
     }
     case 'purge-idempotency-keys': {
       const purged = await purgeIdempotencyKeys(deps);
@@ -42,6 +47,7 @@ async function main(): Promise<void> {
   // Idempotent: re-registering on every boot keeps exactly one schedule per job.
   const jobOpts = { removeOnComplete: 100, removeOnFail: 500 };
   await queue.upsertJobScheduler('expire-invoices', { every: 15_000 }, { name: 'expire-invoices', opts: jobOpts });
+  await queue.upsertJobScheduler('reconcile-ledger', { every: 3_600_000 }, { name: 'reconcile-ledger', opts: jobOpts });
   await queue.upsertJobScheduler('purge-idempotency-keys', { every: 3_600_000 }, { name: 'purge-idempotency-keys', opts: jobOpts });
 
   const worker = new Worker(QUEUE, (job) => runMaintenanceJob(deps, job.name), { connection, concurrency: 1 });

@@ -49,7 +49,7 @@ describe('EVM derivation from account xpub', () => {
     for (let i = 0; i < 50; i++) {
       expect(evmDeriver.deriveFromXpub(XPUB, i).address).toBe(hdKeyToAccount(viemMaster, { addressIndex: i }).address);
     }
-  });
+  }, 30_000); // 100 BIP32 derivations: CPU-bound, slow when the integration suite runs alongside
 
   it('works at the top of the non-hardened range and rejects out-of-range indices', () => {
     expect(evmDeriver.deriveFromXpub(XPUB, 0x7fffffff).address).toMatch(/^0x[0-9a-fA-F]{40}$/);

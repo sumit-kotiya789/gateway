@@ -70,7 +70,14 @@ final in the DB; check each payment confirmed in the affected range against an i
 Raise `chains.reorg_depth` / tiers for that chain. A credited payment that no longer exists on-chain is an incident (freeze
 the merchant's payouts, M5b).
 
-## Reconciliation mismatch (M5)
+## Reconciliation mismatch
+Worker job `reconcile-ledger` (hourly) logs `RECONCILIATION MISMATCH` with the failing checks and sample ids; every run is
+kept: `select started_at, ok, issues from reconciliation_runs order by started_at desc limit 5;`.
+- Treat any hit as an incident: freeze changes for the affected merchant, preserve a DB snapshot, check `audit_verify()`.
+- `payment_without_journal` / `invoice_received` / `received_balance`: a payment and its booking disagree. Never edit
+  ledger rows (they are append-only by design); corrections are new journals, written by code and reviewed by two people.
+- `unsettled`: a paid non-custodial invoice was not settled; re-run settlement for it after finding why.
+
 ## Webhook backlog (M6)
 ## Stuck transaction (M7)
 ## Hot wallet compromise (M7)

@@ -65,7 +65,7 @@ export async function createInvoice(deps: Deps, tx: Tx, merchantId: string, live
   if (!Number.isInteger(expiresIn) || expiresIn < EXPIRY_S.min || expiresIn > EXPIRY_S.max) {
     throw new AppError('validation_error', `expires_in must be between ${EXPIRY_S.min} and ${EXPIRY_S.max} seconds`);
   }
-  const [m] = await tx.select({ tolerance: merchants.underpayToleranceBps }).from(merchants).where(eq(merchants.id, merchantId));
+  const [m] = await tx.select({ tolerance: merchants.underpayToleranceBps, feeBps: merchants.feeBps }).from(merchants).where(eq(merchants.id, merchantId));
   if (!m) throw new AppError('not_found', 'merchant not found');
 
   const addr = await allocateDepositAddress(tx, { merchantId, livemode, chain: rowToChain(chain) }, { custodialEnabled: deps.config.FEATURE_CUSTODIAL });
@@ -86,6 +86,7 @@ export async function createInvoice(deps: Deps, tx: Tx, merchantId: string, live
       depositAddress: addr.address,
       custodyMode: addr.custodyMode,
       underpayToleranceBps: m.tolerance,
+      feeBps: m.feeBps,
       description: input.description ?? null,
       metadata: input.metadata ?? {},
       successUrl: input.successUrl ?? null,

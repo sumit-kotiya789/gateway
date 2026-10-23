@@ -102,6 +102,13 @@ export interface Page<T> {
   next_cursor: string | null;
 }
 
+export interface Balance {
+  token: string;
+  symbol: string | null;
+  received: string;
+  fees_owed: string;
+}
+
 export interface Token {
   id: string;
   symbol: string;

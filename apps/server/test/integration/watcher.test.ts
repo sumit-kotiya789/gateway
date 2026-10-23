@@ -186,9 +186,9 @@ describe('watcher on a fake chain', () => {
     expect((await get()).status).toBe('confirming');
     chain.mine(1); // depth 3
     await tick();
-    expect(await get()).toMatchObject({ status: 'paid', amount_received: '10', payments: [{ status: 'confirmed' }] });
+    expect(await get()).toMatchObject({ status: 'settled', amount_received: '10', payments: [{ status: 'confirmed' }] });
     const h = await owner.query<{ t: string; reason: string }>('select to_status::text t, reason from invoice_status_history where invoice_id = $1 order by id', [inv.id]);
-    expect(h.rows.map((x) => x.t)).toEqual(['created', 'pending', 'detected', 'confirming', 'paid']);
+    expect(h.rows.map((x) => x.t)).toEqual(['created', 'pending', 'detected', 'confirming', 'paid', 'settled']);
   });
 
   it('large amounts wait for the higher confirmation tier', async () => {
@@ -199,7 +199,7 @@ describe('watcher on a fake chain', () => {
     expect((await get()).status).toBe('confirming');
     chain.mine(3);
     await tick();
-    expect((await get()).status).toBe('paid');
+    expect((await get()).status).toBe('settled');
   });
 
   it('finality tag: deep enough is not enough until the block is finalized', async () => {
@@ -212,7 +212,7 @@ describe('watcher on a fake chain', () => {
       expect((await get()).status).toBe('confirming');
       chain.mine(16);
       await tick();
-      expect((await get()).status).toBe('paid');
+      expect((await get()).status).toBe('settled');
     } finally {
       chain.finalizedLag = null;
     }
@@ -229,13 +229,13 @@ describe('watcher on a fake chain', () => {
     expect((await a.get()).status).toBe('detected');
     chain.mine(3);
     await tick();
-    expect(await a.get()).toMatchObject({ status: 'paid', amount_received: '10' });
+    expect(await a.get()).toMatchObject({ status: 'settled', amount_received: '10' });
 
     const b = await newInvoice('10');
     chain.pay(b.inv.deposit_address, units(12));
     chain.mine(3);
     await settle();
-    expect(await b.get()).toMatchObject({ status: 'overpaid', amount_received: '12' });
+    expect(await b.get()).toMatchObject({ status: 'settled', amount_received: '12' });
   });
 
   it('within tolerance (0.5%) counts as paid', async () => {
@@ -243,7 +243,7 @@ describe('watcher on a fake chain', () => {
     chain.pay(inv.deposit_address, units(9.95));
     chain.mine(3);
     await settle();
-    expect((await get()).status).toBe('paid');
+    expect((await get()).status).toBe('settled');
   });
 
   it('ignores dust, other tokens, and transfers to unwatched addresses', async () => {
@@ -272,7 +272,7 @@ describe('watcher on a fake chain', () => {
     expect(await get()).toMatchObject({ status: 'detected', payments: [{ status: 'detected' }] });
     chain.mine(3);
     await tick();
-    expect(await get()).toMatchObject({ status: 'paid', amount_received: '10', payments: [{ status: 'confirmed' }] });
+    expect(await get()).toMatchObject({ status: 'settled', amount_received: '10', payments: [{ status: 'confirmed' }] });
   });
 
   it('re-mined in a different block before confirmation: follows the tx, keeps one payment', async () => {
@@ -286,7 +286,7 @@ describe('watcher on a fake chain', () => {
     expect(p.rows[0]?.block_hash).toBe(chain.blocks.at(-1)?.hash);
     chain.mine(3);
     await tick();
-    expect((await get()).status).toBe('paid');
+    expect((await get()).status).toBe('settled');
   });
 
   it('a reverted receipt is never confirmed', async () => {
@@ -388,7 +388,7 @@ describe('watcher on a fake chain', () => {
     await scanTick({ deps, adapter: chain.adapter(), chain: fakeChainCfg, tokens: [tok('evm-fake:other', OTHER)], epoch });
     expect(await get()).toMatchObject({ payments: [{ status: 'detected' }] });
     await tick();
-    expect((await get()).status).toBe('paid');
+    expect((await get()).status).toBe('settled');
   });
 
   it('a stale receipt pointing at a replaced block does not keep the payment alive', async () => {
@@ -453,6 +453,158 @@ describe('watcher on Anvil', () => {
     expect((await m.api('GET', `/v1/invoices/${inv.id}`)).json<Inv>().status).toBe('detected');
     await mineBlocks(anvilUrl, 70); // Anvil finalizes at head - 64
     await run();
-    expect((await m.api('GET', `/v1/invoices/${inv.id}`)).json<Inv>()).toMatchObject({ status: 'paid', amount_received: '25' });
+    expect((await m.api('GET', `/v1/invoices/${inv.id}`)).json<Inv>()).toMatchObject({ status: 'settled', amount_received: '25' });
+  });
+});
+
+// ---------------------------------------------------------------- M5: ledger, fees, outbox, reconciliation
+
+describe('ledger, fees, outbox', () => {
+  const journals = (invoiceId: string) =>
+    owner.query<{ kind: string; account: string; amount: string }>(
+      `select j.kind::text kind, a.kind::text account, e.amount::text amount from ledger_journals j
+       join ledger_entries e on e.journal_id = j.id join ledger_accounts a on a.id = e.account_id
+       where j.invoice_id = $1 order by j.created_at, e.id`,
+      [invoiceId],
+    );
+
+  it('paid invoice: payment journal, 1% fee journal, settled; balances and events match', async () => {
+    const { m, inv, get } = await newInvoice('10');
+    chain.pay(inv.deposit_address, units(10));
+    chain.mine(3);
+    await settle();
+    const after = await get();
+    expect(after).toMatchObject({ status: 'settled', amount_received: '10' });
+    expect((await journals(inv.id)).rows).toEqual([
+      { kind: 'payment', account: 'merchant_received', amount: '10000000' },
+      { kind: 'payment', account: 'merchant_sales', amount: '-10000000' },
+      { kind: 'fee', account: 'merchant_fees_owed', amount: '100000' },
+      { kind: 'fee', account: 'platform_fee_revenue', amount: '-100000' },
+    ]);
+    const fee = await owner.query<{ fee: string }>('select fee_amount::text fee from invoices where id = $1', [inv.id]);
+    expect(fee.rows[0]?.fee).toBe('100000');
+
+    const bal = (await m.api('GET', '/v1/balances')).json<{ data: { token: string; received: string; fees_owed: string }[] }>();
+    expect(bal.data).toEqual([{ token: 'evm-fake:usdt', symbol: 'USDT', received: '10', fees_owed: '0.1' }]);
+    const dash = (await m.agent.req('GET', '/v1/dashboard/balances/?livemode=false')).json<{ data: unknown[] }>();
+    expect(dash.data).toEqual(bal.data);
+
+    const ev = (await m.api('GET', '/v1/events')).json<{ data: { type: string; data: Record<string, unknown> }[] }>();
+    expect(ev.data.map((e) => e.type)).toEqual(['invoice.settled', 'invoice.paid', 'invoice.confirming', 'invoice.detected']);
+    expect(ev.data[0]?.data).toMatchObject({ invoice_id: inv.id, status: 'settled', previous_status: 'paid', amount_received: '10', fee_amount: '0.1', reason: 'platform fee charged' });
+  });
+
+  it('overpaid: fee on the expected amount only; underpaid: no fee, not settled', async () => {
+    const over = await newInvoice('10');
+    chain.pay(over.inv.deposit_address, units(12));
+    const under = await newInvoice('10');
+    chain.pay(under.inv.deposit_address, units(6));
+    chain.mine(3);
+    await settle();
+    expect((await journals(over.inv.id)).rows.find((r) => r.account === 'merchant_fees_owed')?.amount).toBe('100000');
+    expect((await under.get()).status).toBe('underpaid');
+    expect((await journals(under.inv.id)).rows.map((r) => r.kind)).toEqual(['payment', 'payment']);
+  });
+
+  it('fee rate is snapshotted at invoice creation', async () => {
+    const { m, inv } = await newInvoice('10');
+    await owner.query('update merchants set fee_bps = 250 where id = $1', [m.merchantId]);
+    chain.pay(inv.deposit_address, units(10));
+    chain.mine(3);
+    await settle();
+    expect((await journals(inv.id)).rows.find((r) => r.account === 'merchant_fees_owed')?.amount).toBe('100000');
+    const next = (await m.api('POST', '/v1/invoices', { amount: '10', token: 'evm-fake:usdt' })).json<{ id: string }>();
+    const bps = await owner.query<{ fee_bps: number }>('select fee_bps from invoices where id = $1', [next.id]);
+    expect(bps.rows[0]?.fee_bps).toBe(250);
+  });
+
+  it('events: cancel and expiry emit events; API formats amounts, paginates, and is tenant-scoped', async () => {
+    const a = await newInvoice('7.5', { external_order_id: 'ord-ev' });
+    await a.m.api('POST', `/v1/invoices/${a.inv.id}/cancel`);
+    const page = (await a.m.api('GET', '/v1/events?limit=1')).json<{ data: { id: string; type: string; data: Record<string, unknown> }[]; has_more: boolean }>();
+    expect(page.data[0]).toMatchObject({ type: 'invoice.cancelled', data: { amount_expected: '7.5', external_order_id: 'ord-ev', previous_status: 'pending' } });
+    const id = page.data[0]?.id ?? '';
+    expect((await a.m.api('GET', `/v1/events/${id}`)).json()).toMatchObject({ id, type: 'invoice.cancelled' });
+    expect((await a.m.api('GET', `/v1/events?type=invoice.paid`)).json().data).toEqual([]);
+
+    const other = await merchantWithKey(app, clock, owner);
+    expect((await other.api('GET', `/v1/events/${id}`)).statusCode).toBe(404);
+    expect((await other.api('GET', '/v1/events')).json().data).toEqual([]);
+  });
+
+  it('DB: unbalanced journals fail at commit; ledger and outbox are append-only; fee is set once', async () => {
+    const { inv } = await newInvoice('10');
+    chain.pay(inv.deposit_address, units(10));
+    chain.mine(3);
+    await settle();
+    const j = await owner.query<{ id: string; account_id: string }>(
+      `select j.id, e.account_id from ledger_journals j join ledger_entries e on e.journal_id = j.id where j.invoice_id = $1 limit 1`,
+      [inv.id],
+    );
+    const { id: journalId, account_id: accountId } = j.rows[0] ?? { id: '', account_id: '' };
+    const c = await owner.connect();
+    try {
+      await c.query('begin');
+      // A second (one-sided) entry on an existing journal breaks its balance: rejected when the transaction commits.
+      await c.query(`select set_config('app.system', 'on', true)`);
+      await c.query(`insert into ledger_entries (journal_id, account_id, merchant_id, amount)
+        select $1, $2, merchant_id, 5 from ledger_accounts where id = $2`, [journalId, accountId]);
+      await expect(c.query('commit')).rejects.toThrow(/not balanced/);
+    } finally {
+      c.release();
+    }
+    await expect(owner.query('update ledger_entries set amount = amount + 1 where journal_id = $1', [journalId])).rejects.toThrow();
+    await expect(owner.query('delete from ledger_journals where id = $1', [journalId])).rejects.toThrow();
+    await expect(owner.query(`update invoices set fee_amount = 1 where id = $1`, [inv.id])).rejects.toThrow(/set once/);
+    await expect(owner.query(`update invoices set fee_bps = 1 where id = $1`, [inv.id])).rejects.toThrow(/immutable/);
+    await expect(t.pool.query(`insert into outbox_events (merchant_id, livemode, type, data) select merchant_id, false, 'x.y', '{}' from invoices where id = $1`, [inv.id])).rejects.toThrow(/permission/);
+  });
+
+  it('postings are idempotent; nothing is booked outside non-custodial mode', async () => {
+    const { postPayment } = await import('../../src/modules/ledger/ledger.js');
+    const { withSystem } = await import('../../src/common/db.js');
+    const { payments } = await import('../../src/db/schema.js');
+    const { eq } = await import('drizzle-orm');
+    const { inv } = await newInvoice('10');
+    chain.pay(inv.deposit_address, units(10));
+    chain.mine(3);
+    await settle();
+    const before = (await journals(inv.id)).rows.length;
+    await withSystem(t.db, async (tx) => {
+      const [p] = await tx.select().from(payments).where(eq(payments.invoiceId, inv.id));
+      if (!p) throw new Error('no payment');
+      await postPayment(tx, p); // already booked: no second journal
+      await postPayment(tx, { ...p, invoiceId: '00000000-0000-7000-8000-000000000000' }); // no such non-custodial invoice
+    });
+    expect((await journals(inv.id)).rows.length).toBe(before);
+  });
+
+  it('a zero fee rate settles without a fee journal', async () => {
+    const m = await merchantWithKey(app, clock, owner);
+    await owner.query('update merchants set fee_bps = 0 where id = $1', [m.merchantId]);
+    const inv = (await m.api('POST', '/v1/invoices', { amount: '10', token: 'evm-fake:usdt' })).json<Inv>();
+    chain.pay(inv.deposit_address, units(10));
+    chain.mine(3);
+    await settle();
+    expect((await m.api('GET', `/v1/invoices/${inv.id}`)).json<Inv>().status).toBe('settled');
+    expect((await journals(inv.id)).rows.map((r) => r.kind)).toEqual(['payment', 'payment']);
+    const fee = await owner.query<{ fee: string }>('select fee_amount::text fee from invoices where id = $1', [inv.id]);
+    expect(fee.rows[0]?.fee).toBe('0');
+  });
+
+  it('reconciliation is clean, and catches a tampered invoice total', async () => {
+    const { runMaintenanceJob } = await import('../../src/main-worker.js');
+    const { reconcileLedger } = await import('../../src/modules/ledger/reconciliation.js');
+    expect(await runMaintenanceJob(deps, 'reconcile-ledger')).toEqual({ ok: true, issues: 0 });
+    const { inv } = await newInvoice('10');
+    await owner.query('update invoices set amount_received = 5 where id = $1', [inv.id]);
+    try {
+      const issues = await reconcileLedger(deps);
+      expect(issues).toEqual([{ check: 'invoice_received', count: 1, sample: [inv.id] }]);
+      const run = await owner.query<{ ok: boolean }>('select ok from reconciliation_runs order by started_at desc limit 1');
+      expect(run.rows[0]?.ok).toBe(false);
+    } finally {
+      await owner.query('update invoices set amount_received = 0 where id = $1', [inv.id]);
+    }
   });
 });

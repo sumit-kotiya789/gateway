@@ -64,6 +64,8 @@ Step-up: endpoints marked **2FA** need header `x-totp-code` with a fresh code (a
 | GET | `/v1/payment-links`, `/v1/payment-links/:id` | API key | `read` | M3 |
 | PATCH | `/v1/payment-links/:id` | API key | `invoices:write` (affects future invoices only) | M3 |
 | DELETE | `/v1/payment-links/:id` | API key | `invoices:write` (deactivates) | M3 |
+| GET | `/v1/balances` | API key | `read` (per token: `received`, `fees_owed`) | M5 |
+| GET | `/v1/events`, `/v1/events/:id` | API key | `read` (`limit`, `starting_after`, `type`; newest first) | M5 |
 | GET | `/checkout/:id`, `/checkout/:id/status` | public (invoice id) | – | M3 |
 | GET, POST | `/pay/:id` | public (link id) | – (POST creates the invoice, 303 → checkout) | M3 |
 
@@ -116,6 +118,7 @@ Statuses: `pending → detected → confirming → paid | underpaid | overpaid �
 | GET | `/v1/dashboard/webhooks/` | session | `webhooks:manage` (`livemode`) | M3b |
 | POST | `/v1/dashboard/webhooks/` | session + **2FA** | `webhooks:manage` (returns signing secret once) | M3b |
 | DELETE | `/v1/dashboard/webhooks/:id` | session | `webhooks:manage` | M3b |
+| GET | `/v1/dashboard/balances/` | session | `account:read` (`livemode`) | M5 |
 | POST | `/admin/v1/auth/login` | none | password + TOTP | M1 |
 | POST | `/admin/v1/auth/logout` | admin session | `admin:read` | M1 |
 | GET | `/admin/v1/auth/me` | admin session | `admin:read` | M1 |

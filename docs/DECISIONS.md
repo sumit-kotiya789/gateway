@@ -230,3 +230,27 @@ Only transfers of the invoice's own token, at or above the token's dust threshol
 Required confirmations use the tier of max(payment, invoice amount). Payments after `paid`/`overpaid` are recorded, not
 acted on (manual resolution, M5b). Other tokens sent to a deposit address are not recorded (recovery is a custodial M7
 concern). First leadership starts at head - reorgDepth: no history backfill.
+
+## D-059 Ledger: append-only double entry, posted in the confirming transaction (2026-10-21)
+Journals + signed entries (debit > 0), one token per journal, sum 0 enforced by a deferred constraint trigger at commit;
+no UPDATE/DELETE. Payment journal per confirmed payment and fee journal per invoice are idempotent (unique indexes).
+Non-custodial postings are memo + fee receivable only (the platform never holds the funds). Custodial postings: M7.
+
+## D-060 Fee base = min(received, expected), rate snapshotted on the invoice (2026-10-21)
+An overpayment is the payer's money (refundable), so it is not charged; an accepted underpayment is charged on what
+arrived. `invoices.fee_bps` is copied from the merchant at creation and immutable; `fee_amount` is set once.
+Non-custodial invoices move paid/overpaid -> settled in the same transaction that books the fee. Fixed fee: 0 (column later).
+
+## D-061 Fee-balance blocking and top-ups move to M8 (amends D-009 timing) (2026-10-21)
+Fees are charged now (`merchant_fees_owed` grows). Blocking new live invoices at zero prepaid balance needs a top-up path,
+which ships with the M8 fee models; blocking before that would stop every live merchant. Mainnet stays disabled until then.
+
+## D-062 Outbox written by a DB trigger on invoice status changes (2026-10-21)
+Every status change except the initial created -> pending emits `invoice.<status>` in the same transaction, including
+bulk expiry and future manual changes. The app role cannot insert events. Amounts are minor-unit strings in storage,
+decimal strings in the API (`GET /v1/events`). Webhook delivery (M6) consumes this table.
+
+## D-063 Reconciliation = independent SQL re-checks, hourly (2026-10-21)
+Payments vs journals, invoice totals vs payments, ledger received vs payments per merchant/mode/token, settled fee vs fee
+journal, stuck paid invoices, global per-token balance. Results stored in `reconciliation_runs`; any issue logs
+RECONCILIATION MISMATCH. On-chain balance checks join custodial mode (M7): non-custodial funds are the merchant's to move.

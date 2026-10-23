@@ -97,6 +97,8 @@ tr:last-child td { border-bottom: none; }
 tr.clickable { cursor: pointer; }
 tr.clickable:hover { background: var(--bg); }
 .num { font-variant-numeric: tabular-nums; }
+.balances .card { display: flex; flex-direction: column; gap: 0.15rem; margin: 0 0 1rem; min-width: 220px; }
+.balances strong { font-size: 1.3rem; }
 .details { display: grid; grid-template-columns: max-content 1fr; gap: 0.4rem 1.25rem; }
 .details dt { color: var(--muted); }
 .details dd { margin: 0; min-width: 0; }

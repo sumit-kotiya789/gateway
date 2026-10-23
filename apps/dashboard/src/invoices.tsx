@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { api, type Invoice, type Page, type Token } from './api';
+import { api, type Balance, type Invoice, type Page, type Token } from './api';
 import { ConfirmButton, ErrorBox, Field, StatusBadge, fmtDate, short, useAction, useLoad } from './ui';
 
 const STATUSES = ['pending', 'detected', 'confirming', 'paid', 'underpaid', 'overpaid', 'settled', 'expired', 'cancelled', 'failed', 'late_payment'];
@@ -18,9 +18,21 @@ export function Invoices(props: { livemode: boolean; canWrite: boolean }) {
   }, [qs]);
   const more = useAction();
   const rows = [...(page.data?.data ?? []), ...extra];
+  const balances = useLoad(() => api<{ data: Balance[] }>('GET', `/balances/?livemode=${String(props.livemode)}`), [props.livemode]);
 
   return (
     <section>
+      {(balances.data?.data ?? []).length > 0 && (
+        <div className="row balances">
+          {(balances.data?.data ?? []).map((b) => (
+            <div key={b.token} className="card">
+              <small className="muted">Received · {b.token}</small>
+              <strong className="num">{b.received} {b.symbol}</strong>
+              <small className="muted">Platform fees charged: {b.fees_owed} {b.symbol}</small>
+            </div>
+          ))}
+        </div>
+      )}
       <header className="page-head">
         <h2>Invoices</h2>
         <div className="row">
