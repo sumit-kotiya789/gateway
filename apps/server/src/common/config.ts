@@ -43,6 +43,8 @@ const schema = z
 
     SIGNUP_ENABLED: z.stringbool().default(true),
     FEATURE_CUSTODIAL: z.stringbool().default(false),
+    // Lets webhooks reach private/loopback addresses (local receivers in dev and tests). Refused in production.
+    WEBHOOK_ALLOW_PRIVATE_NETWORKS: z.stringbool().default(false),
   })
   .superRefine((c, ctx) => {
     if (c.JWT_SECRET === c.ADMIN_JWT_SECRET) {
@@ -62,6 +64,9 @@ const schema = z
         if (c[key].some((o) => !o.startsWith('https://'))) {
           ctx.addIssue({ code: 'custom', path: [key], message: 'origins must be https in production' });
         }
+      }
+      if (c.WEBHOOK_ALLOW_PRIVATE_NETWORKS) {
+        ctx.addIssue({ code: 'custom', path: ['WEBHOOK_ALLOW_PRIVATE_NETWORKS'], message: 'must be false in production (SSRF guard)' });
       }
       const shared = c.DASHBOARD_ORIGINS.filter((o) => c.ADMIN_ORIGINS.includes(o));
       if (shared.length > 0) {

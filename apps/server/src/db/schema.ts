@@ -486,6 +486,9 @@ export const webhookEndpoints = pgTable(
     description: text('description'),
     // HMAC signing secret, envelope-encrypted (it must be recoverable to sign; never stored or logged in clear).
     secretEnc: text('secret_enc').notNull(),
+    // After a rotation the old secret also signs until it expires, so receivers can switch without dropping events.
+    previousSecretEnc: text('previous_secret_enc'),
+    previousSecretExpiresAt: tstz('previous_secret_expires_at'),
     createdBy: uuid('created_by').references(() => merchantUsers.id),
     createdAt: createdAt(),
   },
@@ -681,3 +684,38 @@ export const reconciliationRuns = pgTable('reconciliation_runs', {
   ok: boolean('ok').notNull(),
   issues: jsonb('issues').notNull(),
 });
+
+// ---------------------------------------------------------------- M6: webhook delivery
+
+export const webhookDeliveryStatus = pgEnum('webhook_delivery_status', ['pending', 'succeeded', 'failed']);
+
+// One row per (endpoint, event), created by a trigger on outbox_events. `next_attempt_at` doubles as the worker lease.
+export const webhookDeliveries = pgTable(
+  'webhook_deliveries',
+  {
+    seq: bigint('seq', { mode: 'bigint' }).primaryKey().generatedAlwaysAsIdentity(),
+    id: uuid('id').notNull().default(sql`gen_random_uuid()`),
+    endpointId: uuid('endpoint_id')
+      .notNull()
+      .references(() => webhookEndpoints.id, { onDelete: 'cascade' }),
+    merchantId: uuid('merchant_id')
+      .notNull()
+      .references(() => merchants.id),
+    eventId: uuid('event_id')
+      .notNull()
+      .references(() => outboxEvents.id),
+    status: webhookDeliveryStatus('status').notNull().default('pending'),
+    attempts: integer('attempts').notNull().default(0),
+    nextAttemptAt: tstz('next_attempt_at').notNull().defaultNow(),
+    lastAttemptAt: tstz('last_attempt_at'),
+    lastStatusCode: integer('last_status_code'),
+    lastError: text('last_error'),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('webhook_deliveries_id_uq').on(t.id),
+    uniqueIndex('webhook_deliveries_endpoint_event_uq').on(t.endpointId, t.eventId),
+    index('webhook_deliveries_due_idx').on(t.nextAttemptAt).where(sql`${t.status} = 'pending'`),
+    index('webhook_deliveries_endpoint_idx').on(t.endpointId, t.seq),
+  ],
+);

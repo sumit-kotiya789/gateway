@@ -92,6 +92,20 @@
       "when": 1792734075223,
       "tag": "0012_admin_console",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1792735806169,
+      "tag": "0013_webhook_deliveries",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1792735810702,
+      "tag": "0014_webhooks_security",
+      "breakpoints": true
     }
   ]
 }

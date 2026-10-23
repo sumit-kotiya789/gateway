@@ -284,3 +284,26 @@ approver is deferred to M7 (custodial payouts and withdrawals). Merchant self-se
 Admin cookies are scoped to path `/admin`, so the SPA lives at `/admin/` to read its CSRF cookie. `apps/admin` imports
 `apps/dashboard/src/ui.tsx` and `styles.css` directly (React deduplicated in its Vite config) instead of a shared package.
 Revisit when a third app needs them.
+
+## D-070 Webhook delivery: outbox fan-out trigger, at-least-once, leased batches (2026-10-23)
+An AFTER INSERT trigger on `outbox_events` creates one `webhook_deliveries` row per endpoint of the same merchant and
+mode, in the event's transaction. Worker queue `webhooks` (separate from maintenance) claims due rows with
+`SKIP LOCKED`, pushes `next_attempt_at` ahead as a lease, sends outside the transaction, then records the result.
+Success = 2xx; redirects are not followed. Retries after 1 m, 5 m, 30 m, 2 h, 5 h, then every 10 h: 12 attempts over
+~2.4 days, then `failed`. No ordering guarantee; receivers dedupe on the event id. Endpoint deletion cascades to its
+deliveries (amends D-051). Finished deliveries are purged 30 days after their last attempt.
+
+## D-071 Webhook signature: `t=<unix>,v1=<hmac>` over "<t>.<raw body>" (2026-10-23)
+HMAC-SHA256 keyed with the full `whsec_...` string, hex. Receivers reject timestamps more than 5 minutes off. Rotation
+keeps the previous secret signing (a second `v1`) for 0-72 h (default 24 h), so receivers can switch without a gap.
+Rotation needs a fresh TOTP, like creation.
+
+## D-072 SSRF guard at delivery time, address pinned (2026-10-23)
+The host is resolved once; every resolved address must be public (IANA special-purpose IPv4/IPv6 ranges blocked,
+incl. metadata, CGNAT, NAT64, 6to4, IPv4-mapped); the request connects to that address with TLS verified against the
+hostname, so DNS rebinding cannot redirect it. 10 s deadline, 64 KiB response cap, no keep-alive.
+`WEBHOOK_ALLOW_PRIVATE_NETWORKS` lifts the range check for local development only; config refuses it in production.
+
+## D-073 No signed return parameters on checkout redirects (amends D-045) (2026-10-23)
+`success_url` is a convenience for the payer. Which of up to 16 endpoint secrets would sign it is ambiguous, and
+merchants must confirm payment from a webhook or `GET /v1/invoices/:id` anyway (INTEGRATION.md).

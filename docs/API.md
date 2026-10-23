@@ -117,7 +117,10 @@ Statuses: `pending → detected → confirming → paid | underpaid | overpaid �
 | POST | `/v1/dashboard/xpubs/` | session + **2FA** | `custody:manage` (retires the previous active xpub) | M3b |
 | GET | `/v1/dashboard/webhooks/` | session | `webhooks:manage` (`livemode`) | M3b |
 | POST | `/v1/dashboard/webhooks/` | session + **2FA** | `webhooks:manage` (returns signing secret once) | M3b |
-| DELETE | `/v1/dashboard/webhooks/:id` | session | `webhooks:manage` | M3b |
+| DELETE | `/v1/dashboard/webhooks/:id` | session | `webhooks:manage` (also deletes its delivery log) | M3b |
+| POST | `/v1/dashboard/webhooks/:id/rotate-secret` | session + **2FA** | `webhooks:manage` (`expire_previous_in_hours` 0-72, default 24; returns the new secret once) | M6 |
+| GET | `/v1/dashboard/webhooks/:id/deliveries` | session | `webhooks:manage` (`limit`, `starting_after`; newest first) | M6 |
+| POST | `/v1/dashboard/webhooks/:id/deliveries/:deliveryId/retry` | session | `webhooks:manage` (finished deliveries only; fresh retry budget) | M6 |
 | GET | `/v1/dashboard/balances/` | session | `account:read` (`livemode`) | M5 |
 | POST | `/admin/v1/auth/login` | none | password + TOTP | M1 |
 | POST | `/admin/v1/auth/logout` | admin session | `admin:read` | M1 |

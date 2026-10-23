@@ -134,6 +134,20 @@ export interface WebhookEndpoint {
   id: string;
   url: string;
   description: string | null;
+  previous_secret_expires_at: string | null;
+  created_at: string;
+}
+
+export interface WebhookDelivery {
+  id: string;
+  event_id: string;
+  event_type: string;
+  status: 'pending' | 'succeeded' | 'failed';
+  attempts: number;
+  next_attempt_at: string | null;
+  last_attempt_at: string | null;
+  last_status_code: number | null;
+  last_error: string | null;
   created_at: string;
 }
 

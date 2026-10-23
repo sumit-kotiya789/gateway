@@ -23,7 +23,8 @@ For merchants and developers integrating the gateway. Everything below runs in *
 
 5. **Send the customer to `checkout_url`** from the response (redirect, or link button). The hosted page shows the
    amount, address, QR code, network warning, countdown, live status and a browser-wallet pay button.
-6. **Learn the outcome**: poll `GET /v1/invoices/:id` for now; signed webhooks (`invoice.paid`, …) arrive with M6.
+6. **Learn the outcome**: add a webhook endpoint (dashboard, Webhooks) and verify every request (below). Polling
+   `GET /v1/invoices/:id` also works.
 
 Treat an order as paid only when status is `paid` or `overpaid` (later `settled`). Never on `detected`/`confirming`.
 Non-custodial invoices move to `settled` right after `paid`/`overpaid`, once the platform fee is booked.
@@ -39,6 +40,124 @@ USDT on BSC has **18** decimals.
 ## Retries
 Send an `Idempotency-Key` (your order id works) on every POST. Retrying with the same key and body is always safe.
 
+## Webhooks
+Each invoice status change is POSTed as JSON to every endpoint of that mode (test events only to test endpoints):
+
+```json
+{ "id": "0b1c…", "object": "event", "type": "invoice.paid", "livemode": false, "created_at": "2026-10-23T10:00:00.000Z",
+  "data": { "invoice_id": "0192…", "status": "paid", "previous_status": "confirming", "token": "bsc-testnet:usdt",
+            "amount_expected": "10", "amount_received": "10", "fee_amount": null, "external_order_id": "order-123",
+            "reason": "confirmed payments cover the amount" } }
+```
+
+Types: `invoice.<status>` for every status after creation (`detected`, `confirming`, `paid`, `underpaid`, `overpaid`,
+`settled`, `expired`, `cancelled`, `late_payment`, and `pending` when a detected payment was reorged away).
+The same objects are listed by `GET /v1/events`.
+
+- **Verify** the `gateway-signature` header (`t=<unix>,v1=<hex>[,v1=<hex>]`): HMAC-SHA256 of `"<t>.<raw body>"` keyed
+  with your `whsec_…` secret; accept if any `v1` matches and `t` is within 5 minutes. Use the raw body bytes.
+- **Respond 2xx within 10 s**, then do the work. Anything else (including redirects) is retried: 1 m, 5 m, 30 m, 2 h,
+  5 h, then every 10 h, 12 attempts over about 2.4 days. The dashboard shows each delivery and can resend it.
+- **Deduplicate** on the event `id` (also in the `gateway-event-id` header): delivery is at-least-once.
+- **Order is not guaranteed.** Act on `data.status`, or fetch `GET /v1/invoices/:id` for the current state.
+- **Rotating the secret** (dashboard): the old secret keeps signing alongside the new one for the window you choose.
+- Endpoints must be public: private, loopback and link-local addresses are refused. To test locally, expose your
+  receiver through a tunnel. Cancelling a test invoice produces an `invoice.cancelled` event.
+
+Node.js
+```js
+import { createHmac, timingSafeEqual } from 'node:crypto';
+
+// rawBody: the exact bytes received (Buffer). Never re-serialize parsed JSON before verifying.
+function verifyGatewayWebhook(rawBody, header, secret, toleranceSeconds = 300) {
+  const parts = header.split(',').map((p) => p.split('='));
+  const t = Number(parts.find(([k]) => k === 't')?.[1]);
+  if (!Number.isInteger(t) || Math.abs(Date.now() / 1000 - t) > toleranceSeconds) return false;
+  const expected = createHmac('sha256', secret).update(`${t}.`).update(rawBody).digest();
+  return parts
+    .filter(([k]) => k === 'v1')
+    .some(([, v]) => {
+      const got = Buffer.from(v, 'hex');
+      return got.length === expected.length && timingSafeEqual(got, expected);
+    });
+}
+```
+
+PHP
+```php
+// $rawBody = file_get_contents('php://input'); $header = $_SERVER['HTTP_GATEWAY_SIGNATURE'] ?? '';
+function verify_gateway_webhook(string $rawBody, string $header, string $secret, int $tolerance = 300): bool {
+    $t = null;
+    $sigs = [];
+    foreach (explode(',', $header) as $part) {
+        [$k, $v] = array_pad(explode('=', $part, 2), 2, '');
+        if ($k === 't' && ctype_digit($v)) $t = (int) $v;
+        if ($k === 'v1') $sigs[] = $v;
+    }
+    if ($t === null || abs(time() - $t) > $tolerance) return false;
+    $expected = hash_hmac('sha256', $t . '.' . $rawBody, $secret);
+    foreach ($sigs as $sig) {
+        if (hash_equals($expected, $sig)) return true;
+    }
+    return false;
+}
+```
+
+Python
+```python
+import hashlib
+import hmac
+import time
+
+
+# raw_body: the exact bytes received (e.g. Flask request.get_data(), Django request.body).
+def verify_gateway_webhook(raw_body: bytes, header: str, secret: str, tolerance: int = 300) -> bool:
+    parts = [p.split("=", 1) for p in header.split(",") if "=" in p]
+    ts = next((v for k, v in parts if k == "t"), "")
+    if not ts.isdigit() or abs(time.time() - int(ts)) > tolerance:
+        return False
+    expected = hmac.new(secret.encode(), ts.encode() + b"." + raw_body, hashlib.sha256).hexdigest()
+    return any(hmac.compare_digest(expected, v) for k, v in parts if k == "v1")
+```
+
+Go
+```go
+// rawBody: the exact bytes received (read r.Body once, verify, then unmarshal).
+func VerifyGatewayWebhook(rawBody []byte, header, secret string, tolerance time.Duration) bool {
+	var ts string
+	var sigs []string
+	for _, part := range strings.Split(header, ",") {
+		k, v, ok := strings.Cut(part, "=")
+		if !ok {
+			continue
+		}
+		switch k {
+		case "t":
+			ts = v
+		case "v1":
+			sigs = append(sigs, v)
+		}
+	}
+	t, err := strconv.ParseInt(ts, 10, 64)
+	if err != nil {
+		return false
+	}
+	if d := time.Since(time.Unix(t, 0)); d > tolerance || d < -tolerance {
+		return false
+	}
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(ts + "."))
+	mac.Write(rawBody)
+	expected := mac.Sum(nil)
+	for _, s := range sigs {
+		if got, err := hex.DecodeString(s); err == nil && hmac.Equal(got, expected) {
+			return true
+		}
+	}
+	return false
+}
+```
+
 ## Payment links (no code)
 `POST /v1/payment-links` with `amount` and `token` returns a `url` you can share. Each customer who clicks
 "Continue to payment" gets their own invoice and deposit address.
@@ -48,5 +167,5 @@ Each invoice uses the next address of your xpub (`0/<index>`, shown in the dashb
 unused addresses; if your wallet stops discovering addresses, raise its gap limit or scan up to the latest index.
 
 ## Still to come
-Webhook verification snippets (Node, PHP, Python, Go) in M6; SDKs, widget and WooCommerce plugin in M10;
+SDKs, widget and WooCommerce plugin in M10;
 go-live checklist for merchants before launch.

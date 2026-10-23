@@ -89,10 +89,23 @@ kept: `select started_at, ok, issues from reconciliation_runs order by started_a
   ledger rows (they are append-only by design); corrections are new journals, written by code and reviewed by two people.
 - `unsettled`: a paid non-custodial invoice was not settled; re-run settlement for it after finding why.
 
-## Webhook backlog (M6)
+## Webhook backlog
+- Worker queue `webhooks` delivers every 5 s (up to 10 batches of 50 per run). Backlog:
+  `select count(*), min(next_attempt_at) from webhook_deliveries where status = 'pending' and next_attempt_at <= now();`
+  Growing = worker down, Redis down, or many slow endpoints (10 s timeout each, 10 in parallel). Add worker processes:
+  claims are `SKIP LOCKED`.
+- One merchant failing: `select endpoint_id, count(*), max(last_error) from webhook_deliveries where status <> 'succeeded'
+  group by 1 order by 2 desc limit 20;`. Their endpoint is down or rejects the signature; deliveries fail after ~2.4 days.
+  After they fix it, resend from the dashboard, or in bulk:
+  `update webhook_deliveries set status = 'pending', attempts = 0, next_attempt_at = now() where endpoint_id = '…' and status = 'failed';`
+- `... resolves to a non-public address` = the URL points at a private network (SSRF guard). Expected; the merchant
+  must use a public URL.
 ## Stuck transaction (M7)
 ## Hot wallet compromise (M7)
 ## Emergency kill switch (M7)
-## Key rotation (M6 webhook secrets, M7 signer keys)
+## Key rotation
+- Webhook secrets: the merchant rotates in the dashboard (TOTP). The old secret keeps signing for 0-72 h. A leaked secret:
+  rotate with "expire it now". Secrets are envelope-encrypted with `DATA_KEK`; KEK rotation re-wraps data keys (M11).
+- Signer keys: M7.
 ## Mass refund (M7)
 ## DB restore (M11)

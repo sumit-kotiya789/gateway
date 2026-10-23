@@ -41,7 +41,9 @@ Not money-moving, but a bug here breaks authentication, tenant isolation or audi
 | `apps/server/src/modules/checkout/*.ts` | public pages: escaping, nonce CSP, data exposure | M3 |
 | `apps/server/src/modules/payment-links/payment-links.routes.ts` | public invoice creation guards | M3 |
 | `packages/core/src/rbac.ts` | permission matrix | M1 |
-| `apps/server/src/modules/webhooks/webhooks.routes.ts` | webhook signing-secret generation and encryption | M3b |
+| `apps/server/src/modules/webhooks/webhooks.routes.ts` | webhook signing-secret generation, encryption, rotation | M3b |
+| `apps/server/src/modules/webhooks/ssrf.ts`, `delivery.ts` | outbound SSRF guard (address pinning), signing, retry state | M6 |
+| `apps/server/db/migrations/0014_webhooks_security.sql` | trigger-only delivery creation, tenant isolation | M6 |
 | `apps/server/src/modules/ledger/reconciliation.ts` | detects ledger/payment/invoice drift | M5 |
 | `apps/server/src/modules/admin/admin.routes.ts` | admin console: suspension, 2FA reset, kill switches, manual resolve, audit access | M5b |
 | `apps/admin/src/api.ts`, `apps/admin/nginx.conf` | admin CSRF header; admin origin serves only /admin/ and its API path | M5b |
@@ -73,9 +75,9 @@ Status: `planned` until the mitigation's milestone lands, then the test that pro
 | Non-custodial merchant on platform keys | DB guard: address source must match custody mode; strategy selection exhaustive; custodial behind feature flag | `custody.test.ts` | M2 |
 | Reorg double-credit | Block-hash ring per chain; unique `(chain_id, tx_hash, log_index)`; credit only after finality + confirmations | planned | M4 |
 | Lying RPC | Multi-provider failover; quorum of two providers above value threshold; fresh re-verify at confirmation | planned | M4 |
-| Webhook spoof (merchant side) | HMAC-SHA256 over `timestamp.rawBody`; constant-time compare; verification snippets | planned | M6 |
-| Webhook replay | Timestamp skew > 5 min rejected; stable event id for dedup | planned | M6 |
-| SSRF via webhook URL | Block private/loopback/link-local/metadata ranges; IP pinned at connect (DNS rebinding); no redirects; size + time caps | planned | M6 |
+| Webhook spoof (merchant side) | HMAC-SHA256 over `timestamp.rawBody`; constant-time compare; tested verification snippets (Node, PHP, Python, Go) | `webhooks.test.ts`, `ssrf.test.ts` | M6 |
+| Webhook replay | Signed timestamp, receivers reject > 5 min skew; stable event id (`gateway-event-id`) for dedup | `webhooks.test.ts` | M6 |
+| SSRF via webhook URL | All resolved addresses must be public (IANA special-purpose v4/v6 ranges, metadata, NAT64, 6to4, mapped); connect to the vetted address (DNS rebinding); no redirects; 10 s, 64 KiB caps; dev override refused in production | `ssrf.test.ts`, `webhooks.test.ts` | M6 |
 | Insider tampering with audit trail | App role has no UPDATE/DELETE/TRUNCATE on `audit_logs`; trigger blocks even the owner; SHA-256 hash chain verified by `audit_verify()` | `db-security.test.ts` | M1 |
 | Insider misuse (approvals) | Admin RBAC; reason on every change, audited in the same transaction; step-up TOTP for actions that lower a control (D-064); two-person approval above threshold (M7) | `admin.test.ts`, `watcher.test.ts` | M5b/M7 |
 | Key theft | Seed only in signer; signer caps + allowlist; hot wallet cap; cold multisig | planned | M7 |

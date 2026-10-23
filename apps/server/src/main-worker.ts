@@ -1,5 +1,6 @@
-// Worker process: BullMQ queues for background jobs. M3: invoice expiry, idempotency-key retention. M5: ledger reconciliation. Later: outbox dispatch, webhooks,
-// reconciliation, sweeps. Every job handler is idempotent and safe to run on several workers at once.
+// Worker process: BullMQ queues for background jobs. `maintenance`: invoice expiry, retention purges, ledger reconciliation.
+// `webhooks`: outbound delivery, on its own queue so slow merchant endpoints never delay maintenance. Later: sweeps (M7).
+// Every job handler is idempotent and safe to run on several workers at once.
 import { Queue, Worker } from 'bullmq';
 import { Redis } from 'ioredis';
 import { loadConfig } from './common/config.js';
@@ -10,8 +11,12 @@ import type { Deps } from './deps.js';
 import { purgeIdempotencyKeys } from './common/idempotency.js';
 import { expireDueInvoices } from './modules/invoices/invoices.js';
 import { reconcileLedger } from './modules/ledger/reconciliation.js';
+import { BATCH, deliverDueWebhooks, purgeWebhookDeliveries } from './modules/webhooks/delivery.js';
 
 const QUEUE = 'maintenance';
+const WEBHOOK_QUEUE = 'webhooks';
+/** Batches per delivery job: drains a backlog faster than one batch per tick, still yields between jobs. */
+const WEBHOOK_BATCHES_PER_JOB = 10;
 const SHUTDOWN_TIMEOUT_MS = 30_000;
 
 export async function runMaintenanceJob(deps: Deps, name: string): Promise<unknown> {
@@ -29,9 +34,23 @@ export async function runMaintenanceJob(deps: Deps, name: string): Promise<unkno
       const purged = await purgeIdempotencyKeys(deps);
       return { purged };
     }
+    case 'purge-webhook-deliveries': {
+      const purged = await purgeWebhookDeliveries(deps);
+      return { purged };
+    }
     default:
       throw new Error(`unknown maintenance job ${name}`);
   }
+}
+
+export async function runWebhookJob(deps: Deps): Promise<{ sent: number }> {
+  let sent = 0;
+  for (let i = 0; i < WEBHOOK_BATCHES_PER_JOB; i++) {
+    const n = await deliverDueWebhooks(deps);
+    sent += n;
+    if (n < BATCH) break;
+  }
+  return { sent };
 }
 
 async function main(): Promise<void> {
@@ -49,10 +68,17 @@ async function main(): Promise<void> {
   await queue.upsertJobScheduler('expire-invoices', { every: 15_000 }, { name: 'expire-invoices', opts: jobOpts });
   await queue.upsertJobScheduler('reconcile-ledger', { every: 3_600_000 }, { name: 'reconcile-ledger', opts: jobOpts });
   await queue.upsertJobScheduler('purge-idempotency-keys', { every: 3_600_000 }, { name: 'purge-idempotency-keys', opts: jobOpts });
+  await queue.upsertJobScheduler('purge-webhook-deliveries', { every: 86_400_000 }, { name: 'purge-webhook-deliveries', opts: jobOpts });
+  const webhookQueue = new Queue(WEBHOOK_QUEUE, { connection });
+  await webhookQueue.upsertJobScheduler('deliver-webhooks', { every: 5_000 }, { name: 'deliver-webhooks', opts: jobOpts });
 
   const worker = new Worker(QUEUE, (job) => runMaintenanceJob(deps, job.name), { connection, concurrency: 1 });
   worker.on('failed', (job, err) => {
     log.error({ err, job: job?.name }, 'maintenance job failed');
+  });
+  const webhookWorker = new Worker(WEBHOOK_QUEUE, () => runWebhookJob(deps), { connection, concurrency: 1 });
+  webhookWorker.on('failed', (_job, err) => {
+    log.error({ err }, 'webhook delivery job failed');
   });
   log.info('worker started');
 
@@ -60,9 +86,8 @@ async function main(): Promise<void> {
     log.info({ signal }, 'worker shutting down');
     setTimeout(() => process.exit(1), SHUTDOWN_TIMEOUT_MS).unref();
     // Let the in-flight job finish, then release connections.
-    worker
-      .close()
-      .then(() => queue.close())
+    Promise.all([worker.close(), webhookWorker.close()])
+      .then(() => Promise.all([queue.close(), webhookQueue.close()]))
       .then(() => Promise.allSettled([pool.end(), connection.quit()]))
       .then(
         () => process.exit(0),

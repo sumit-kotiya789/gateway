@@ -19,7 +19,8 @@ describe('redact', () => {
   it('redacts API keys and extended private keys by value', () => {
     const xprv =
       'xprv9s21ZrQH143K3QTDL4LXw2F7HEK3wJUD2nW2nRk4stbPy6cq3jPPqjiChkVvvNKmPGJxWUtg6LnF5kejMRNNU3TGtRBeJgk33yuGBxrMPHi';
-    const s = JSON.stringify(redact({ msg: `key sk_live_ABCdef123 and ${xprv} and pk_test_zz` }));
+    const s = JSON.stringify(redact({ msg: `key sk_live_ABCdef123 and ${xprv} and pk_test_zz and whsec_Abc123xyz` }));
+    expect(s).not.toContain('Abc123xyz');
     expect(s).not.toContain('ABCdef123');
     expect(s).not.toContain(xprv);
     expect(s).not.toContain('pk_test_zz');

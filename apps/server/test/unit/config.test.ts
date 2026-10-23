@@ -64,6 +64,7 @@ describe('loadConfig', () => {
     expect(issues(ok)).toBe('');
     expect(loadConfig(ok).PUBLIC_BASE_URL).toBe('https://pay.a.test'); // trailing slash trimmed
     expect(issues({ ...ok, PUBLIC_BASE_URL: 'http://pay.a.test' })).toContain('PUBLIC_BASE_URL');
+    expect(issues({ ...ok, WEBHOOK_ALLOW_PRIVATE_NETWORKS: 'true' })).toContain('WEBHOOK_ALLOW_PRIVATE_NETWORKS');
   });
 
   it('custodial feature flag is off unless explicitly enabled', () => {

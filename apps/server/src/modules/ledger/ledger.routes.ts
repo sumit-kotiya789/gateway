@@ -31,7 +31,7 @@ export async function balancesView(tx: Tx, merchantId: string, livemode: boolean
 type EventRow = typeof outboxEvents.$inferSelect;
 const AMOUNT_FIELDS = ['amount_expected', 'amount_received', 'fee_amount'] as const;
 
-async function eventsView(tx: Tx, rows: EventRow[]) {
+export async function eventsView(tx: Tx, rows: EventRow[]) {
   const meta = await decimalsOf(tx, [...new Set(rows.map((r) => (r.data as { token?: string }).token).filter((t): t is string => !!t))]);
   return rows.map((r) => {
     const data = { ...(r.data as Record<string, unknown>) };

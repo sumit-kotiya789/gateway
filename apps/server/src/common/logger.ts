@@ -4,7 +4,7 @@ const SECRET_KEY_RE =
   /pass(word)?|secret|token|authorization|cookie|api[-_]?key|private[-_]?key|priv[-_]?key|mnemonic|seed|xprv|totp|recovery|signature/i;
 // Value patterns that are always secrets regardless of key name. Hex is NOT redacted by value:
 // tx hashes and private keys share a format, so keys are protected by key-name rules above.
-const SECRET_VALUE_RES: RegExp[] = [/\b(sk|pk)_(live|test)_[A-Za-z0-9_]+/g, /\b[xtyzuv]prv[1-9A-HJ-NP-Za-km-z]{20,}/g];
+const SECRET_VALUE_RES: RegExp[] = [/\b(sk|pk)_(live|test)_[A-Za-z0-9_]+/g, /\bwhsec_[A-Za-z0-9]+/g, /\b[xtyzuv]prv[1-9A-HJ-NP-Za-km-z]{20,}/g];
 const REDACTED = '[REDACTED]';
 const MAX_DEPTH = 8;
 

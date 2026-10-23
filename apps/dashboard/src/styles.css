@@ -104,7 +104,7 @@ tr.clickable:hover { background: var(--bg); }
 .details dd { margin: 0; min-width: 0; }
 
 .badge { display: inline-block; font-size: 0.75rem; font-weight: 600; padding: 0.1rem 0.5rem; border-radius: 999px; background: var(--bg); border: 1px solid var(--border); text-transform: capitalize; }
-.s-paid, .s-settled, .s-overpaid { color: #1b7f3b; border-color: #1b7f3b; }
+.s-paid, .s-settled, .s-overpaid, .s-succeeded { color: #1b7f3b; border-color: #1b7f3b; }
 .s-detected, .s-confirming { color: var(--accent); border-color: var(--accent); }
 .s-underpaid, .s-late_payment { color: var(--test); border-color: var(--test); }
 .s-failed { color: var(--danger); border-color: var(--danger); }
