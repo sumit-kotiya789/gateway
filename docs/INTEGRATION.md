@@ -27,6 +27,7 @@ For merchants and developers integrating the gateway. Everything below runs in *
 
 Treat an order as paid only when status is `paid` or `overpaid` (later `settled`). Never on `detected`/`confirming`.
 Non-custodial invoices move to `settled` right after `paid`/`overpaid`, once the platform fee is booked.
+An `underpaid` or `late_payment` invoice can later become `paid` by a manual decision (event reason `manual: ...`).
 `GET /v1/events` lists every status change (`invoice.paid`, `invoice.settled`, ...); `GET /v1/balances` sums what you received.
 `GET /v1/invoices/:id` lists the on-chain `payments` (tx hash, amount, block, status). A payment mined before the deadline
 counts even if it is detected later; one mined after it turns the invoice into `late_payment` (never auto-fulfilled).

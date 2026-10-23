@@ -27,7 +27,7 @@ export default defineConfig(
       'no-console': 'error',
     },
   },
-  { files: ['apps/dashboard/src/**'], languageOptions: { globals: globals.browser } },
+  { files: ['apps/dashboard/src/**', 'apps/admin/src/**'], languageOptions: { globals: globals.browser } },
   {
     files: ['**/test/**'],
     rules: { '@typescript-eslint/no-unsafe-member-access': 'off', '@typescript-eslint/no-unsafe-assignment': 'off' },

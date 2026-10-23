@@ -15,7 +15,7 @@ async function decimalsOf(tx: Tx, ids: string[]) {
   return new Map(rows.map((r) => [r.id, r]));
 }
 
-async function balancesView(tx: Tx, merchantId: string, livemode: boolean) {
+export async function balancesView(tx: Tx, merchantId: string, livemode: boolean) {
   const b = await merchantBalances(tx, merchantId, livemode);
   const meta = await decimalsOf(tx, [...b.keys()]);
   return {

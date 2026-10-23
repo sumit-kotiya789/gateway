@@ -73,6 +73,14 @@ services:
     depends_on:
       api: { condition: service_started }
 
+  # Admin console SPA + same-origin proxy for /admin/v1/* (http://localhost:${ADMIN_HOST_PORT:-8081}/admin/). Own origin (D-025).
+  admin:
+    <<: *hardened
+    build: { context: ., dockerfile: apps/admin/Dockerfile }
+    ports: ["127.0.0.1:${ADMIN_HOST_PORT:-8081}:8080"]
+    depends_on:
+      api: { condition: service_started }
+
   postgres:
     image: postgres:17-alpine
     environment:

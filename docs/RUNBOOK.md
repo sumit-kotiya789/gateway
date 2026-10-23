@@ -17,7 +17,8 @@ Each procedure is written when the component it covers ships. Headings are fixed
 - `pnpm db:seed`: idempotent upsert of chains and tokens. Never re-enables a chain or token an operator disabled.
 - `pnpm chains:verify`: for every enabled chain, each RPC must report the configured chain id, and every enabled token's
   on-chain `decimals()` must equal config. Non-zero exit = do not start watchers; fix config or RPC first.
-- Disable a token or chain: `update tokens set enabled = false where id = …` (admin UI in M5b). Never delete.
+- Disable a token or chain: admin console, Kill switches (reason required). Immediate for new invoices; restart the
+  watchers to stop scanning a disabled chain. Re-enabling needs a superadmin + TOTP. Never delete registry rows.
 
 ## Bootstrap the first admin
 `pnpm admin:create <email> superadmin` (compose: `docker compose run --rm api node cli/admin-create.cjs <email> superadmin`).
@@ -29,7 +30,8 @@ A non-NULL result is a security incident: freeze admin access, preserve the DB s
 
 ## Merchant locked out
 Lockout clears itself (15 min, doubling, max 24 h). Lost 2FA device: user signs in with a recovery code. Without recovery
-codes, an admin reset flow arrives with M5b; until then it is a manual, audited DB operation by two people.
+codes: verify the user's identity out of band, then admin console, merchant, Users, Reset 2FA (operator + TOTP). It revokes
+the user's sessions and recovery codes; the user signs in with the password and must re-enroll 2FA.
 
 ## Worker
 - `main-worker.cjs` (compose service `worker`) runs BullMQ schedulers. M3: `expire-invoices` every 15 s.
@@ -43,6 +45,15 @@ codes, an admin reset flow arrives with M5b; until then it is a manual, audited 
   audit IPs see the proxy address. Never set it higher than the real count (client IPs become spoofable).
 - 403 `origin not allowed` on every POST = origin missing from `DASHBOARD_ORIGINS`.
 - Dev without Docker for the SPA: `pnpm --filter @gw/dashboard dev` (http://localhost:5173, proxies to the api on :3000).
+
+## Admin console
+- Compose service `admin` (nginx) serves the console at `/admin/` on :8080 (host port `ADMIN_HOST_PORT`, default 8081) and
+  proxies `/admin/v1/*`. Its own origin, never the dashboard's (config refuses a shared origin); list it in `ADMIN_ORIGINS`.
+  Restrict it at the edge (VPN / IP allowlist) and set `ADMIN_IP_ALLOWLIST` (non-listed IPs get 404).
+- Underpaid / late-payment invoices: the Invoices page lists them; "Mark as paid" (operator + TOTP) books the fee and
+  settles. Use it only when the merchant confirms they accept the funds; it cannot be undone.
+- Suspend a merchant: immediate (API keys stop working, no new invoices). Reactivation needs TOTP.
+- Dev: `pnpm --filter @gw/admin dev` (http://localhost:5174/admin/, proxies to the api on :3000).
 
 ## Wrong merchant xpub registered
 New invoices derive from the active xpub immediately. The owner registers the correct xpub (Payout wallet page, needs
@@ -67,8 +78,8 @@ and cancel any still `pending`. Funds already paid there are only spendable by w
 Log line `DEEP REORG: cursor block replaced beyond reorgDepth` means a reorg deeper than configured. Confirmed payments are
 final in the DB; check each payment confirmed in the affected range against an independent explorer:
 `select id, invoice_id, tx_hash, block_number from payments where chain_id = '<chain>' and status = 'confirmed' and block_number >= <block>;`
-Raise `chains.reorg_depth` / tiers for that chain. A credited payment that no longer exists on-chain is an incident (freeze
-the merchant's payouts, M5b).
+Raise `chains.reorg_depth` / tiers for that chain. A credited payment that no longer exists on-chain is an incident (set the
+merchant's `payouts_frozen` risk flag in the admin console; enforced on custodial payouts from M7).
 
 ## Reconciliation mismatch
 Worker job `reconcile-ledger` (hourly) logs `RECONCILIATION MISMATCH` with the failing checks and sample ids; every run is

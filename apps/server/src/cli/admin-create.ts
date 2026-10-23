@@ -9,7 +9,7 @@ import { hashPassword } from '../common/crypto/password.js';
 import { generateTotpSecret, totpUri } from '../common/crypto/totp.js';
 import { createDb, withSystem } from '../common/db.js';
 import { adminUsers } from '../db/schema.js';
-import { adminTotpAad } from '../modules/auth/admin-auth.routes.js';
+import { adminTotpAad } from '../modules/auth/guards.js';
 
 async function main(): Promise<void> {
   const [email, role] = process.argv.slice(2);

@@ -8,10 +8,12 @@ import { inject } from 'vitest';
 import { buildApp } from '../../src/app.js';
 import { loadConfig } from '../../src/common/config.js';
 import { Envelope, LocalKek } from '../../src/common/crypto/envelope.js';
-import { base32Decode, currentStep, totpAt } from '../../src/common/crypto/totp.js';
+import { hashPassword } from '../../src/common/crypto/password.js';
+import { base32Decode, currentStep, generateTotpSecret, totpAt } from '../../src/common/crypto/totp.js';
 import { createDb } from '../../src/common/db.js';
 import { createLogger } from '../../src/common/logger.js';
 import type { Deps } from '../../src/deps.js';
+import { adminTotpAad } from '../../src/modules/auth/guards.js';
 
 export const DASH_ORIGIN = 'http://dash.test';
 export const ADMIN_ORIGIN = 'http://admin.test';
@@ -183,4 +185,33 @@ export async function merchantWithKey(
       ...(payload === undefined ? {} : { payload: payload as Record<string, unknown> }),
     });
   return { ...s, key, xpub, secret, api, mintKey };
+}
+
+/** Inserts an admin user directly (owner connection) and returns its credentials. */
+export async function createAdmin(owner: pg.Pool, deps: Deps, role = 'operator') {
+  const id = uuidv7();
+  const email = uniqueEmail('admin');
+  const password = 'admin correct horse';
+  const secret = generateTotpSecret();
+  await owner.query(`insert into admin_users (id, email, password_hash, role, totp_secret_enc) values ($1, $2, $3, $4, $5)`, [
+    id,
+    email,
+    await hashPassword(password),
+    role,
+    await deps.envelope.seal(secret, adminTotpAad(id)),
+  ]);
+  return { id, email, password, secret };
+}
+
+/** Logged-in admin console agent. `stepUp()` returns a fresh x-totp-code header (moves the clock one TOTP step). */
+export async function adminAgent(t: ReturnType<typeof buildTestApp>, owner: pg.Pool, role: 'superadmin' | 'operator' | 'auditor' = 'operator') {
+  const a = await createAdmin(owner, t.deps, role);
+  const stepUp = () => {
+    t.clock.advance(30_000);
+    return { 'x-totp-code': totpNow(a.secret, t.clock()) };
+  };
+  const agent = new Agent(t.app, ADMIN_ORIGIN);
+  const r = await agent.req('POST', '/admin/v1/auth/login', { email: a.email, password: a.password, code: stepUp()['x-totp-code'] });
+  if (r.statusCode !== 200) throw new Error(`admin login failed: ${r.body}`);
+  return { ...a, agent, stepUp };
 }

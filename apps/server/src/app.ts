@@ -25,6 +25,7 @@ import { ledgerDashboardRoutes, ledgerRoutes } from './modules/ledger/ledger.rou
 import { webhookDashboardRoutes } from './modules/webhooks/webhooks.routes.js';
 import { xpubDashboardRoutes } from './modules/xpubs/xpubs.routes.js';
 import { paymentLinkRoutes, publicPayRoutes } from './modules/payment-links/payment-links.routes.js';
+import { adminRoutes } from './modules/admin/admin.routes.js';
 import { adminAuthRoutes } from './modules/auth/admin-auth.routes.js';
 import { dashboardAuthRoutes } from './modules/auth/dashboard-auth.routes.js';
 import { requireAdminNetwork } from './modules/auth/guards.js';
@@ -155,6 +156,7 @@ export function buildApp(logger: FastifyBaseLogger, deps?: Deps) {
     async (admin) => {
       admin.addHook('onRequest', requireAdminNetwork(deps));
       await admin.register(adminAuthRoutes(deps), { prefix: '/auth' });
+      await admin.register(adminRoutes(deps));
     },
     { prefix: '/admin/v1' },
   );

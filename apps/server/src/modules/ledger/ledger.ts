@@ -7,7 +7,7 @@
 //   payment confirmed (A):  Dr merchant_received A   / Cr merchant_sales A      (memo: funds in the merchant's wallet)
 //   invoice settled  (fee): Dr merchant_fees_owed F  / Cr platform_fee_revenue F (prepaid top-ups credit fees_owed, M8)
 // Custodial postings (pending/available balances, sweeps) arrive with M7; custodial invoices stay `paid` until then.
-import { computeFee, feeBase } from '@gw/core';
+import { AppError, computeFee, feeBase } from '@gw/core';
 import { and, eq, sql } from 'drizzle-orm';
 import type { Tx } from '../../common/db.js';
 import { ledgerAccounts, ledgerEntries, ledgerJournals, invoices, payments } from '../../db/schema.js';
@@ -78,7 +78,7 @@ export async function postPayment(tx: Tx, p: PaymentRow): Promise<void> {
 /**
  * Non-custodial settlement: charges the platform fee on min(received, expected) at the invoice's snapshotted rate and
  * moves paid/overpaid -> settled, all in the caller's transaction. No-op for any other invoice. Also the path for
- * manual resolutions that end in `paid` (M5b).
+ * manual resolutions that end in `paid` (resolveInvoice).
  */
 export async function settleInvoice(deps: Deps, tx: Tx, invoiceId: string): Promise<void> {
   const [inv] = await tx.select().from(invoices).where(eq(invoices.id, invoiceId)).for('update');
@@ -93,6 +93,20 @@ export async function settleInvoice(deps: Deps, tx: Tx, invoiceId: string): Prom
   }
   await tx.update(invoices).set({ feeAmount: fee }).where(eq(invoices.id, inv.id));
   await transitionInvoice(deps, tx, inv.id, 'settled', 'platform fee charged');
+}
+
+/**
+ * Manual resolution (admin, M5b): an underpaid or late_payment invoice is accepted as paid, then settled like any other
+ * paid invoice (fee on what arrived, capped at expected). Only these two edges; everything else is a conflict.
+ */
+export async function resolveInvoice(deps: Deps, tx: Tx, invoiceId: string, reason: string): Promise<void> {
+  const [inv] = await tx.select({ status: invoices.status }).from(invoices).where(eq(invoices.id, invoiceId)).for('update');
+  if (!inv) throw new AppError('not_found', 'invoice not found');
+  if (inv.status !== 'underpaid' && inv.status !== 'late_payment') {
+    throw new AppError('conflict', `only underpaid or late_payment invoices can be resolved (status: ${inv.status})`);
+  }
+  await transitionInvoice(deps, tx, invoiceId, 'paid', `manual: ${reason}`);
+  await settleInvoice(deps, tx, invoiceId);
 }
 
 /** Per-token balances of one merchant in one mode (minor units). Positive = debit balance. */

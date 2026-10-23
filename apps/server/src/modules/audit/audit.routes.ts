@@ -1,5 +1,5 @@
 import { AppError } from '@gw/core';
-import { and, desc, eq, lt } from 'drizzle-orm';
+import { and, desc, eq, lt, ne } from 'drizzle-orm';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { withTenant } from '../../common/db.js';
@@ -31,6 +31,8 @@ export function auditDashboardRoutes(deps: Deps): FastifyPluginAsyncZod {
             .where(
               and(
                 eq(auditLogs.merchantId, user.merchantId),
+                // Platform admin actions are internal (reasons may be confidential, D-065); merchants see their effects.
+                ne(auditLogs.actorType, 'admin'),
                 starting_after === undefined ? undefined : lt(auditLogs.seq, BigInt(starting_after)),
               ),
             )

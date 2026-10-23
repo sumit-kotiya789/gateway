@@ -4,7 +4,7 @@ import { createEvmAdapter } from '@gw/chains';
 import { afterAll, beforeAll, describe, expect, inject, it, vi } from 'vitest';
 import { expireDueInvoices } from '../../src/modules/invoices/invoices.js';
 import { FencedError, becomeLeader, scanTick } from '../../src/modules/watcher/scanner.js';
-import { buildTestApp, merchantWithKey, ownerPool } from './helpers.js';
+import { adminAgent, buildTestApp, merchantWithKey, ownerPool } from './helpers.js';
 
 const t = buildTestApp();
 const { app, clock, deps } = t;
@@ -607,4 +607,59 @@ describe('ledger, fees, outbox', () => {
       await owner.query('update invoices set amount_received = 0 where id = $1', [inv.id]);
     }
   });
+
+  // ---------------------------------------------------------------- M5b: admin manual resolution
+
+  it('admin resolves underpaid: paid -> settled, fee on what arrived; needs invoices:resolve and step-up', async () => {
+    const { m, inv } = await newInvoice('10');
+    chain.pay(inv.deposit_address, units(6));
+    chain.mine(3);
+    await settle();
+    const auditor = await adminAgent(t, owner, 'auditor');
+    const op = await adminAgent(t, owner);
+    const listed = (await auditor.agent.req('GET', `/admin/v1/invoices?merchant_id=${m.merchantId}&livemode=false`)).json<{ data: unknown[] }>();
+    expect(listed.data).toEqual([expect.objectContaining({ id: inv.id, status: 'underpaid', merchant_id: m.merchantId, merchant_name: 'Shop' })]);
+
+    const url = `/admin/v1/invoices/${inv.id}/resolve`;
+    const body = { reason: 'merchant accepts the shortfall' };
+    expect((await auditor.agent.req('POST', url, body, auditor.stepUp())).statusCode).toBe(403);
+    expect((await op.agent.req('POST', url, body)).statusCode).toBe(403);
+    const r = await op.agent.req('POST', url, body, op.stepUp());
+    expect(r.json()).toMatchObject({ status: 'settled', amount_received: '6', fee_amount: '0.06', payments: [{ amount: '6', status: 'confirmed' }] });
+    expect((await journals(inv.id)).rows.find((x) => x.account === 'merchant_fees_owed')?.amount).toBe('60000');
+    expect((await op.agent.req('POST', url, body, op.stepUp())).statusCode).toBe(409);
+
+    const ev = (await m.api('GET', '/v1/events?limit=2')).json<{ data: { type: string; data: { reason: string } }[] }>().data;
+    expect(ev.map((e) => [e.type, e.data.reason])).toEqual([
+      ['invoice.settled', 'platform fee charged'],
+      ['invoice.paid', 'manual: merchant accepts the shortfall'],
+    ]);
+    const a = await owner.query(`select after from audit_logs where action = 'admin.invoice_resolved' and target_id = $1 and actor_id = $2`, [inv.id, op.id]);
+    expect(a.rows).toEqual([{ after: body }]);
+    expect((await auditor.agent.req('GET', `/admin/v1/invoices/${inv.id}`)).json()).toMatchObject({ id: inv.id, history: expect.arrayContaining([expect.objectContaining({ to: 'paid', reason: 'manual: merchant accepts the shortfall' })]) });
+  });
+
+  it('admin resolves a late payment: fee capped at the expected amount; unknown or open invoices are refused', async () => {
+    const { inv, get } = await newInvoice('10', { expires_in: 300 });
+    chain.mine(1, Number(BigInt(Math.floor(Date.parse(inv.expires_at) / 1000)) - chain.time + 10n));
+    chain.pay(inv.deposit_address, units(12));
+    await tick();
+    chain.mine(3);
+    await tick();
+    expect((await get()).status).toBe('late_payment');
+    const op = await adminAgent(t, owner);
+    const r = await op.agent.req('POST', `/admin/v1/invoices/${inv.id}/resolve`, { reason: 'order shipped anyway' }, op.stepUp());
+    expect(r.json()).toMatchObject({ status: 'settled', amount_received: '12', fee_amount: '0.1' });
+
+    const open = await newInvoice('10');
+    expect((await op.agent.req('POST', `/admin/v1/invoices/${open.inv.id}/resolve`, { reason: 'not allowed' }, op.stepUp())).statusCode).toBe(409);
+    expect((await op.agent.req('POST', '/admin/v1/invoices/00000000-0000-7000-8000-000000000000/resolve', { reason: 'nothing' }, op.stepUp())).statusCode).toBe(404);
+    expect((await op.agent.req('GET', '/admin/v1/invoices/00000000-0000-7000-8000-000000000000')).statusCode).toBe(404);
+    expect((await reconcileAll()).length).toBe(0);
+  });
 });
+
+async function reconcileAll() {
+  const { reconcileLedger } = await import('../../src/modules/ledger/reconciliation.js');
+  return reconcileLedger(deps);
+}

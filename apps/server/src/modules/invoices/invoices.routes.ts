@@ -184,6 +184,20 @@ export function invoiceRoutes(deps: Deps): FastifyPluginAsyncZod {
  * Dashboard (session auth). Mode comes from the request (`livemode`), not from a key. Creation here has no
  * idempotency key: a person clicking a button, not a retrying backend.
  */
+/** Invoice with its status history and payments (dashboard and admin console). */
+export async function invoiceDetail(tx: Tx, where: SQL, base: string) {
+  const r = await loadInvoiceWithToken(tx, where);
+  if (!r) throw new AppError('not_found', 'invoice not found');
+  const history = await tx.select().from(invoiceStatusHistory).where(eq(invoiceStatusHistory.invoiceId, r.inv.id)).orderBy(asc(invoiceStatusHistory.id));
+  return {
+    ...invoiceView(r.inv, r.token, r.chain, base),
+    merchant_id: r.inv.merchantId,
+    fee_amount: r.inv.feeAmount === null ? null : fromMinorUnits(r.inv.feeAmount, r.token.decimals),
+    history: history.map((h) => ({ from: h.fromStatus, to: h.toStatus, reason: h.reason, at: h.at.toISOString() })),
+    payments: await paymentsView(tx, r.inv.id, r.token.decimals),
+  };
+}
+
 export function invoiceDashboardRoutes(deps: Deps): FastifyPluginAsyncZod {
   const base = deps.config.PUBLIC_BASE_URL;
   const user = (req: FastifyRequest) => {
@@ -207,20 +221,7 @@ export function invoiceDashboardRoutes(deps: Deps): FastifyPluginAsyncZod {
 
     app.get('/:id', { preHandler: requirePermission('invoices:read'), schema: { params: z.strictObject({ id: z.uuid() }) } }, async (req) => {
       const u = user(req);
-      return withTenant(deps.db, u.merchantId, async (tx) => {
-        const r = await loadInvoiceWithToken(tx, own(u.merchantId, req.params.id));
-        if (!r) throw new AppError('not_found', 'invoice not found');
-        const history = await tx
-          .select()
-          .from(invoiceStatusHistory)
-          .where(eq(invoiceStatusHistory.invoiceId, r.inv.id))
-          .orderBy(asc(invoiceStatusHistory.id));
-        return {
-          ...invoiceView(r.inv, r.token, r.chain, base),
-          history: history.map((h) => ({ from: h.fromStatus, to: h.toStatus, reason: h.reason, at: h.at.toISOString() })),
-          payments: await paymentsView(tx, r.inv.id, r.token.decimals),
-        };
-      });
+      return withTenant(deps.db, u.merchantId, (tx) => invoiceDetail(tx, own(u.merchantId, req.params.id), base));
     });
 
     app.post(

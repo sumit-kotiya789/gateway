@@ -49,5 +49,9 @@ describe('rbac', () => {
     expect(adminCan('auditor', 'kill_switch:manage')).toBe(false);
     expect(adminCan('operator', 'admins:manage')).toBe(false);
     expect(adminCan('superadmin', 'admins:manage')).toBe(true);
+    expect(adminCan('operator', 'invoices:resolve')).toBe(true);
+    expect(adminCan('auditor', 'invoices:resolve')).toBe(false);
+    expect(adminCan('operator', 'registry:enable')).toBe(false);
+    expect(adminCan('superadmin', 'registry:enable')).toBe(true);
   });
 });

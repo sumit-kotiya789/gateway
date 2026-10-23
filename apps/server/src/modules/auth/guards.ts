@@ -125,6 +125,7 @@ export function ipAllowed(ip: string, allowlist: readonly string[]): boolean {
 }
 
 export const ADMIN_COOKIE = { access: 'gw_admin_at', csrf: 'gw_admin_csrf' } as const;
+export const adminTotpAad = (adminId: string) => `admin_users.totp:${adminId}`;
 
 export function requireAdminNetwork(deps: Deps): preHandlerAsyncHookHandler {
   return async (req: FastifyRequest) => {
@@ -150,5 +151,28 @@ export function requireAdmin(deps: Deps, permission: AdminPermission): preHandle
     if (!a || a.disabledAt || a.role !== role) throw new AppError('unauthorized', 'authentication required');
     req.admin = { id: adminId, role };
     if (!adminCan(role, permission)) throw new AppError('forbidden', `missing permission ${permission}`);
+  };
+}
+
+/** Admin step-up: fresh TOTP in `x-totp-code` for actions that lower a safety control (D-064). Runs after requireAdmin. */
+export function requireAdminTotp(deps: Deps): preHandlerAsyncHookHandler {
+  return async (req: FastifyRequest) => {
+    const admin = req.admin;
+    if (!admin) throw new AppError('unauthorized', 'authentication required');
+    const code = req.headers['x-totp-code'];
+    const ok = await withSystem(deps.db, async (tx) => {
+      const [a] = await tx.select().from(adminUsers).where(eq(adminUsers.id, admin.id)).for('update');
+      /* v8 ignore next -- requireAdmin just loaded this row */
+      if (!a) return false;
+      const secret = await deps.envelope.open(a.totpSecretEnc, adminTotpAad(a.id));
+      const step = typeof code === 'string' ? verifyTotp(secret, code, deps.clock(), a.totpLastStep) : null;
+      if (step === null) {
+        await audit(tx, { actorType: 'admin', actorId: a.id, action: 'admin.step_up_failed' }, req);
+        return false;
+      }
+      await tx.update(adminUsers).set({ totpLastStep: step }).where(eq(adminUsers.id, a.id));
+      return true;
+    });
+    if (!ok) throw new AppError('forbidden', 'valid x-totp-code header required');
   };
 }

@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { ApiError } from './api';
 
-export const errorText = (e: unknown) => (e instanceof ApiError || e instanceof Error ? e.message : 'something went wrong');
+// Shared by the admin console (apps/admin imports this file): keep it free of app-specific imports.
+export const errorText = (e: unknown) => (e instanceof Error ? e.message : 'something went wrong');
 
 /** Loads data when `deps` change; `reload()` refetches. */
 export function useLoad<T>(fn: () => Promise<T>, deps: readonly unknown[]) {

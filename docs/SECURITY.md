@@ -22,7 +22,7 @@ Every file with a `// MONEY-CRITICAL` header is listed here and in the coverage 
 | `apps/server/src/modules/watcher/scanner.ts` | payment detection, reorg handling, confirmation, invoice reconciliation, fencing | M4 |
 | `apps/server/db/migrations/0009_payments_security.sql` | payment/invoice consistency, immutable amounts, confirmed is final | M4 |
 | `packages/core/src/fees.ts` | fee base and rounding | M5 |
-| `apps/server/src/modules/ledger/ledger.ts` | ledger postings, fee charge, settlement | M5 |
+| `apps/server/src/modules/ledger/ledger.ts` | ledger postings, fee charge, settlement, manual resolution | M5 |
 | `apps/server/db/migrations/0011_ledger_outbox_security.sql` | balanced append-only ledger, fee immutability, trigger-only outbox | M5 |
 
 ## Security-critical files (mandatory human review)
@@ -43,6 +43,8 @@ Not money-moving, but a bug here breaks authentication, tenant isolation or audi
 | `packages/core/src/rbac.ts` | permission matrix | M1 |
 | `apps/server/src/modules/webhooks/webhooks.routes.ts` | webhook signing-secret generation and encryption | M3b |
 | `apps/server/src/modules/ledger/reconciliation.ts` | detects ledger/payment/invoice drift | M5 |
+| `apps/server/src/modules/admin/admin.routes.ts` | admin console: suspension, 2FA reset, kill switches, manual resolve, audit access | M5b |
+| `apps/admin/src/api.ts`, `apps/admin/nginx.conf` | admin CSRF header; admin origin serves only /admin/ and its API path | M5b |
 | `apps/dashboard/src/api.ts` | CSRF header, single-flight refresh (reuse detection would revoke the session) | M3b |
 | `apps/dashboard/nginx.conf`, `security-headers.conf` | dashboard CSP and the only proxied API path | M3b |
 
@@ -75,7 +77,7 @@ Status: `planned` until the mitigation's milestone lands, then the test that pro
 | Webhook replay | Timestamp skew > 5 min rejected; stable event id for dedup | planned | M6 |
 | SSRF via webhook URL | Block private/loopback/link-local/metadata ranges; IP pinned at connect (DNS rebinding); no redirects; size + time caps | planned | M6 |
 | Insider tampering with audit trail | App role has no UPDATE/DELETE/TRUNCATE on `audit_logs`; trigger blocks even the owner; SHA-256 hash chain verified by `audit_verify()` | `db-security.test.ts` | M1 |
-| Insider misuse (approvals) | RBAC; two-person approval above threshold | planned | M5b/M7 |
+| Insider misuse (approvals) | Admin RBAC; reason on every change, audited in the same transaction; step-up TOTP for actions that lower a control (D-064); two-person approval above threshold (M7) | `admin.test.ts`, `watcher.test.ts` | M5b/M7 |
 | Key theft | Seed only in signer; signer caps + allowlist; hot wallet cap; cold multisig | planned | M7 |
 | Dust / address poisoning | Ignore below `min_amount`; never display unsolicited transfers | planned | M4 |
 | Invoice / index race | Atomic index allocation; unique `(family, address)`; one address per invoice (unique FK) | `custody.test.ts`, `invoices.test.ts` | M2/M3 |

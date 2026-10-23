@@ -1,0 +1,2 @@
+CREATE TYPE "public"."merchant_risk_flag" AS ENUM('under_review', 'high_risk', 'payouts_frozen');--> statement-breakpoint
+ALTER TABLE "merchants" ADD COLUMN "risk_flags" "merchant_risk_flag"[] DEFAULT '{}' NOT NULL;

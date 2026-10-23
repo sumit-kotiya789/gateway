@@ -122,6 +122,19 @@ Statuses: `pending → detected → confirming → paid | underpaid | overpaid �
 | POST | `/admin/v1/auth/login` | none | password + TOTP | M1 |
 | POST | `/admin/v1/auth/logout` | admin session | `admin:read` | M1 |
 | GET | `/admin/v1/auth/me` | admin session | `admin:read` | M1 |
+| GET | `/admin/v1/merchants` | admin session | `admin:read` (`q`: name fragment, merchant id or user email; `status`, `flag`, `limit`, `starting_after`) | M5b |
+| GET | `/admin/v1/merchants/:id` | admin session | `admin:read` (users, balances per mode) | M5b |
+| POST | `/admin/v1/merchants/:id/suspend` | admin session | `merchants:manage` (`reason`) | M5b |
+| POST | `/admin/v1/merchants/:id/reactivate` | admin session + **2FA** | `merchants:manage` (`reason`) | M5b |
+| PUT | `/admin/v1/merchants/:id/risk-flags` | admin session | `risk:manage` (`flags`, `reason`; replaces the set) | M5b |
+| POST | `/admin/v1/merchants/:id/users/:userId/reset-2fa` | admin session + **2FA** | `merchants:manage` (`reason`; revokes sessions, deletes recovery codes) | M5b |
+| GET | `/admin/v1/invoices`, `/admin/v1/invoices/:id` | admin session | `admin:read` (default list: `underpaid` + `late_payment`; `status`, `merchant_id`, `livemode`) | M5b |
+| POST | `/admin/v1/invoices/:id/resolve` | admin session + **2FA** | `invoices:resolve` (`reason`; underpaid/late_payment -> paid -> settled) | M5b |
+| GET | `/admin/v1/registry` | admin session | `admin:read` (chains and tokens with `enabled`) | M5b |
+| POST | `/admin/v1/registry/:kind/:id/disable` | admin session | `kill_switch:manage` (`kind`: chain or token; `reason`) | M5b |
+| POST | `/admin/v1/registry/:kind/:id/enable` | admin session + **2FA** | `registry:enable` (`reason`) | M5b |
+| GET | `/admin/v1/audit-logs` | admin session | `audit:read` (`merchant_id`, `actor_id`, `action` prefix, `limit`, `starting_after` seq) | M5b |
+| GET | `/admin/v1/audit-logs/verify` | admin session | `audit:read` (`{ intact, first_bad_seq }`) | M5b |
 
 ## Roles
 
@@ -137,3 +150,12 @@ Statuses: `pending → detected → confirming → paid | underpaid | overpaid �
 | team:manage, settings:manage, audit:read | ✓ | ✓ | | | |
 
 Source of truth: `packages/core/src/rbac.ts`.
+
+Admin step-up (**2FA** above): fresh code in `x-totp-code`, for actions that lower a safety control (D-064).
+
+| Admin permission | superadmin | operator | auditor |
+|---|---|---|---|
+| admin:read | ✓ | ✓ | ✓ |
+| audit:read | ✓ | | ✓ |
+| merchants:manage, risk:manage, kill_switch:manage, invoices:resolve | ✓ | ✓ | |
+| registry:enable, admins:manage | ✓ | | |

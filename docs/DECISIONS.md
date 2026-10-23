@@ -254,3 +254,33 @@ decimal strings in the API (`GET /v1/events`). Webhook delivery (M6) consumes th
 Payments vs journals, invoice totals vs payments, ledger received vs payments per merchant/mode/token, settled fee vs fee
 journal, stuck paid invoices, global per-token balance. Results stored in `reconciliation_runs`; any issue logs
 RECONCILIATION MISMATCH. On-chain balance checks join custodial mode (M7): non-custodial funds are the merchant's to move.
+
+## D-064 Admin step-up only for actions that lower a safety control (2026-10-23)
+Admin login is password + TOTP with 15-minute sessions. A fresh TOTP (`x-totp-code`, replay-protected) is also required to
+reactivate a merchant, re-enable a chain/token, reset a merchant user's 2FA, and resolve an invoice. Suspending, disabling
+and risk flags need none, so an operator can stop several things in an emergency without waiting 30 s per code.
+Every admin change requires a reason (3-500 chars), audited in the same transaction.
+
+## D-065 Admin actions are audited under the merchant but hidden from the merchant's audit log (2026-10-23)
+Entries carry `merchant_id` so the admin trail per merchant is complete. The dashboard audit log excludes
+`actor_type = 'admin'`: reasons may be confidential (fraud review). Merchants see the effects (status, 2FA state).
+
+## D-066 Kill switches = registry `enabled` flags (2026-10-23)
+Disabling a chain or token refuses new invoices and payment-link checkouts immediately. Running watchers keep recording
+payments to existing invoices until restarted (funds already sent must still be recorded). Disable:
+`kill_switch:manage` (superadmin, operator). Re-enable: `registry:enable` (superadmin only) + step-up.
+The withdrawal/signer kill switch is M7.
+
+## D-067 Manual resolution is admin-only in the MVP; two-person approval deferred to M7 (2026-10-23)
+underpaid / late_payment -> paid -> settled, fee on min(received, expected), events `invoice.paid` + `invoice.settled`
+with reason `manual: <reason>`. Needs `invoices:resolve` + step-up. Non-custodial resolution moves no funds, so a second
+approver is deferred to M7 (custodial payouts and withdrawals). Merchant self-service acceptance: M10.
+
+## D-068 Risk flags are informational markers (2026-10-23)
+`merchants.risk_flags`: under_review, high_risk, payouts_frozen. Nothing reads them yet except the console;
+`payouts_frozen` blocks custodial payouts once they exist (M7). Suspension is the enforcement tool today.
+
+## D-069 Admin console served under /admin/, sharing the dashboard UI kit source (2026-10-23)
+Admin cookies are scoped to path `/admin`, so the SPA lives at `/admin/` to read its CSRF cookie. `apps/admin` imports
+`apps/dashboard/src/ui.tsx` and `styles.css` directly (React deduplicated in its Vite config) instead of a shared package.
+Revisit when a third app needs them.

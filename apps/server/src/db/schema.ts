@@ -31,6 +31,8 @@ const money = (name: string) => numeric(name, { precision: 78, scale: 0, mode: '
 
 export const custodyMode = pgEnum('custody_mode', ['custodial', 'non_custodial_xpub', 'non_custodial_forwarder']);
 export const merchantStatus = pgEnum('merchant_status', ['active', 'suspended']);
+// Admin-only markers (M5b). Informational until the features they gate exist: payouts_frozen blocks custodial payouts (M7).
+export const merchantRiskFlag = pgEnum('merchant_risk_flag', ['under_review', 'high_risk', 'payouts_frozen']);
 export const merchantRole = pgEnum('merchant_role', ['owner', 'admin', 'developer', 'finance', 'read_only']);
 export const apiKeyKind = pgEnum('api_key_kind', ['secret', 'publishable']);
 export const adminRole = pgEnum('admin_role', ['superadmin', 'operator', 'auditor']);
@@ -46,6 +48,7 @@ export const merchants = pgTable(
     feeBps: integer('fee_bps').notNull().default(100),
     underpayToleranceBps: integer('underpay_tolerance_bps').notNull().default(50),
     kyb: jsonb('kyb').notNull().default({}),
+    riskFlags: merchantRiskFlag('risk_flags').array().notNull().default(sql`'{}'`),
     createdAt: createdAt(),
   },
   (t) => [

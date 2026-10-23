@@ -11,13 +11,12 @@ import { withSystem } from '../../common/db.js';
 import { adminUsers } from '../../db/schema.js';
 import type { Deps } from '../../deps.js';
 import { AUTH_RATE_LIMIT } from './dashboard-auth.routes.js';
-import { ADMIN_COOKIE, checkOrigin, requireAdmin } from './guards.js';
+import { ADMIN_COOKIE, adminTotpAad, checkOrigin, requireAdmin } from './guards.js';
 import { isLocked, lockoutUntil } from './lockout.js';
 import { cookieBase, signToken } from './session.js';
 
 const ADMIN_TTL_S = 900;
 const COOKIE_PATH = '/admin';
-export const adminTotpAad = (adminId: string) => `admin_users.totp:${adminId}`;
 
 export function adminAuthRoutes(deps: Deps): FastifyPluginAsyncZod {
   return async (app) => {
