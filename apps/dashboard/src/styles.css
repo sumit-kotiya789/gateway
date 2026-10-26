@@ -114,3 +114,4 @@ tr.clickable:hover { background: var(--bg); }
   .layout nav { width: auto; flex-direction: row; overflow-x: auto; border-right: none; border-bottom: 1px solid var(--border); }
   main { padding: 1rem; }
 }
+.challenge { white-space: pre-wrap; word-break: break-all; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 0.6rem 0.8rem; font-size: 0.85rem; }

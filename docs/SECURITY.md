@@ -18,7 +18,11 @@ Every file with a `// MONEY-CRITICAL` header is listed here and in the coverage 
 | `packages/core/src/invoice.ts` | invoice state machine, underpay/overpay classification | M3 |
 | `apps/server/src/modules/invoices/invoices.ts` | invoice creation (amount parsing, address allocation), transitions, expiry | M3 |
 | `apps/server/db/migrations/0005_invoices_security.sql` | DB transition table, invoice immutability, trigger-only history, custody-mode lock | M3 |
-| `apps/server/src/modules/xpubs/xpubs.routes.ts` | merchant xpub registration/rotation (decides every future deposit address) | M3b |
+| `apps/server/src/modules/xpubs/xpubs.routes.ts` | merchant xpub dashboard routes (decide every future deposit address) | M3b |
+| `apps/server/src/modules/xpubs/xpubs.ts` | xpub registration, live change cooldown, change application, derivation report | M8 |
+| `apps/server/src/modules/xpubs/ownership.ts` | ownership proof: signature of address 0/0 over a recent challenge | M8 |
+| `packages/chains/src/evm/secrets.ts` | detects seed phrases / private keys pasted as an xpub | M8 |
+| `apps/server/db/migrations/0016_xpub_security.sql` | pending change immutability, key uniqueness across pending changes, proof immutability | M8 |
 | `apps/server/src/modules/watcher/scanner.ts` | payment detection, reorg handling, confirmation, invoice reconciliation, fencing | M4 |
 | `apps/server/db/migrations/0009_payments_security.sql` | payment/invoice consistency, immutable amounts, confirmed is final | M4 |
 | `packages/core/src/fees.ts` | fee base and rounding | M5 |
@@ -91,8 +95,8 @@ Status: `planned` until the mitigation's milestone lands, then the test that pro
 | Address-burning via payment links | Invoice creation is POST-only (prefetch-safe), 5/10 min per IP, per-link cap on pending invoices (bounds wallet gap) | `invoices.test.ts` | M3 |
 | Open redirect / javascript: URLs | success/cancel URLs must be http(s) (https in prod) without credentials | `invoices.test.ts` | M3 |
 | Scanner DoS (log volume) | Adaptive chunking; in-memory address set; lag alerts | planned | M4 |
-| Xpub substitution | 2FA + email + cooldown on change; ownership signature at `0/0`; audit + alert; xpub identity immutable in place (trigger) | trigger: `custody.test.ts`; flow planned | M2/M8 |
-| Private key submitted as xpub | Deriver refuses xprv/tprv/SLIP-132 private versions before parsing, never echoes input; WIF/hex/mnemonic detection + security event in the M8 intake flow | `deriver.test.ts`; intake planned | M2/M8 |
+| Xpub substitution | Fresh TOTP; ownership signature by address `0/0` required for live keys; replacing a live key waits 24 h as a cancellable pending change shown in the dashboard; audit + log alert; xpub identity and proof immutable (triggers); email notice in M10 | `xpubs.test.ts`, `custody.test.ts` | M2/M8 |
+| Private key submitted as xpub | Seed phrase / hex key / WIF / xprv detected before parsing, refused with a "treat it as exposed" message, recorded as `security.secret_submitted` (kind only); deriver also refuses private versions; input never echoed | `secrets.test.ts`, `deriver.test.ts`, `xpubs.test.ts` | M2/M8 |
 | Widget postMessage spoofing | Origin verification both directions | planned | M10 |
 | API key leak | HMAC-SHA256(pepper) storage, shown once; prefix lookup with constant-time compare even for unknown prefixes; scopes; IP allowlist; expiry; revocation; suspended merchant = dead keys; 2FA step-up to create; value-pattern log redaction | `api-keys.test.ts`, `crypto.test.ts`, `logger.test.ts` | M1 |
 | Credential brute force | argon2id (m=19 MiB, t=2, p=1); per-account lockout (5 fails → 15 min, doubling, 24 h cap); per-IP rate limit 10/min on auth routes; identical errors + dummy hash for unknown accounts | `auth.test.ts` | M1 |

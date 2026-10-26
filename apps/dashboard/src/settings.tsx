@@ -1,17 +1,108 @@
 import { useState } from 'react';
-import { api, totpHeader, type Xpub, type XpubPreview } from './api';
-import { ErrorBox, Field, SecretOnce, TotpInput, fmtDate, useAction, useLoad } from './ui';
+import { api, totpHeader, type DerivationReport, type Xpub, type XpubChange, type XpubList, type XpubPreview } from './api';
+import { ConfirmButton, ErrorBox, Field, SecretOnce, StatusBadge, TotpInput, fmtDate, useAction, useLoad } from './ui';
+
+interface Eip1193 {
+  request(args: { method: string; params?: unknown[] }): Promise<unknown>;
+}
+
+/** Signs the ownership challenge with a browser wallet (MetaMask etc.), from the account that is address 0/0. */
+async function signWithWallet(message: string, address: string): Promise<string> {
+  const eth = (window as { ethereum?: Eip1193 }).ethereum;
+  if (!eth) throw new Error('No browser wallet found. Sign the message with any wallet that holds this address and paste the signature.');
+  const accounts = (await eth.request({ method: 'eth_requestAccounts' })) as string[];
+  if (!accounts.some((a) => a.toLowerCase() === address.toLowerCase())) {
+    throw new Error(`Connect the account ${address} (the first account of this wallet) and try again.`);
+  }
+  const hex = `0x${Array.from(new TextEncoder().encode(message), (b) => b.toString(16).padStart(2, '0')).join('')}`;
+  return (await eth.request({ method: 'personal_sign', params: [hex, address] })) as string;
+}
+
+function PendingChange(props: { change: XpubChange; canManage: boolean; onChange: () => void }) {
+  const a = useAction();
+  const c = props.change;
+  return (
+    <div className="card warning">
+      <h3>Payout xpub change scheduled</h3>
+      <p>
+        From <strong>{fmtDate(c.activates_at)}</strong>, new invoices will use <code>{c.xpub_hint}</code> (first address <code>{c.first_address}</code>). Until
+        then the current xpub stays active.
+      </p>
+      <p>If you did not request this, cancel it now and change your password.</p>
+      <ErrorBox error={a.error} />
+      {props.canManage && (
+        <ConfirmButton
+          label="Cancel change"
+          confirm="Cancel the scheduled xpub change?"
+          disabled={a.busy}
+          onConfirm={() => { void a.run(async () => { await api('POST', `/xpubs/changes/${c.id}/cancel`); props.onChange(); }); }}
+        />
+      )}
+    </div>
+  );
+}
+
+const PAGE = 50;
+
+function Addresses(props: { xpub: Xpub }) {
+  const [offset, setOffset] = useState(0);
+  const r = useLoad(() => api<DerivationReport>('GET', `/xpubs/${props.xpub.id}/addresses?offset=${String(offset)}&limit=${String(PAGE)}`), [props.xpub.id, offset]);
+  const rep = r.data;
+  return (
+    <details className="card">
+      <summary>Derived addresses ({props.xpub.next_index} used)</summary>
+      <ErrorBox error={r.error} />
+      {rep && (
+        <>
+          <p className={rep.wallet_gap_limit > 20 ? 'notice' : 'muted'}>
+            Set your wallet&apos;s address gap limit to at least <strong>{rep.wallet_gap_limit}</strong> so it finds every payment
+            {rep.highest_used_index === null ? '' : ` (highest paid index: ${String(rep.highest_used_index)})`}. Unpaid invoices leave unused addresses.
+          </p>
+          <div className="table-wrap">
+            <table>
+              <thead><tr><th>Index</th><th>Address</th><th>Invoice</th><th>Received</th></tr></thead>
+              <tbody>
+                {rep.data.map((d) => (
+                  <tr key={d.index}>
+                    <td>{d.index}</td>
+                    <td><code>{d.address}</code></td>
+                    <td>{d.invoice_status ? <StatusBadge status={d.invoice_status} /> : '—'}</td>
+                    <td>{d.amount_received && d.amount_received !== '0' ? `${d.amount_received} ${d.symbol ?? ''}` : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="row">
+            <button disabled={offset === 0} onClick={() => { setOffset(Math.max(0, offset - PAGE)); }}>Previous</button>
+            <button disabled={offset + PAGE >= rep.next_index} onClick={() => { setOffset(offset + PAGE); }}>Next</button>
+          </div>
+        </>
+      )}
+    </details>
+  );
+}
 
 export function Xpubs(props: { livemode: boolean; canManage: boolean; totp: boolean; custodyMode: string }) {
-  const list = useLoad(() => api<{ data: Xpub[] }>('GET', `/xpubs/?livemode=${String(props.livemode)}`), [props.livemode]);
+  const list = useLoad(() => api<XpubList>('GET', `/xpubs/?livemode=${String(props.livemode)}`), [props.livemode]);
   const [xpub, setXpub] = useState('');
   const [preview, setPreview] = useState<XpubPreview>();
   const [confirmed, setConfirmed] = useState(false);
+  const [signature, setSignature] = useState('');
   const [code, setCode] = useState('');
+  const [scheduled, setScheduled] = useState(false);
   const a = useAction();
+  const sign = useAction();
   const rows = list.data?.data ?? [];
+  const pending = list.data?.pending_change ?? null;
   const active = rows.find((x) => x.status === 'active');
   const mode = props.livemode ? 'live' : 'test';
+  const needsProof = props.livemode;
+  const reset = () => {
+    setPreview(undefined);
+    setConfirmed(false);
+    setSignature('');
+  };
 
   if (props.custodyMode !== 'non_custodial_xpub') {
     return (
@@ -30,15 +121,21 @@ export function Xpubs(props: { livemode: boolean; canManage: boolean; totp: bool
         never hold your keys.
       </p>
       <ErrorBox error={list.error} />
+      {pending && <PendingChange change={pending} canManage={props.canManage} onChange={list.reload} />}
+      {scheduled && !pending && <p className="notice">Change scheduled.</p>}
       {list.data && !active && <p className="notice">No {mode} xpub yet: {mode} invoices cannot be created until you add one.</p>}
       {active && (
-        <dl className="details card">
-          <dt>Active {mode} xpub</dt><dd><code>{active.xpub_hint}</code></dd>
-          <dt>Fingerprint</dt><dd><code>{active.fingerprint}</code></dd>
-          <dt>First address (0/0)</dt><dd><code>{active.first_address}</code></dd>
-          <dt>Next index</dt><dd>{active.next_index} <small className="muted">(addresses used so far; unpaid invoices leave gaps)</small></dd>
-          <dt>Added</dt><dd>{fmtDate(active.created_at)}</dd>
-        </dl>
+        <>
+          <dl className="details card">
+            <dt>Active {mode} xpub</dt><dd><code>{active.xpub_hint}</code></dd>
+            <dt>Fingerprint</dt><dd><code>{active.fingerprint}</code></dd>
+            <dt>First address (0/0)</dt><dd><code>{active.first_address}</code></dd>
+            <dt>Next index</dt><dd>{active.next_index} <small className="muted">(addresses used so far; unpaid invoices leave gaps)</small></dd>
+            <dt>Ownership</dt><dd>{active.ownership_proved_at ? `proved ${fmtDate(active.ownership_proved_at)}` : 'not proved'}</dd>
+            <dt>Added</dt><dd>{fmtDate(active.created_at)}</dd>
+          </dl>
+          <Addresses xpub={active} />
+        </>
       )}
       {rows.some((x) => x.status === 'retired') && (
         <details>
@@ -51,21 +148,22 @@ export function Xpubs(props: { livemode: boolean; canManage: boolean; totp: bool
         </details>
       )}
 
-      {props.canManage ? (
+      {props.canManage && !pending ? (
         <form
           className="card"
           onSubmit={(e) => {
             e.preventDefault();
             void a.run(async () => {
               if (!preview) {
-                setPreview(await api<XpubPreview>('POST', '/xpubs/preview', { xpub: xpub.trim() }));
+                setPreview(await api<XpubPreview>('POST', '/xpubs/preview', { xpub: xpub.trim(), livemode: props.livemode }));
                 return;
               }
-              await api('POST', '/xpubs/', { livemode: props.livemode, xpub: xpub.trim() }, totpHeader(code));
+              const ownership = signature.trim() ? { issued_at: preview.ownership_challenge.issued_at, signature: signature.trim() } : undefined;
+              const r = await api<Xpub | { pending_change: XpubChange }>('POST', '/xpubs/', { livemode: props.livemode, xpub: xpub.trim(), ownership }, totpHeader(code));
+              setScheduled('pending_change' in r);
               setXpub('');
-              setPreview(undefined);
-              setConfirmed(false);
               setCode('');
+              reset();
               list.reload();
             });
           }}
@@ -79,7 +177,7 @@ export function Xpubs(props: { livemode: boolean; canManage: boolean; totp: bool
           <Field label="Extended public key">
             <textarea
               value={xpub}
-              onChange={(e) => { setXpub(e.target.value); setPreview(undefined); setConfirmed(false); }}
+              onChange={(e) => { setXpub(e.target.value); reset(); }}
               rows={3}
               spellCheck={false}
               autoComplete="off"
@@ -97,19 +195,42 @@ export function Xpubs(props: { livemode: boolean; canManage: boolean; totp: bool
               <label className="check">
                 <input type="checkbox" checked={confirmed} onChange={(e) => { setConfirmed(e.target.checked); }} /> These addresses match my wallet.
               </label>
-              {active && <p className="muted">The current xpub will be retired. Its existing invoices keep their addresses.</p>}
+              <h4>Prove you control this wallet{needsProof ? '' : ' (optional in test mode)'}</h4>
+              <p className="muted">
+                Sign this message with the wallet&apos;s first account, <code>{preview.ownership_challenge.address}</code>. Signing is free and sends no
+                transaction. The signature is valid for 15 minutes.
+              </p>
+              <pre className="challenge">{preview.ownership_challenge.message}</pre>
+              <div className="row">
+                <button
+                  type="button"
+                  disabled={sign.busy}
+                  onClick={() => { void sign.run(async () => { setSignature(await signWithWallet(preview.ownership_challenge.message, preview.ownership_challenge.address)); }); }}
+                >
+                  Sign with browser wallet
+                </button>
+                {signature && <span className="muted">Signed.</span>}
+              </div>
+              <ErrorBox error={sign.error} />
+              <Field label="Signature" hint="Filled in by the browser wallet, or paste one from another wallet (0x…, 65 bytes).">
+                <input value={signature} onChange={(e) => { setSignature(e.target.value); }} spellCheck={false} autoComplete="off" />
+              </Field>
+              {active && props.livemode && (
+                <p className="notice">For your protection the new live xpub takes effect 24 hours after you register it. The current one keeps working until then.</p>
+              )}
+              {active && !props.livemode && <p className="muted">The current xpub will be retired. Its existing invoices keep their addresses.</p>}
               <TotpInput value={code} onChange={setCode} />
             </div>
           )}
           <ErrorBox error={a.error} />
           {preview ? (
-            <button disabled={a.busy || !confirmed || !props.totp}>Register xpub</button>
+            <button disabled={a.busy || !confirmed || !props.totp || (needsProof && !signature.trim())}>Register xpub</button>
           ) : (
             <button disabled={a.busy}>Preview addresses</button>
           )}
         </form>
       ) : (
-        <p className="muted">Only the account owner can change the payout xpub.</p>
+        !props.canManage && <p className="muted">Only the account owner can change the payout xpub.</p>
       )}
     </section>
   );

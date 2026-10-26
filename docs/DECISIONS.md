@@ -317,3 +317,23 @@ or hooks). Finality tag and block time are not verified, so `finality: 'confirma
 verification requires every placeholder to be set). Run `pnpm chains:verify` before relying on it.
 `bsc-testnet` is seeded **disabled** from now on: Nexis is the only test network. Existing databases keep their
 `enabled` value (re-seeding never changes it), so an operator disables `bsc-testnet` with the admin kill switch.
+
+## D-075 Xpub hardening: ownership proof, live change cooldown, secret detection (2026-10-26)
+- **Ownership proof.** `/xpubs/preview` returns a challenge (merchant id, mode, key fingerprint, address `0/0`, issue
+  time). The merchant signs it with the wallet's first account (EIP-191 `personal_sign`: MetaMask, hardware wallets).
+  Required for live keys, optional (but verified if sent) for test keys. Stateless: valid 15 minutes, 1 minute clock
+  skew. It proves the merchant holds the keys behind the xpub, so a mistyped or attacker-supplied xpub cannot receive
+  live payments. The proof time is stored and immutable.
+- **Cooldown.** Replacing an active live xpub creates a pending `xpub_changes` row that the worker applies after
+  24 hours. The current key keeps serving until then; the dashboard shows the change and lets the owner cancel it
+  (cancel needs no step-up: it only keeps the current key). A first live key and test keys apply at once. A key in
+  someone's pending change cannot be registered by anyone else. Email notice of the change waits for the mailer (M10).
+- **Secret material.** Seed phrases, 64-hex keys, WIF and xprv-family keys pasted as an xpub are refused before
+  parsing. The attempt is audited as `security.secret_submitted` with the kind only, and the merchant is told to treat
+  the secret as exposed.
+- **Derivation visibility.** `GET /xpubs/:id/addresses` lists derived addresses with their invoice, and returns the
+  wallet gap limit needed to find every payment (largest run of unused addresses before a paid one, plus one; never
+  below 20).
+- `xpub_changes.status` is text + CHECK, not an enum: drizzle applies all pending migrations in one transaction and
+  Postgres forbids using an enum value added in the same transaction.
+

@@ -158,11 +158,35 @@ export interface Xpub {
   fingerprint: string;
   first_address: string;
   next_index: number;
+  ownership_proved_at: string | null;
   retired_at: string | null;
   created_at: string;
+}
+
+export interface XpubChange {
+  id: string;
+  status: 'pending' | 'applied' | 'cancelled' | 'failed';
+  xpub_hint: string;
+  fingerprint: string;
+  first_address: string;
+  activates_at: string;
+  created_at: string;
+}
+
+export interface XpubList {
+  data: Xpub[];
+  pending_change: XpubChange | null;
 }
 
 export interface XpubPreview {
   fingerprint: string;
   addresses: { index: number; address: string; path: string }[];
+  ownership_challenge: { message: string; address: string; issued_at: string };
+}
+
+export interface DerivationReport {
+  next_index: number;
+  highest_used_index: number | null;
+  wallet_gap_limit: number;
+  data: { index: number; address: string; path: string; chain: string; invoice_id: string | null; invoice_status: string | null; amount_received: string | null; symbol: string | null }[];
 }

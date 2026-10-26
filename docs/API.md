@@ -112,9 +112,11 @@ Statuses: `pending → detected → confirming → paid | underpaid | overpaid �
 | POST | `/v1/dashboard/invoices/` | session | `invoices:write` (`livemode` in body; no idempotency key) | M3b |
 | POST | `/v1/dashboard/invoices/:id/cancel` | session | `invoices:write` | M3b |
 | GET | `/v1/dashboard/tokens/` | session | – (`livemode`) | M3b |
-| GET | `/v1/dashboard/xpubs/` | session | `account:read` (`livemode`; full xpub never returned) | M3b |
-| POST | `/v1/dashboard/xpubs/preview` | session | `custody:manage` (first 5 addresses, no side effects) | M3b |
-| POST | `/v1/dashboard/xpubs/` | session + **2FA** | `custody:manage` (retires the previous active xpub) | M3b |
+| GET | `/v1/dashboard/xpubs/` | session | `account:read` (`livemode`; full xpub never returned; `pending_change` when a live change waits out its cooldown) | M3b/M8 |
+| POST | `/v1/dashboard/xpubs/preview` | session | `custody:manage` (`xpub`, `livemode`: first 5 addresses + ownership challenge to sign with address 0/0; seed phrases / private keys refused and audited) | M3b/M8 |
+| POST | `/v1/dashboard/xpubs/` | session + **2FA** | `custody:manage` (`livemode`, `xpub`, `ownership: { issued_at, signature }` required for live; 201 active now, or 202 `pending_change` when replacing a live xpub: applies after 24 h) | M3b/M8 |
+| POST | `/v1/dashboard/xpubs/changes/:id/cancel` | session | `custody:manage` (pending changes only) | M8 |
+| GET | `/v1/dashboard/xpubs/:id/addresses` | session | `account:read` (`offset`, `limit`: derived addresses with their invoice; `wallet_gap_limit`, `highest_used_index`) | M8 |
 | GET | `/v1/dashboard/webhooks/` | session | `webhooks:manage` (`livemode`) | M3b |
 | POST | `/v1/dashboard/webhooks/` | session + **2FA** | `webhooks:manage` (returns signing secret once) | M3b |
 | DELETE | `/v1/dashboard/webhooks/:id` | session | `webhooks:manage` (also deletes its delivery log) | M3b |

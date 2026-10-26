@@ -56,8 +56,9 @@ Database guards that hold even if application code is wrong:
 
 ## Merchant responsibilities (non-custodial)
 
-Keep their seed safe; supply an account-level xpub (not an xprv or seed, which are refused); scan their wallet to the
-derivation index shown in the dashboard (invoices that expire unpaid create gaps beyond the usual 20-address limit);
+Keep their seed safe; supply an account-level xpub (not an xprv or seed, which are refused); set their wallet's address
+gap limit to the value the dashboard shows (invoices that expire unpaid create gaps beyond the usual 20-address limit);
+sign the ownership challenge with the wallet's first account when registering a live xpub;
 keep the prepaid fee balance above zero, or new live invoices are blocked (enforced from M8, with fee top-ups).
 
 Full fee-model and key-exposure details are written in M8 (non-custodial) and M7 (custodial).

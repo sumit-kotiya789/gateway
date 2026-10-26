@@ -68,7 +68,7 @@ describe('xpubs', () => {
     const xprv = HDKey.fromMasterSeed(randomBytes(32)).derive("m/44'/60'/0'").privateExtendedKey;
     const bad = await s.agent.req('POST', '/v1/dashboard/xpubs/preview', { xpub: xprv });
     expect(bad.statusCode).toBe(400);
-    expect(bad.json().error.details.reason).toBe('private_key');
+    expect(bad.json().error.details).toEqual({ reason: 'secret_material', kind: 'extended_private_key' });
     expect(bad.body).not.toContain(xprv);
   });
 

@@ -1,4 +1,5 @@
-// Worker process: BullMQ queues for background jobs. `maintenance`: invoice expiry, retention purges, ledger reconciliation.
+// Worker process: BullMQ queues for background jobs. `maintenance`: invoice expiry, retention purges, ledger reconciliation,
+// xpub changes whose cooldown elapsed.
 // `webhooks`: outbound delivery, on its own queue so slow merchant endpoints never delay maintenance. Later: sweeps (M7).
 // Every job handler is idempotent and safe to run on several workers at once.
 import { Queue, Worker } from 'bullmq';
@@ -12,6 +13,7 @@ import { purgeIdempotencyKeys } from './common/idempotency.js';
 import { expireDueInvoices } from './modules/invoices/invoices.js';
 import { reconcileLedger } from './modules/ledger/reconciliation.js';
 import { BATCH, deliverDueWebhooks, purgeWebhookDeliveries } from './modules/webhooks/delivery.js';
+import { applyDueXpubChanges } from './modules/xpubs/xpubs.js';
 
 const QUEUE = 'maintenance';
 const WEBHOOK_QUEUE = 'webhooks';
@@ -33,6 +35,11 @@ export async function runMaintenanceJob(deps: Deps, name: string): Promise<unkno
     case 'purge-idempotency-keys': {
       const purged = await purgeIdempotencyKeys(deps);
       return { purged };
+    }
+    case 'apply-xpub-changes': {
+      const r = await applyDueXpubChanges(deps);
+      if (r.applied + r.failed > 0) deps.log.info(r, 'xpub changes processed');
+      return r;
     }
     case 'purge-webhook-deliveries': {
       const purged = await purgeWebhookDeliveries(deps);
@@ -68,6 +75,7 @@ async function main(): Promise<void> {
   await queue.upsertJobScheduler('expire-invoices', { every: 15_000 }, { name: 'expire-invoices', opts: jobOpts });
   await queue.upsertJobScheduler('reconcile-ledger', { every: 3_600_000 }, { name: 'reconcile-ledger', opts: jobOpts });
   await queue.upsertJobScheduler('purge-idempotency-keys', { every: 3_600_000 }, { name: 'purge-idempotency-keys', opts: jobOpts });
+  await queue.upsertJobScheduler('apply-xpub-changes', { every: 60_000 }, { name: 'apply-xpub-changes', opts: jobOpts });
   await queue.upsertJobScheduler('purge-webhook-deliveries', { every: 86_400_000 }, { name: 'purge-webhook-deliveries', opts: jobOpts });
   const webhookQueue = new Queue(WEBHOOK_QUEUE, { connection });
   await webhookQueue.upsertJobScheduler('deliver-webhooks', { every: 5_000 }, { name: 'deliver-webhooks', opts: jobOpts });

@@ -26,3 +26,12 @@ export function withSystem<T>(db: Db, fn: (tx: Tx) => Promise<T>): Promise<T> {
     return fn(tx);
   });
 }
+
+/** SQLSTATE of a database error, looking through wrapping `cause`s (drizzle wraps driver errors). */
+export function pgCode(err: unknown): string | undefined {
+  for (let e = err, i = 0; e && typeof e === 'object' && i < 4; e = (e as { cause?: unknown }).cause, i++) {
+    const code = (e as { code?: unknown }).code;
+    if (typeof code === 'string' && /^[0-9A-Z]{5}$/.test(code)) return code;
+  }
+  return undefined;
+}

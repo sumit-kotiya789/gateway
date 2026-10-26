@@ -280,7 +280,7 @@ export const walletAccounts = pgTable(
   ],
 );
 
-/** Merchant-supplied account xpubs (non-custodial). Registration flow (2FA, ownership proof) is M8. */
+/** Merchant-supplied account xpubs (non-custodial). Registered with fresh TOTP; live keys also prove ownership (M8). */
 export const merchantXpubs = pgTable(
   'merchant_xpubs',
   {
@@ -296,6 +296,8 @@ export const merchantXpubs = pgTable(
     nextIndex: bigint('next_index', { mode: 'number' }).notNull().default(0),
     status: xpubStatus('status').notNull().default('active'),
     retiredAt: tstz('retired_at'),
+    // When the merchant signed the ownership challenge with the key at 0/0 (required for live keys).
+    ownershipProvedAt: tstz('ownership_proved_at'),
     createdAt: createdAt(),
   },
   (t) => [
@@ -303,6 +305,41 @@ export const merchantXpubs = pgTable(
     uniqueIndex('merchant_xpubs_one_active_uq').on(t.merchantId, t.family, t.livemode).where(sql`${t.status} = 'active'`),
     unique('merchant_xpubs_fk_target').on(t.id, t.merchantId, t.livemode, t.family),
     check('merchant_xpubs_next_index', sql`${t.nextIndex} between 0 and 2147483648`),
+  ],
+);
+
+/**
+ * Replacing an active live xpub waits out a cooldown (D-075): the request sits here until `activates_at`, then the worker
+ * swaps it in. A stolen session therefore cannot redirect live payments instantly. Status: pending -> applied |
+ * cancelled | failed (text + check, not an enum: new enum values cannot be used in the migration transaction).
+ */
+export const xpubChanges = pgTable(
+  'xpub_changes',
+  {
+    id: id(),
+    merchantId: uuid('merchant_id')
+      .notNull()
+      .references(() => merchants.id),
+    family: chainFamily('family').notNull(),
+    livemode: boolean('livemode').notNull(),
+    xpub: text('xpub').notNull(),
+    keyFingerprint: text('key_fingerprint').notNull(),
+    requestedBy: uuid('requested_by')
+      .notNull()
+      .references(() => merchantUsers.id),
+    ownershipProvedAt: tstz('ownership_proved_at').notNull(),
+    activatesAt: tstz('activates_at').notNull(),
+    status: text('status').notNull().default('pending'),
+    resolvedAt: tstz('resolved_at'),
+    resolvedNote: text('resolved_note'),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('xpub_changes_one_pending_uq').on(t.merchantId, t.family, t.livemode).where(sql`${t.status} = 'pending'`),
+    uniqueIndex('xpub_changes_pending_fingerprint_uq').on(t.keyFingerprint).where(sql`${t.status} = 'pending'`),
+    index('xpub_changes_due_idx').on(t.activatesAt).where(sql`${t.status} = 'pending'`),
+    check('xpub_changes_status', sql`${t.status} in ('pending', 'applied', 'cancelled', 'failed')`),
+    check('xpub_changes_resolved', sql`(${t.status} = 'pending') = (${t.resolvedAt} is null)`),
   ],
 );
 

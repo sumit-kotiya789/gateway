@@ -14,6 +14,7 @@ import {
   type ZodTypeProvider,
 } from 'fastify-type-provider-zod';
 import { ZodError } from 'zod';
+import { pgCode } from './common/db.js';
 import type { Deps } from './deps.js';
 import { accountRoutes, apiKeyDashboardRoutes } from './modules/api-keys/api-keys.routes.js';
 import { apiKeyPrefixFromHeader } from './modules/api-keys/api-keys.js';
@@ -37,14 +38,6 @@ function body(code: ErrorCode, message: string, requestId: string, details?: unk
 }
 
 /** Postgres error code, looking through driver/ORM wrappers. */
-function pgCode(err: unknown): string | undefined {
-  for (let e = err, i = 0; e && typeof e === 'object' && i < 4; e = (e as { cause?: unknown }).cause, i++) {
-    const code = (e as { code?: unknown }).code;
-    if (typeof code === 'string' && /^[0-9A-Z]{5}$/.test(code)) return code;
-  }
-  return undefined;
-}
-
 /** `deps` omitted = bare app (health + error model only), used by unit tests. */
 export function buildApp(logger: FastifyBaseLogger, deps?: Deps) {
   const app = Fastify({
