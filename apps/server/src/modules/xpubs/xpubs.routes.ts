@@ -9,7 +9,7 @@ import { z } from 'zod';
 import { withTenant } from '../../common/db.js';
 import { merchantXpubs } from '../../db/schema.js';
 import type { Deps } from '../../deps.js';
-import { authedUser, requirePermission, requireTotp, requireUser } from '../auth/guards.js';
+import { authedUser, requirePermission, requireTotp, requireUser, requireVerifiedEmailForLive } from '../auth/guards.js';
 import { ownershipMessage } from './ownership.js';
 import { cancelXpubChange, changeView, derivationReport, pendingChange, registerXpub, rejectSecretMaterial, xpubView } from './xpubs.js';
 
@@ -59,7 +59,7 @@ export function xpubDashboardRoutes(deps: Deps): FastifyPluginAsyncZod {
     app.post(
       '/',
       {
-        preHandler: [requirePermission('custody:manage'), requireTotp(deps)],
+        preHandler: [requirePermission('custody:manage'), requireVerifiedEmailForLive(deps), requireTotp(deps)],
         schema: { body: z.strictObject({ livemode: z.boolean(), xpub: Xpub, ownership: Ownership.optional() }) },
       },
       async (req, reply) => {

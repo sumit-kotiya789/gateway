@@ -357,3 +357,20 @@ verification requires every placeholder to be set). Run `pnpm chains:verify` bef
 - `fees_owed` keeps its meaning (charged, not covered by top-ups; never negative); `fees_charged` and `prepaid_fees` are
   new. New ledger enum values are added by recreating the enum types (same one-transaction migration reason as D-075).
 
+## D-077 Email: encrypted outbox, verification gates live mode, reset keeps 2FA (2026-10-26)
+- **Delivery.** Emails are rows in `email_outbox`, written in the transaction of the action they report (no email for
+  a rolled-back action, no lost email for a committed one). Recipient, subject and body are envelope-encrypted (they
+  carry reset links) and erased once sent or failed. The worker's `emails` queue leases due rows (SKIP LOCKED, 2 min
+  lease), sends over SMTP (nodemailer), retries 8 times over ~1 day. Only error codes are stored (SMTP messages can
+  contain addresses). Dev compose sends everything to Mailpit; production config requires `SMTP_URL`.
+- **Verification.** Signup emails a single-use 48 h link (`DASHBOARD_URL/#/verify-email?token=`; the fragment never
+  reaches a server). Unverified users work in test mode; live API keys, live xpubs, live dashboard invoices and live
+  webhook endpoints are refused (`email_unverified`), checked before step-up so the TOTP code is not burned. Accounts
+  that existed before M10 are unverified until they click a link (Resend in the dashboard).
+- **Password reset.** Always 202 for `forgot`; one email per minute per account. A reset with 2FA on also needs a
+  current authenticator or recovery code: the inbox alone must not take over an account protected by 2FA. Success
+  revokes every session, clears the lockout, counts as email verification, and sends a "password changed" email.
+- **Notices.** Owners get: xpub change requested / applied / failed; live fee balance crossing into low or blocked
+  (once per crossing). Users get: password changed; 2FA reset by an admin.
+- Not yet: new-device login emails, team invites (next M10 part), digest/marketing mail.
+

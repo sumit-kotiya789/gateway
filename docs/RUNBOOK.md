@@ -36,8 +36,16 @@ the user's sessions and recovery codes; the user signs in with the password and 
 ## Worker
 - `main-worker.cjs` (compose service `worker`) runs BullMQ schedulers. M3: `expire-invoices` every 15 s.
 - M8: `apply-xpub-changes` every minute (live xpub changes whose 24 h cooldown elapsed).
+- M10: `send-emails` every 5 s on its own `emails` queue.
 - Several workers may run; jobs are idempotent and use `SKIP LOCKED`.
 - Pending invoices past `expires_at` that are still `pending` = worker down or Redis unavailable. Check `docker compose logs worker`.
+
+## Email
+- The worker's `emails` queue sends the `email_outbox` every 5 s. Dev: open Mailpit at http://localhost:8025.
+- Stuck emails: `select kind, status, attempts, last_error, next_attempt_at from email_outbox where status <> 'sent' order by created_at desc limit 50;`
+  `last_error` holds an error code (e.g. `ECONNREFUSED`, `EAUTH`): check `SMTP_URL` and the relay. Failed rows are
+  final (payload erased); the user can request a new link (Resend / Forgot password).
+- Links point at `DASHBOARD_URL`; a wrong value sends users to the wrong host.
 
 ## Dashboard
 - Compose service `dashboard` (nginx) serves the SPA on :8080 (host port `DASHBOARD_HOST_PORT`) and proxies `/v1/dashboard/*` to the api. Put the TLS edge

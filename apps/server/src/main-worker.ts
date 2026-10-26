@@ -1,6 +1,7 @@
 // Worker process: BullMQ queues for background jobs. `maintenance`: invoice expiry, retention purges, ledger reconciliation,
 // xpub changes whose cooldown elapsed.
-// `webhooks`: outbound delivery, on its own queue so slow merchant endpoints never delay maintenance. Later: sweeps (M7).
+// `webhooks`: outbound delivery, on its own queue so slow merchant endpoints never delay maintenance. `emails`: the email
+// outbox (M10), likewise separate from a slow SMTP server. Later: sweeps (M7).
 // Every job handler is idempotent and safe to run on several workers at once.
 import { Queue, Worker } from 'bullmq';
 import { Redis } from 'ioredis';
@@ -14,9 +15,13 @@ import { expireDueInvoices } from './modules/invoices/invoices.js';
 import { reconcileLedger } from './modules/ledger/reconciliation.js';
 import { BATCH, deliverDueWebhooks, purgeWebhookDeliveries } from './modules/webhooks/delivery.js';
 import { applyDueXpubChanges } from './modules/xpubs/xpubs.js';
+import { deliverDueEmails } from './modules/email/outbox.js';
+import { createMailer, type Mailer } from './modules/email/mailer.js';
 
 const QUEUE = 'maintenance';
 const WEBHOOK_QUEUE = 'webhooks';
+const EMAIL_QUEUE = 'emails';
+const EMAIL_BATCHES_PER_JOB = 5;
 /** Batches per delivery job: drains a backlog faster than one batch per tick, still yields between jobs. */
 const WEBHOOK_BATCHES_PER_JOB = 10;
 const SHUTDOWN_TIMEOUT_MS = 30_000;
@@ -60,6 +65,17 @@ export async function runWebhookJob(deps: Deps): Promise<{ sent: number }> {
   return { sent };
 }
 
+export async function runEmailJob(deps: Deps, mailer: Mailer): Promise<{ sent: number; failed: number }> {
+  const total = { sent: 0, failed: 0 };
+  for (let i = 0; i < EMAIL_BATCHES_PER_JOB; i++) {
+    const r = await deliverDueEmails(deps, mailer);
+    total.sent += r.sent;
+    total.failed += r.failed;
+    if (r.sent + r.failed === 0) break;
+  }
+  return total;
+}
+
 async function main(): Promise<void> {
   const config = loadConfig();
   const log = createLogger(config.LOG_LEVEL);
@@ -79,6 +95,9 @@ async function main(): Promise<void> {
   await queue.upsertJobScheduler('purge-webhook-deliveries', { every: 86_400_000 }, { name: 'purge-webhook-deliveries', opts: jobOpts });
   const webhookQueue = new Queue(WEBHOOK_QUEUE, { connection });
   await webhookQueue.upsertJobScheduler('deliver-webhooks', { every: 5_000 }, { name: 'deliver-webhooks', opts: jobOpts });
+  const emailQueue = new Queue(EMAIL_QUEUE, { connection });
+  await emailQueue.upsertJobScheduler('send-emails', { every: 5_000 }, { name: 'send-emails', opts: jobOpts });
+  const mailer = createMailer(config, log);
 
   const worker = new Worker(QUEUE, (job) => runMaintenanceJob(deps, job.name), { connection, concurrency: 1 });
   worker.on('failed', (job, err) => {
@@ -88,14 +107,18 @@ async function main(): Promise<void> {
   webhookWorker.on('failed', (_job, err) => {
     log.error({ err }, 'webhook delivery job failed');
   });
+  const emailWorker = new Worker(EMAIL_QUEUE, () => runEmailJob(deps, mailer), { connection, concurrency: 1 });
+  emailWorker.on('failed', (_job, err) => {
+    log.error({ err }, 'email delivery job failed');
+  });
   log.info('worker started');
 
   const shutdown = (signal: string): void => {
     log.info({ signal }, 'worker shutting down');
     setTimeout(() => process.exit(1), SHUTDOWN_TIMEOUT_MS).unref();
     // Let the in-flight job finish, then release connections.
-    Promise.all([worker.close(), webhookWorker.close()])
-      .then(() => Promise.all([queue.close(), webhookQueue.close()]))
+    Promise.all([worker.close(), webhookWorker.close(), emailWorker.close()])
+      .then(() => Promise.all([queue.close(), webhookQueue.close(), emailQueue.close()]))
       .then(() => Promise.allSettled([pool.end(), connection.quit()]))
       .then(
         () => process.exit(0),

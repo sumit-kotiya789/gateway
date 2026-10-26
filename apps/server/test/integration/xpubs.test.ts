@@ -185,6 +185,8 @@ describe('live xpub change cooldown', () => {
     expect(after.pending_change).toBeNull();
     const audit = await owner.query<{ action: string }>("select action from audit_logs where merchant_id = $1 and action like 'xpub.%' order by seq", [s.merchantId]);
     expect(audit.rows.map((x) => x.action)).toEqual(['xpub.registered', 'xpub.change_requested', 'xpub.change_applied']);
+    const mails = await owner.query<{ kind: string }>("select kind from email_outbox where merchant_id = $1 and kind like 'xpub_%' order by created_at", [s.merchantId]);
+    expect(mails.rows.map((x) => x.kind)).toEqual(['xpub_change_requested', 'xpub_change_applied']);
   });
 
   it('a pending change can be cancelled once; nobody else can cancel it', async () => {
@@ -221,6 +223,7 @@ describe('live xpub change cooldown', () => {
     expect(c.rows[0]).toEqual({ status: 'failed', resolved_note: 'merchant is no longer in non-custodial xpub mode' });
     const a = await owner.query("select 1 from audit_logs where merchant_id = $1 and action = 'xpub.change_failed'", [s.merchantId]);
     expect(a.rowCount).toBe(1);
+    expect((await owner.query("select 1 from email_outbox where merchant_id = $1 and kind = 'xpub_change_failed'", [s.merchantId])).rowCount).toBe(1);
   });
 
   it('the database keeps resolved change requests and proofs immutable', async () => {

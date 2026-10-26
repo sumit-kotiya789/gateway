@@ -9,7 +9,7 @@ import { requestHash, withIdempotency, type StoredResponse } from '../../common/
 import { chains, invoiceStatusHistory, invoices, payments, tokens } from '../../db/schema.js';
 import type { Deps } from '../../deps.js';
 import { requireApiKey, type AuthedApiKey } from '../api-keys/api-keys.js';
-import { requirePermission, requireUser } from '../auth/guards.js';
+import { requirePermission, requireUser, requireVerifiedEmailForLive } from '../auth/guards.js';
 import { EXPIRY_S, createInvoice, invoiceView, loadInvoiceWithToken, transitionInvoice } from './invoices.js';
 
 /** success/cancel URLs: https only in production (http allowed in dev/test), no other schemes, no credentials. */
@@ -227,7 +227,7 @@ export function invoiceDashboardRoutes(deps: Deps): FastifyPluginAsyncZod {
     app.post(
       '/',
       {
-        preHandler: requirePermission('invoices:write'),
+        preHandler: [requirePermission('invoices:write'), requireVerifiedEmailForLive(deps)],
         schema: {
           body: z.strictObject({
             livemode: z.boolean(),

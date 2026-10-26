@@ -1,10 +1,13 @@
 // MONEY-CRITICAL
 // Prepaid fee balance (D-076). Per merchant, mode and token: prepaid = -(merchant_fees_owed balance), i.e. top-ups
 // minus fees charged. Live invoices need prepaid + grace > 0; test mode is never blocked.
-import { AppError, feeBalanceStatus, feeUnitsToMinor, toMinorUnits, type FeeBalanceStatus } from '@gw/core';
+import { AppError, feeBalanceStatus, feeUnitsToMinor, fromSignedMinorUnits, toMinorUnits, type FeeBalanceStatus } from '@gw/core';
 import { and, eq, sql } from 'drizzle-orm';
 import type { Tx } from '../../common/db.js';
-import { ledgerAccounts, ledgerEntries } from '../../db/schema.js';
+import { ledgerAccounts, ledgerEntries, merchants, tokens } from '../../db/schema.js';
+import type { Deps } from '../../deps.js';
+import { notifyOwners } from '../email/outbox.js';
+import { templates } from '../email/templates.js';
 
 /** Below this headroom (token units) the merchant is warned to top up. */
 export const FEE_LOW_BALANCE = '10';
@@ -58,5 +61,23 @@ export async function assertFeeBalance(
     throw new AppError('insufficient_fee_balance', `prepaid fee balance for ${token.symbol} (${token.id}) is used up; top it up to create live invoices`, {
       token: token.id,
     });
+  }
+}
+
+/**
+ * After a live fee of `fee` was charged: emails the owners when it moved the balance into `low` or `blocked`
+ * (once per crossing, not on every invoice).
+ */
+export async function noticeFeeBalance(deps: Deps, tx: Tx, merchantId: string, tokenId: string, fee: bigint): Promise<void> {
+  const [m] = await tx.select({ grace: merchants.feeGrace }).from(merchants).where(eq(merchants.id, merchantId));
+  const [t] = await tx.select({ decimals: tokens.decimals, symbol: tokens.symbol }).from(tokens).where(eq(tokens.id, tokenId));
+  /* v8 ignore next -- invariant: the invoice references both (FKs) */
+  if (!m || !t) return;
+  const owed = await feesOwed(tx, merchantId, true, tokenId);
+  const after = feeBalanceOf(true, owed, m.grace, t.decimals);
+  const before = feeBalanceOf(true, owed - fee, m.grace, t.decimals);
+  if ((after.status === 'low' || after.status === 'blocked') && after.status !== before.status) {
+    const prepaid = fromSignedMinorUnits(after.prepaid, t.decimals);
+    await notifyOwners(deps, tx, merchantId, `fee_balance_${after.status}`, templates.feeBalance({ status: after.status, token: tokenId, prepaid, symbol: t.symbol }));
   }
 }

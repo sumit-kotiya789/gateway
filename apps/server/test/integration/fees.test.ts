@@ -1,8 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { withSystem } from '../../src/common/db.js';
+import { noticeFeeBalance } from '../../src/modules/ledger/fee-balance.js';
 import { adminAgent, buildTestApp, ensureLocalRegistry, merchantWithKey, ownerPool } from './helpers.js';
 
 const t = buildTestApp();
-const { app, clock } = t;
+const { app, clock, deps } = t;
 const owner = ownerPool();
 const LIVE = 'evm-livefee:usdt';
 
@@ -108,5 +110,28 @@ describe('admin fee management', () => {
     expect((await other.agent.req('GET', '/v1/dashboard/fee-topups/?livemode=true')).json<{ data: unknown[] }>().data).toHaveLength(0);
     const audit = await owner.query("select after from audit_logs where action = 'admin.fee_topup_recorded' and merchant_id = $1", [m.merchantId]);
     expect(audit.rows).toEqual([{ after: { livemode: true, asset: LIVE, amount: '3', reference: '0x3', reason: 'prepaid fees received' } }]);
+  });
+});
+
+describe('fee balance notices', () => {
+  const notices = async (merchantId: string) =>
+    (await owner.query<{ kind: string }>("select kind from email_outbox where merchant_id = $1 and kind like 'fee_balance_%' order by created_at", [merchantId])).rows.map(
+      (r) => r.kind,
+    );
+  // noticeFeeBalance runs right after settlement booked `fee`: the ledger already holds the new balance.
+  const notice = (merchantId: string, fee: bigint) => withSystem(deps.db, (tx) => noticeFeeBalance(deps, tx, merchantId, LIVE, fee));
+
+  it('owners are emailed when a fee moves the live balance into low, once per crossing', async () => {
+    const { m, topUp } = await liveMerchant();
+    await topUp('8'); // prepaid 8: low
+    await notice(m.merchantId, 5_000_000n); // from 13 (ok) to 8 (low): crossing
+    await notice(m.merchantId, 1_000_000n); // from 9 (low) to 8 (low): no crossing
+    expect(await notices(m.merchantId)).toEqual(['fee_balance_low']);
+  });
+
+  it('and into blocked', async () => {
+    const { m } = await liveMerchant(); // prepaid 0: blocked
+    await notice(m.merchantId, 5_000_000n); // from 5 (low) to 0 (blocked)
+    expect(await notices(m.merchantId)).toEqual(['fee_balance_blocked']);
   });
 });

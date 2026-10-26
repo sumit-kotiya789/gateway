@@ -26,6 +26,8 @@ import { invoiceDetail } from '../invoices/invoices.routes.js';
 import { invoiceView } from '../invoices/invoices.js';
 import { balancesView, feeTopupsView } from '../ledger/ledger.routes.js';
 import { recordFeeTopup, resolveInvoice } from '../ledger/ledger.js';
+import { enqueueEmail } from '../email/outbox.js';
+import { templates } from '../email/templates.js';
 
 const Reason = z.string().trim().min(3).max(500);
 const ReasonBody = z.strictObject({ reason: Reason });
@@ -290,6 +292,7 @@ export function adminRoutes(deps: Deps): FastifyPluginAsyncZod {
           await tx.delete(recoveryCodes).where(eq(recoveryCodes.userId, u.id));
           await tx.update(sessions).set({ revokedAt: new Date(deps.clock()) }).where(and(eq(sessions.userId, u.id), isNull(sessions.revokedAt)));
           await record(tx, req, { merchantId: u.merchantId, action: 'admin.user_2fa_reset', targetType: 'merchant_user', targetId: u.id, after: { reason: req.body.reason } });
+          await enqueueEmail(deps, tx, { merchantId: u.merchantId, kind: 'two_factor_reset', to: u.email, ...templates.twoFactorReset() });
         });
         return reply.status(204).send();
       },

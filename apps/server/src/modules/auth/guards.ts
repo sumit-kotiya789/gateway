@@ -85,6 +85,22 @@ export function requirePermission(permission: MerchantPermission): preHandlerAsy
 }
 
 /**
+ * Live-mode actions (live API keys, xpubs, invoices, webhooks) need the acting user's email to be verified (M10).
+ * Reads `livemode` from the validated body; test mode is never gated. Runs before step-up so a refused request
+ * does not burn the TOTP code.
+ */
+export function requireVerifiedEmailForLive(deps: Deps): preHandlerAsyncHookHandler {
+  return async (req: FastifyRequest) => {
+    if ((req.body as { livemode?: unknown } | undefined)?.livemode !== true) return;
+    const user = authedUser(req);
+    const [u] = await withTenant(deps.db, user.merchantId, (tx) =>
+      tx.select({ verifiedAt: merchantUsers.emailVerifiedAt }).from(merchantUsers).where(eq(merchantUsers.id, user.id)),
+    );
+    if (!u?.verifiedAt) throw new AppError('forbidden', 'verify your email address before using live mode', { reason: 'email_unverified' });
+  };
+}
+
+/**
  * Step-up: the request must carry a fresh TOTP code in `x-totp-code`. Users without 2FA are refused.
  * The accepted time step is persisted so the same code cannot be replayed.
  */

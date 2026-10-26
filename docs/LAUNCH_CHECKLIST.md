@@ -20,7 +20,9 @@ Every item needs an owner and a date before launch.
 - [ ] `TRUST_PROXY_HOPS` matches the real proxy chain (wrong value = spoofable client IPs)
 - [ ] Audit-chain anchoring: latest `(seq, hash)` exported to write-once storage on a schedule
 - [ ] `DATA_KEK` held in the secret manager (or KMS provider implemented); KEK rotation rehearsed
-- [ ] Signup decision: email verification live (M10) or `SIGNUP_ENABLED=false`
+- [ ] `SMTP_URL` points at a real relay; sending domain has SPF, DKIM and DMARC; a test verification and reset email arrive (not in spam)
+- [ ] `DASHBOARD_URL` is the public https dashboard origin
+- [ ] Signup decision: email verification is live (M10, D-077), or `SIGNUP_ENABLED=false`
 - [ ] App DB user is a member of `gw_app` only; owner credentials used by migrations only
 - [ ] `ADMIN_IP_ALLOWLIST` set (VPN / office ranges)
 - [ ] Fee model per merchant agreed and set (rate, fixed, grace); prepaid top-up process (how merchants pay, who records) agreed (D-076)

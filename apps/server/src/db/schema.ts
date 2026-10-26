@@ -80,12 +80,66 @@ export const merchantUsers = pgTable(
     totpLastStep: bigint('totp_last_step', { mode: 'bigint' }),
     failedLogins: integer('failed_logins').notNull().default(0),
     lockedUntil: tstz('locked_until'),
+    // Set when the user clicks the verification link (M10). Live-mode actions need it.
+    emailVerifiedAt: tstz('email_verified_at'),
     createdAt: createdAt(),
   },
   (t) => [
     uniqueIndex('merchant_users_email_uq').on(sql`lower(${t.email})`),
     index('merchant_users_merchant_idx').on(t.merchantId),
     check('merchant_users_totp_enabled', sql`(${t.totpEnabledAt} is null) = (${t.totpSecretEnc} is null)`),
+  ],
+);
+
+/**
+ * Single-use emailed tokens (M10): email verification and password reset. Only the SHA-256 of the token is stored;
+ * the token itself exists in the (encrypted, then purged) email and the user's inbox.
+ */
+export const emailTokens = pgTable(
+  'email_tokens',
+  {
+    id: id(),
+    merchantId: uuid('merchant_id')
+      .notNull()
+      .references(() => merchants.id),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => merchantUsers.id),
+    purpose: text('purpose').notNull(),
+    tokenHash: text('token_hash').notNull(),
+    expiresAt: tstz('expires_at').notNull(),
+    usedAt: tstz('used_at'),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('email_tokens_hash_uq').on(t.tokenHash),
+    index('email_tokens_user_idx').on(t.userId, t.purpose),
+    check('email_tokens_purpose', sql`${t.purpose} in ('verify_email', 'password_reset')`),
+  ],
+);
+
+/**
+ * Outgoing email (M10). Written in the transaction of the action it reports; the worker sends it. Recipient, subject
+ * and body are envelope-encrypted (they can carry reset links) and erased once sent or given up on.
+ */
+export const emailOutbox = pgTable(
+  'email_outbox',
+  {
+    id: id(),
+    merchantId: uuid('merchant_id').references(() => merchants.id),
+    kind: text('kind').notNull(),
+    payloadEnc: text('payload_enc'),
+    status: text('status').notNull().default('pending'),
+    attempts: integer('attempts').notNull().default(0),
+    nextAttemptAt: tstz('next_attempt_at').notNull().defaultNow(),
+    lastError: text('last_error'),
+    sentAt: tstz('sent_at'),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index('email_outbox_due_idx').on(t.nextAttemptAt).where(sql`${t.status} = 'pending'`),
+    check('email_outbox_status', sql`${t.status} in ('pending', 'sent', 'failed')`),
+    check('email_outbox_payload', sql`(${t.status} = 'pending') = (${t.payloadEnc} is not null)`),
   ],
 );
 

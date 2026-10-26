@@ -16,6 +16,7 @@ cp .env.example .env        # set dev passwords; generate JWT_SECRET, ADMIN_JWT_
 docker compose up --build   # postgres, redis, anvil, mailpit, migrate (one-shot), api on :3000
 pnpm admin:create you@example.com superadmin   # first admin (prints password + TOTP URI once)
 ```
+Emails (verification, password reset, notices) land in Mailpit: http://localhost:8025.
 
 ## Scripts
 | Script | Does |

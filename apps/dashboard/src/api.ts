@@ -72,7 +72,7 @@ export const totpHeader = (code: string) => ({ 'x-totp-code': code.trim() });
 export type Role = 'owner' | 'admin' | 'developer' | 'finance' | 'read_only';
 
 export interface Me {
-  user: { id: string; email: string; role: Role; totp_enabled: boolean; session_mfa: boolean };
+  user: { id: string; email: string; email_verified: boolean; role: Role; totp_enabled: boolean; session_mfa: boolean };
   merchant: { id: string; name: string; status: string; custody_mode: string };
 }
 

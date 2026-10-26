@@ -134,6 +134,20 @@
       "when": 1793005898856,
       "tag": "0018_fees_security",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1793009240545,
+      "tag": "0019_email",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1793009241624,
+      "tag": "0020_email_security",
+      "breakpoints": true
     }
   ]
 }

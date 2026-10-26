@@ -51,6 +51,9 @@ Not money-moving, but a bug here breaks authentication, tenant isolation or audi
 | `apps/server/src/modules/webhooks/ssrf.ts`, `delivery.ts` | outbound SSRF guard (address pinning), signing, retry state | M6 |
 | `apps/server/db/migrations/0014_webhooks_security.sql` | trigger-only delivery creation, tenant isolation | M6 |
 | `apps/server/src/modules/ledger/reconciliation.ts` | detects ledger/payment/invoice drift | M5 |
+| `apps/server/src/modules/email/*.ts` | emailed tokens (hash-only storage, single use), encrypted outbox, delivery | M10 |
+| `apps/server/src/modules/auth/dashboard-auth.routes.ts` | verification, password reset (2FA still required), session revocation | M1/M10 |
+| `apps/server/db/migrations/0020_email_security.sql` | single-use tokens, final outbox states, tenant isolation | M10 |
 | `apps/server/src/modules/admin/admin.routes.ts` | admin console: suspension, 2FA reset, kill switches, manual resolve, audit access | M5b |
 | `apps/admin/src/api.ts`, `apps/admin/nginx.conf` | admin CSRF header; admin origin serves only /admin/ and its API path | M5b |
 | `apps/dashboard/src/api.ts` | CSRF header, single-flight refresh (reuse detection would revoke the session) | M3b |
@@ -103,6 +106,9 @@ Status: `planned` until the mitigation's milestone lands, then the test that pro
 | API key leak | HMAC-SHA256(pepper) storage, shown once; prefix lookup with constant-time compare even for unknown prefixes; scopes; IP allowlist; expiry; revocation; suspended merchant = dead keys; 2FA step-up to create; value-pattern log redaction | `api-keys.test.ts`, `crypto.test.ts`, `logger.test.ts` | M1 |
 | Credential brute force | argon2id (m=19 MiB, t=2, p=1); per-account lockout (5 fails → 15 min, doubling, 24 h cap); per-IP rate limit 10/min on auth routes; identical errors + dummy hash for unknown accounts | `auth.test.ts` | M1 |
 | Session theft / refresh replay | 10-min access JWT; httpOnly SameSite=Strict cookies; refresh rotation with reuse detection that revokes the whole family | `auth.test.ts` | M1 |
+| Account takeover via email (password reset) | Reset token: 256-bit, SHA-256 stored, single use, 1 h, emailed via encrypted outbox; with 2FA on, reset also needs an authenticator or recovery code (failures count toward lockout); every session revoked; "password changed" email; forgot always answers 202 (no enumeration), one email/min/account | `email.test.ts` | M10 |
+| Fake or mistyped signup email reaching live mode | Live API keys, xpubs, invoices, webhooks need a verified email (link token, 48 h, single use) | `email.test.ts` | M10 |
+| Secrets in email at rest / in logs | Outbox payload (recipient, subject, body) envelope-encrypted, erased once sent or failed; only error codes stored; no-SMTP fallback logs subject only | `email.test.ts` | M10 |
 | CSRF / login CSRF | Double-submit token + Origin allowlist on all cookie-authenticated state changes; Origin check on signup/login | `auth.test.ts` | M1 |
 | TOTP replay | Last accepted time step persisted; codes at or below it refused | `crypto.test.ts`, `auth.test.ts`, `api-keys.test.ts` | M1 |
 | TOTP secret theft from DB | Envelope encryption (per-value DEK, AES-256-GCM, KEK wrap, AAD bound to row) | `crypto.test.ts`, `auth.test.ts` | M1 |

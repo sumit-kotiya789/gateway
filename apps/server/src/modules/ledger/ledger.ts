@@ -14,6 +14,7 @@ import type { Tx } from '../../common/db.js';
 import { feeTopups, ledgerAccounts, ledgerEntries, ledgerJournals, invoices, payments } from '../../db/schema.js';
 import type { Deps } from '../../deps.js';
 import { transitionInvoice } from '../invoices/invoices.js';
+import { noticeFeeBalance } from './fee-balance.js';
 
 type AccountKind = (typeof ledgerAccounts.$inferSelect)['kind'];
 type PaymentRow = typeof payments.$inferSelect;
@@ -94,6 +95,7 @@ export async function settleInvoice(deps: Deps, tx: Tx, invoiceId: string): Prom
       ['merchant_fees_owed', 'merchant', fee],
       ['platform_fee_revenue', 'platform', -fee],
     ]);
+    if (inv.livemode) await noticeFeeBalance(deps, tx, inv.merchantId, inv.tokenId, fee);
   }
   await tx.update(invoices).set({ feeAmount: fee }).where(eq(invoices.id, inv.id));
   await transitionInvoice(deps, tx, inv.id, 'settled', 'platform fee charged');

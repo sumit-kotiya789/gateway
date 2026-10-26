@@ -8,7 +8,7 @@ import { randomBase62 } from '../../common/crypto/random.js';
 import { withTenant } from '../../common/db.js';
 import { outboxEvents, webhookDeliveries, webhookEndpoints } from '../../db/schema.js';
 import type { Deps } from '../../deps.js';
-import { requirePermission, requireTotp, requireUser } from '../auth/guards.js';
+import { requirePermission, requireTotp, requireUser, requireVerifiedEmailForLive } from '../auth/guards.js';
 import { redirectUrl } from '../invoices/invoices.routes.js';
 
 export const MAX_ENDPOINTS_PER_MODE = 16;
@@ -64,7 +64,7 @@ export function webhookDashboardRoutes(deps: Deps): FastifyPluginAsyncZod {
     app.post(
       '/',
       {
-        preHandler: [requirePermission('webhooks:manage'), requireTotp(deps)],
+        preHandler: [requirePermission('webhooks:manage'), requireVerifiedEmailForLive(deps), requireTotp(deps)],
         schema: { body: z.strictObject({ livemode: z.boolean(), url: Url, description: z.string().trim().max(200).optional() }) },
       },
       async (req, reply) => {

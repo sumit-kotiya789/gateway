@@ -41,6 +41,18 @@ const schema = z
       .default('http://localhost:3000')
       .transform((u) => u.replace(/\/+$/, '')),
 
+    // Email (M10). Without SMTP_URL (dev/test only) the worker logs recipient + subject instead of sending.
+    SMTP_URL: z
+      .union([z.literal(''), z.url()])
+      .optional()
+      .transform((v) => v || undefined),
+    EMAIL_FROM: z.string().min(3).max(200).default('Gateway <no-reply@localhost>'),
+    // Where links in emails point (verification, password reset). Must be one of DASHBOARD_ORIGINS.
+    DASHBOARD_URL: z
+      .url()
+      .default('http://localhost:8080')
+      .transform((u) => u.replace(/\/+$/, '')),
+
     SIGNUP_ENABLED: z.stringbool().default(true),
     FEATURE_CUSTODIAL: z.stringbool().default(false),
     // Lets webhooks reach private/loopback addresses (local receivers in dev and tests). Refused in production.
@@ -67,6 +79,12 @@ const schema = z
       }
       if (c.WEBHOOK_ALLOW_PRIVATE_NETWORKS) {
         ctx.addIssue({ code: 'custom', path: ['WEBHOOK_ALLOW_PRIVATE_NETWORKS'], message: 'must be false in production (SSRF guard)' });
+      }
+      if (!c.SMTP_URL) {
+        ctx.addIssue({ code: 'custom', path: ['SMTP_URL'], message: 'required in production (verification and security emails)' });
+      }
+      if (!c.DASHBOARD_URL.startsWith('https://') || !c.DASHBOARD_ORIGINS.includes(c.DASHBOARD_URL)) {
+        ctx.addIssue({ code: 'custom', path: ['DASHBOARD_URL'], message: 'must be https and listed in DASHBOARD_ORIGINS in production' });
       }
       const shared = c.DASHBOARD_ORIGINS.filter((o) => c.ADMIN_ORIGINS.includes(o));
       if (shared.length > 0) {

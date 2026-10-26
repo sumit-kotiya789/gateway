@@ -7,7 +7,7 @@ import { audit } from '../../common/audit.js';
 import { withTenant } from '../../common/db.js';
 import { apiKeys } from '../../db/schema.js';
 import type { Deps } from '../../deps.js';
-import { requirePermission, requireTotp, requireUser } from '../auth/guards.js';
+import { requirePermission, requireTotp, requireUser, requireVerifiedEmailForLive } from '../auth/guards.js';
 import { generateApiKey, hashApiKey, requireApiKey } from './api-keys.js';
 
 const Cidr = z.string().refine((s) => {
@@ -67,7 +67,7 @@ export function apiKeyDashboardRoutes(deps: Deps): FastifyPluginAsyncZod {
 
     app.post(
       '/',
-      { preHandler: [requirePermission('api_keys:write'), requireTotp(deps)], schema: { body: CreateKey } },
+      { preHandler: [requirePermission('api_keys:write'), requireVerifiedEmailForLive(deps), requireTotp(deps)], schema: { body: CreateKey } },
       async (req, reply) => {
         const user = req.user;
         if (!user) throw new AppError('unauthorized', 'authentication required');

@@ -11,6 +11,8 @@ import { audit } from '../../common/audit.js';
 import { withSystem, withTenant, type Tx } from '../../common/db.js';
 import { depositAddresses, invoices, merchants, merchantXpubs, tokens, xpubChanges } from '../../db/schema.js';
 import type { Deps } from '../../deps.js';
+import { notifyOwners } from '../email/outbox.js';
+import { templates } from '../email/templates.js';
 import { verifyOwnership } from './ownership.js';
 
 /** A live key replacing another waits this long (D-075). Test keys switch at once. */
@@ -146,6 +148,13 @@ export async function registerXpub(deps: Deps, tx: Tx, actor: Actor, input: Regi
       { actorType: 'merchant_user', actorId: actor.id, merchantId: actor.merchantId, action: 'xpub.change_requested', targetType: 'xpub_change', targetId: c.id, before: brief(prev), after: { ...after, activates_at: c.activatesAt.toISOString() } },
       req,
     );
+    await notifyOwners(
+      deps,
+      tx,
+      actor.merchantId,
+      'xpub_change_requested',
+      templates.xpubChangeRequested({ livemode, firstAddress, activatesAt: c.activatesAt.toISOString(), dashboardUrl: deps.config.DASHBOARD_URL }),
+    );
     deps.log.warn({ merchantId: actor.merchantId, changeId: c.id }, 'live xpub change requested; applies after cooldown');
     return { kind: 'pending', change: c };
   }
@@ -196,6 +205,7 @@ async function applyChange(deps: Deps, tx: Tx, c: ChangeRow): Promise<void> {
   /* v8 ignore next -- invariant: INSERT ... RETURNING yields the row or throws */
   if (!x) throw new Error('xpub insert failed');
   await resolveChange(tx, c, 'applied', 'cooldown elapsed', now);
+  await notifyOwners(deps, tx, c.merchantId, 'xpub_change_applied', templates.xpubChangeApplied({ livemode: c.livemode, firstAddress: evmDeriver.deriveFromXpub(c.xpub, 0).address }));
   await audit(tx, {
     actorType: 'system',
     merchantId: c.merchantId,
@@ -232,6 +242,7 @@ export async function applyDueXpubChanges(deps: Deps, batch = 50): Promise<{ app
         const note = err.message;
         await resolveChange(tx, c, 'failed', note, deps.clock());
         await audit(tx, { actorType: 'system', merchantId: c.merchantId, action: 'xpub.change_failed', targetType: 'xpub_change', targetId: c.id, after: { note } });
+        await notifyOwners(deps, tx, c.merchantId, 'xpub_change_failed', templates.xpubChangeFailed({ livemode: c.livemode, note }));
         deps.log.error({ merchantId: c.merchantId, changeId: c.id, note }, 'xpub change could not be applied');
         failed++;
       }

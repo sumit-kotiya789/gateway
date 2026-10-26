@@ -111,13 +111,22 @@ export class Agent {
 }
 
 /** Signs up a fresh merchant + owner and returns a logged-in agent. */
-export async function signup(app: ReturnType<typeof buildApp>, name = 'Acme') {
+let verifyPool: pg.Pool | undefined;
+/** Marks a user's email verified directly (most tests are not about email; email.test.ts covers the real flow). */
+export async function markVerified(userId: string): Promise<void> {
+  verifyPool ??= new pg.Pool({ connectionString: inject('pgOwnerUrl'), max: 1, allowExitOnIdle: true });
+  await verifyPool.query('update merchant_users set email_verified_at = now() where id = $1', [userId]);
+}
+
+/** Signs up a new merchant owner (email verified unless `verified: false`). */
+export async function signup(app: ReturnType<typeof buildApp>, name = 'Acme', opts: { verified?: boolean } = {}) {
   const agent = new Agent(app);
   const email = uniqueEmail('owner');
   const password = 'correct horse battery';
   const res = await agent.req('POST', '/v1/dashboard/auth/signup', { merchant_name: name, email, password });
   if (res.statusCode !== 201) throw new Error(`signup failed: ${res.body}`);
   const b = res.json<{ merchant: { id: string }; user: { id: string } }>();
+  if (opts.verified ?? true) await markVerified(b.user.id);
   return { agent, email, password, merchantId: b.merchant.id, userId: b.user.id };
 }
 

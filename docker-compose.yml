@@ -18,6 +18,10 @@ x-app-env: &app-env
   DASHBOARD_ORIGINS: ${DASHBOARD_ORIGINS:-}
   ADMIN_ORIGINS: ${ADMIN_ORIGINS:-}
   WEBHOOK_ALLOW_PRIVATE_NETWORKS: ${WEBHOOK_ALLOW_PRIVATE_NETWORKS:-false}
+  # Dev stack: every email lands in Mailpit (http://localhost:8025). Links point at DASHBOARD_URL.
+  SMTP_URL: smtp://mailpit:1025
+  EMAIL_FROM: ${EMAIL_FROM:-Gateway <no-reply@localhost>}
+  DASHBOARD_URL: ${DASHBOARD_URL:-http://localhost:8080}
 
 services:
   migrate:

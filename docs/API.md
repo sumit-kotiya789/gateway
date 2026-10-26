@@ -47,6 +47,9 @@ OpenAPI 3.1 is generated from route schemas and served at `GET /v1/openapi.json`
 
 Step-up: endpoints marked **2FA** need header `x-totp-code` with a fresh code (a code is accepted once).
 
+Live mode (M10): creating live API keys, xpubs, dashboard invoices and webhook endpoints needs the acting user's
+verified email (`403`, `details.reason = "email_unverified"`). `GET /auth/me` returns `user.email_verified`.
+
 ## Endpoints
 
 | Method | Path | Auth | Permission / scope | Since |
@@ -104,6 +107,10 @@ Statuses: `pending → detected → confirming → paid | underpaid | overpaid �
 | GET | `/v1/dashboard/auth/me` | session | – | M1 |
 | POST | `/v1/dashboard/auth/2fa/setup` | session | – | M1 |
 | POST | `/v1/dashboard/auth/2fa/enable` | session | – (returns 10 recovery codes once) | M1 |
+| POST | `/v1/dashboard/auth/verify-email` | none | – (`token` from the emailed link; single use, 48 h) | M10 |
+| POST | `/v1/dashboard/auth/verify-email/resend` | session | – (202; 429 within a minute of the last link; 409 when verified) | M10 |
+| POST | `/v1/dashboard/auth/password/forgot` | none | – (`email`; always 202; one email per minute per account) | M10 |
+| POST | `/v1/dashboard/auth/password/reset` | none | – (`token`, `password`, plus `code` or `recovery_code` when 2FA is on; revokes every session) | M10 |
 | GET | `/v1/dashboard/api-keys/` | session | `api_keys:read` | M1 |
 | POST | `/v1/dashboard/api-keys/` | session + **2FA** | `api_keys:write` (returns full key once) | M1 |
 | DELETE | `/v1/dashboard/api-keys/:id` | session | `api_keys:write` | M1 |

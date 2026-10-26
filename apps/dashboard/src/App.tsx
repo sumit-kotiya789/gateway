@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { ApiError, api, type Me } from './api';
-import { Login } from './auth';
+import { Login, ResetPassword, VerifyBanner, VerifyEmail, linkToken } from './auth';
 import { ApiKeys, Webhooks } from './developers';
 import { InvoiceDetail, Invoices } from './invoices';
 import { Security, Xpubs } from './settings';
@@ -52,6 +52,9 @@ export function App() {
     }
   };
 
+  // Emailed links work signed in or out.
+  if (hash.startsWith('#/verify-email')) return <VerifyEmail token={linkToken(hash)} onDone={loadMe} />;
+  if (hash.startsWith('#/reset-password')) return <ResetPassword token={linkToken(hash)} />;
   if (error) return <ErrorBox error={error} />;
   if (me === undefined) return <p className="muted center">Loading…</p>;
   if (me === null) return <Login onDone={loadMe} />;
@@ -105,6 +108,7 @@ export function App() {
           ))}
         </nav>
         <main>
+          {!me.user.email_verified && <VerifyBanner />}
           {!totp && page !== 'security' && (
             <p className="notice">Protect your account: <a href="#/security">enable two-factor authentication</a>.</p>
           )}

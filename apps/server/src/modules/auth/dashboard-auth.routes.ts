@@ -8,9 +8,12 @@ import { audit } from '../../common/audit.js';
 import { PASSWORD_MAX, PASSWORD_MIN, burnPasswordCheck, hashPassword, verifyPassword } from '../../common/crypto/password.js';
 import { sha256Hex } from '../../common/crypto/random.js';
 import { generateTotpSecret, totpUri, verifyTotp } from '../../common/crypto/totp.js';
-import { withSystem, withTenant } from '../../common/db.js';
-import { merchantUsers, merchants, recoveryCodes } from '../../db/schema.js';
+import { withSystem, withTenant, type Tx } from '../../common/db.js';
+import { merchantUsers, merchants, recoveryCodes, sessions } from '../../db/schema.js';
 import type { Deps } from '../../deps.js';
+import { enqueueEmail } from '../email/outbox.js';
+import { templates } from '../email/templates.js';
+import { TOKEN_RESEND_MS, findEmailToken, issueEmailToken, lastTokenAt, useEmailToken } from '../email/tokens.js';
 import { checkCsrf, checkOrigin, requireUser } from './guards.js';
 import { isLocked, lockoutUntil } from './lockout.js';
 import {
@@ -33,6 +36,12 @@ const totpAad = (userId: string) => `merchant_users.totp:${userId}`;
 const pendingAad = (userId: string) => `merchant_users.totp_pending:${userId}`;
 const normalizeRecovery = (c: string) => c.toLowerCase().replace(/[^0-9a-f]/g, '');
 const INVALID = () => new AppError('unauthorized', 'invalid credentials');
+
+/** Emails a verification link (new token; earlier ones stop working). */
+async function sendVerification(deps: Deps, tx: Tx, u: { id: string; merchantId: string; email: string }): Promise<void> {
+  const token = await issueEmailToken(tx, u, 'verify_email', deps.clock());
+  await enqueueEmail(deps, tx, { merchantId: u.merchantId, kind: 'verify_email', to: u.email, ...templates.verifyEmail(`${deps.config.DASHBOARD_URL}/#/verify-email?token=${token}`) });
+}
 
 function newRecoveryCodes(): string[] {
   return Array.from({ length: 10 }, () => randomBytes(8).toString('hex').replace(/(.{4})(?=.)/g, '$1-'));
@@ -64,6 +73,7 @@ export function dashboardAuthRoutes(deps: Deps): FastifyPluginAsyncZod {
           const [u] = await tx.insert(merchantUsers).values({ merchantId: m.id, email, passwordHash, role: 'owner' }).returning();
           if (!u) throw new Error('user insert failed');
           await audit(tx, { actorType: 'merchant_user', actorId: u.id, merchantId: m.id, action: 'merchant.created', targetType: 'merchant', targetId: m.id, after: { name: m.name, custody_mode: m.custodyMode } }, req);
+          await sendVerification(deps, tx, u);
           await issueSession(deps, tx, req, reply, u, false);
           return { merchant: { id: m.id, name: m.name, custody_mode: m.custodyMode }, user: { id: u.id, email: u.email, role: u.role } };
         });
@@ -169,7 +179,7 @@ export function dashboardAuthRoutes(deps: Deps): FastifyPluginAsyncZod {
         const m = await tx.query.merchants.findFirst({ where: (t, { eq: e }) => e(t.id, user.merchantId) });
         if (!u || !m) throw new AppError('unauthorized', 'authentication required');
         return {
-          user: { id: u.id, email: u.email, role: u.role, totp_enabled: u.totpEnabledAt !== null, session_mfa: user.mfa },
+          user: { id: u.id, email: u.email, email_verified: u.emailVerifiedAt !== null, role: u.role, totp_enabled: u.totpEnabledAt !== null, session_mfa: user.mfa },
           merchant: { id: m.id, name: m.name, status: m.status, custody_mode: m.custodyMode },
         };
       });
@@ -213,5 +223,122 @@ export function dashboardAuthRoutes(deps: Deps): FastifyPluginAsyncZod {
       if (!result) throw new AppError('validation_error', 'invalid code');
       return result;
     });
+
+    // ---------------------------------------------------------------- email verification and password reset (M10)
+
+    const Token = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
+    const INVALID_LINK = () => new AppError('validation_error', 'this link is invalid or has expired', { reason: 'invalid_token' });
+
+    /** The link from the verification email. No session needed: the token is the proof. */
+    app.post('/verify-email', { config: { rateLimit: AUTH_RATE_LIMIT }, schema: { body: z.strictObject({ token: Token }) } }, async (req, reply) => {
+      checkOrigin(req, origins);
+      const now = deps.clock();
+      const ok = await withSystem(deps.db, async (tx) => {
+        const t = await findEmailToken(tx, 'verify_email', req.body.token, now);
+        if (!t) return false;
+        await useEmailToken(tx, t, now);
+        await tx.update(merchantUsers).set({ emailVerifiedAt: new Date(now) }).where(and(eq(merchantUsers.id, t.userId), isNull(merchantUsers.emailVerifiedAt)));
+        await audit(tx, { actorType: 'merchant_user', actorId: t.userId, merchantId: t.merchantId, action: 'auth.email_verified' }, req);
+        return true;
+      });
+      if (!ok) throw INVALID_LINK();
+      return reply.status(204).send();
+    });
+
+    app.post('/verify-email/resend', { preHandler: requireUser(deps), config: { rateLimit: AUTH_RATE_LIMIT } }, async (req, reply) => {
+      const user = req.user;
+      if (!user) throw new AppError('unauthorized', 'authentication required');
+      await withTenant(deps.db, user.merchantId, async (tx) => {
+        const [u] = await tx.select().from(merchantUsers).where(eq(merchantUsers.id, user.id)).for('update');
+        if (!u) throw new AppError('unauthorized', 'authentication required');
+        if (u.emailVerifiedAt) throw new AppError('conflict', 'email address already verified');
+        const last = await lastTokenAt(tx, u.id, 'verify_email');
+        if (last !== null && deps.clock() - last < TOKEN_RESEND_MS) throw new AppError('rate_limited', 'a verification email was just sent; wait a minute');
+        await sendVerification(deps, tx, u);
+      });
+      return reply.status(202).send();
+    });
+
+    /**
+     * Always 202, whether or not the address has an account (no enumeration). A reset email goes out at most once a
+     * minute per account.
+     */
+    app.post('/password/forgot', { config: { rateLimit: AUTH_RATE_LIMIT }, schema: { body: z.strictObject({ email: Email }) } }, async (req, reply) => {
+      checkOrigin(req, origins);
+      await withSystem(deps.db, async (tx) => {
+        const [u] = await tx.select().from(merchantUsers).where(sql`lower(${merchantUsers.email}) = ${req.body.email}`).for('update');
+        if (!u) return;
+        const last = await lastTokenAt(tx, u.id, 'password_reset');
+        if (last !== null && deps.clock() - last < TOKEN_RESEND_MS) return;
+        const token = await issueEmailToken(tx, u, 'password_reset', deps.clock());
+        await enqueueEmail(deps, tx, { merchantId: u.merchantId, kind: 'password_reset', to: u.email, ...templates.passwordReset(`${deps.config.DASHBOARD_URL}/#/reset-password?token=${token}`) });
+        await audit(tx, { actorType: 'anonymous', merchantId: u.merchantId, action: 'auth.password_reset_requested', targetType: 'merchant_user', targetId: u.id }, req);
+      });
+      return reply.status(202).send();
+    });
+
+    /**
+     * Sets a new password from the reset link. With 2FA on, the email alone is not enough: a current authenticator or
+     * recovery code is required too. Every session is revoked; the user is told by email.
+     */
+    app.post(
+      '/password/reset',
+      {
+        config: { rateLimit: AUTH_RATE_LIMIT },
+        schema: {
+          body: z.strictObject({ token: Token, password: Password, code: TotpCode.optional(), recovery_code: z.string().max(64).optional() }),
+        },
+      },
+      async (req, reply) => {
+        checkOrigin(req, origins);
+        const now = deps.clock();
+        const passwordHash = await hashPassword(req.body.password);
+        // Failure state (2FA attempts) must commit, so the transaction returns a result and throws afterwards.
+        const result = await withSystem(deps.db, async (tx) => {
+          const t = await findEmailToken(tx, 'password_reset', req.body.token, now);
+          if (!t) return 'invalid' as const;
+          const [u] = await tx.select().from(merchantUsers).where(eq(merchantUsers.id, t.userId)).for('update');
+          /* v8 ignore next -- invariant: tokens reference existing users (FK) */
+          if (!u) return 'invalid' as const;
+          if (u.totpSecretEnc) {
+            if (isLocked(u.lockedUntil, now)) return 'mfa' as const;
+            let ok = false;
+            if (req.body.code) {
+              const step = verifyTotp(await deps.envelope.open(u.totpSecretEnc, totpAad(u.id)), req.body.code, now, u.totpLastStep);
+              if (step !== null) {
+                ok = true;
+                await tx.update(merchantUsers).set({ totpLastStep: step }).where(eq(merchantUsers.id, u.id));
+              }
+            } else if (req.body.recovery_code) {
+              const used = await tx
+                .update(recoveryCodes)
+                .set({ usedAt: new Date(now) })
+                .where(and(eq(recoveryCodes.userId, u.id), eq(recoveryCodes.codeHash, sha256Hex(normalizeRecovery(req.body.recovery_code))), isNull(recoveryCodes.usedAt)))
+                .returning({ id: recoveryCodes.id });
+              ok = used.length === 1;
+            }
+            if (!ok) {
+              const failed = u.failedLogins + 1;
+              await tx.update(merchantUsers).set({ failedLogins: failed, lockedUntil: lockoutUntil(failed, now) }).where(eq(merchantUsers.id, u.id));
+              await audit(tx, { actorType: 'anonymous', merchantId: u.merchantId, action: 'auth.mfa_failed', targetType: 'merchant_user', targetId: u.id, after: { failed, flow: 'password_reset' } }, req);
+              return 'mfa' as const;
+            }
+          }
+          await useEmailToken(tx, t, now);
+          // Proving control of the inbox also verifies the address.
+          await tx
+            .update(merchantUsers)
+            .set({ passwordHash, failedLogins: 0, lockedUntil: null, emailVerifiedAt: u.emailVerifiedAt ?? new Date(now) })
+            .where(eq(merchantUsers.id, u.id));
+          await tx.update(sessions).set({ revokedAt: new Date(now) }).where(and(eq(sessions.userId, u.id), isNull(sessions.revokedAt)));
+          await audit(tx, { actorType: 'merchant_user', actorId: u.id, merchantId: u.merchantId, action: 'auth.password_reset', after: { mfa: u.totpSecretEnc !== null } }, req);
+          await enqueueEmail(deps, tx, { merchantId: u.merchantId, kind: 'password_changed', to: u.email, ...templates.passwordChanged() });
+          return 'ok' as const;
+        });
+        if (result === 'invalid') throw INVALID_LINK();
+        if (result === 'mfa') throw new AppError('unauthorized', 'a valid authenticator or recovery code is required', { reason: 'mfa_required' });
+        return reply.status(204).send();
+      },
+    );
   };
 }
