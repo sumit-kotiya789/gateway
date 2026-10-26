@@ -157,6 +157,26 @@ describe('password reset', () => {
   });
 });
 
+describe('recovery codes', () => {
+  it('regenerating needs step-up and invalidates every earlier code', async () => {
+    const s = await signup(app);
+    const { secret, recoveryCodes } = await enable2fa(s.agent, clock);
+    expect((await s.agent.req('POST', '/v1/dashboard/auth/2fa/recovery-codes')).statusCode).toBe(403);
+    clock.advance(30_000);
+    const r = await s.agent.req('POST', '/v1/dashboard/auth/2fa/recovery-codes', undefined, { 'x-totp-code': totpNow(secret, clock()) });
+    const fresh = r.json<{ recovery_codes: string[] }>().recovery_codes;
+    expect(fresh).toHaveLength(10);
+    expect(fresh).not.toContain(recoveryCodes[0]);
+    const login = async (code: string | undefined) => {
+      const a = new Agent(app);
+      const first = await a.req('POST', '/v1/dashboard/auth/login', { email: s.email, password: s.password });
+      return a.req('POST', '/v1/dashboard/auth/login/2fa', { mfa_token: first.json<{ mfa_token: string }>().mfa_token, recovery_code: code });
+    };
+    expect((await login(recoveryCodes[0])).statusCode).toBe(401);
+    expect((await login(fresh[0])).statusCode).toBe(200);
+  });
+});
+
 describe('outbox delivery', () => {
   it('retries with backoff, then gives up and erases the payload', async () => {
     const s = await signup(app, 'Acme', { verified: false });

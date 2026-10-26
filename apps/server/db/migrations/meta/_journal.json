@@ -148,6 +148,20 @@
       "when": 1793009241624,
       "tag": "0020_email_security",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1793010408236,
+      "tag": "0021_team",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1793010409380,
+      "tag": "0022_team_security",
+      "breakpoints": true
     }
   ]
 }

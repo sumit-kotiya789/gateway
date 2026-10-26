@@ -28,6 +28,11 @@ Prints a generated password and a TOTP enrollment URI once. Store the password i
 As the owner or app role: `select audit_verify();` returns NULL when the chain is intact, otherwise the first bad `seq`.
 A non-NULL result is a security incident: freeze admin access, preserve the DB snapshot, investigate from that `seq`.
 
+## Team
+- Members, roles and invitations: dashboard → Team (owner/admin, TOTP). A removed member is signed out at once; their
+  open access token lapses within 10 minutes. Their API keys stay: revoke them under API keys if they had the secret.
+- "The merchant must keep at least one owner": promote someone to owner first, then change or remove the old owner.
+
 ## Merchant locked out
 Lockout clears itself (15 min, doubling, max 24 h). Lost 2FA device: user signs in with a recovery code. Without recovery
 codes: verify the user's identity out of band, then admin console, merchant, Users, Reset 2FA (operator + TOTP). It revokes

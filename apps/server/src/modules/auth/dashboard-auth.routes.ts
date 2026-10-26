@@ -14,7 +14,7 @@ import type { Deps } from '../../deps.js';
 import { enqueueEmail } from '../email/outbox.js';
 import { templates } from '../email/templates.js';
 import { TOKEN_RESEND_MS, findEmailToken, issueEmailToken, lastTokenAt, useEmailToken } from '../email/tokens.js';
-import { checkCsrf, checkOrigin, requireUser } from './guards.js';
+import { checkCsrf, checkOrigin, requireTotp, requireUser } from './guards.js';
 import { isLocked, lockoutUntil } from './lockout.js';
 import {
   COOKIE,
@@ -90,7 +90,7 @@ export function dashboardAuthRoutes(deps: Deps): FastifyPluginAsyncZod {
         // Failure state must commit, so the transaction returns a result and throws afterwards.
         const result = await withSystem(deps.db, async (tx) => {
           const [u] = await tx.select().from(merchantUsers).where(sql`lower(${merchantUsers.email}) = ${req.body.email}`).for('update');
-          if (!u || isLocked(u.lockedUntil, now)) return burnPasswordCheck(req.body.password);
+          if (!u || u.removedAt || isLocked(u.lockedUntil, now)) return burnPasswordCheck(req.body.password);
           if (!(await verifyPassword(u.passwordHash, req.body.password))) {
             const failed = u.failedLogins + 1;
             await tx.update(merchantUsers).set({ failedLogins: failed, lockedUntil: lockoutUntil(failed, now) }).where(eq(merchantUsers.id, u.id));
@@ -125,7 +125,7 @@ export function dashboardAuthRoutes(deps: Deps): FastifyPluginAsyncZod {
         const now = deps.clock();
         const ok = await withSystem(deps.db, async (tx) => {
           const [u] = await tx.select().from(merchantUsers).where(eq(merchantUsers.id, userId)).for('update');
-          if (!u?.totpSecretEnc || isLocked(u.lockedUntil, now)) return false;
+          if (!u?.totpSecretEnc || u.removedAt || isLocked(u.lockedUntil, now)) return false;
           let method: 'totp' | 'recovery_code' | null = null;
           if ('code' in req.body) {
             const secret = await deps.envelope.open(u.totpSecretEnc, totpAad(u.id));
@@ -224,6 +224,19 @@ export function dashboardAuthRoutes(deps: Deps): FastifyPluginAsyncZod {
       return result;
     });
 
+    /** New set of 10 recovery codes (shown once); every earlier code stops working. Needs a fresh TOTP code. */
+    app.post('/2fa/recovery-codes', { preHandler: [requireUser(deps), requireTotp(deps)] }, async (req) => {
+      const user = req.user;
+      if (!user) throw new AppError('unauthorized', 'authentication required');
+      return withTenant(deps.db, user.merchantId, async (tx) => {
+        await tx.delete(recoveryCodes).where(eq(recoveryCodes.userId, user.id));
+        const codes = newRecoveryCodes();
+        await tx.insert(recoveryCodes).values(codes.map((c) => ({ id: uuidv7(), merchantId: user.merchantId, userId: user.id, codeHash: sha256Hex(normalizeRecovery(c)) })));
+        await audit(tx, { actorType: 'merchant_user', actorId: user.id, merchantId: user.merchantId, action: 'auth.recovery_codes_regenerated' }, req);
+        return { recovery_codes: codes };
+      });
+    });
+
     // ---------------------------------------------------------------- email verification and password reset (M10)
 
     const Token = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
@@ -267,7 +280,7 @@ export function dashboardAuthRoutes(deps: Deps): FastifyPluginAsyncZod {
       checkOrigin(req, origins);
       await withSystem(deps.db, async (tx) => {
         const [u] = await tx.select().from(merchantUsers).where(sql`lower(${merchantUsers.email}) = ${req.body.email}`).for('update');
-        if (!u) return;
+        if (!u || u.removedAt) return;
         const last = await lastTokenAt(tx, u.id, 'password_reset');
         if (last !== null && deps.clock() - last < TOKEN_RESEND_MS) return;
         const token = await issueEmailToken(tx, u, 'password_reset', deps.clock());
@@ -298,8 +311,8 @@ export function dashboardAuthRoutes(deps: Deps): FastifyPluginAsyncZod {
           const t = await findEmailToken(tx, 'password_reset', req.body.token, now);
           if (!t) return 'invalid' as const;
           const [u] = await tx.select().from(merchantUsers).where(eq(merchantUsers.id, t.userId)).for('update');
-          /* v8 ignore next -- invariant: tokens reference existing users (FK) */
-          if (!u) return 'invalid' as const;
+          // A link sent before the user was removed from the team does not let them back in.
+          if (!u || u.removedAt) return 'invalid' as const;
           if (u.totpSecretEnc) {
             if (isLocked(u.lockedUntil, now)) return 'mfa' as const;
             let ok = false;

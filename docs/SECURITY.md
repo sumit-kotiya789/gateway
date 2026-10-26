@@ -53,6 +53,8 @@ Not money-moving, but a bug here breaks authentication, tenant isolation or audi
 | `apps/server/src/modules/ledger/reconciliation.ts` | detects ledger/payment/invoice drift | M5 |
 | `apps/server/src/modules/email/*.ts` | emailed tokens (hash-only storage, single use), encrypted outbox, delivery | M10 |
 | `apps/server/src/modules/auth/dashboard-auth.routes.ts` | verification, password reset (2FA still required), session revocation | M1/M10 |
+| `apps/server/src/modules/team/team.routes.ts` | invitations, role changes, removal, invite acceptance | M10 |
+| `apps/server/db/migrations/0022_team_security.sql` | immutable invites, merchant always keeps an owner | M10 |
 | `apps/server/db/migrations/0020_email_security.sql` | single-use tokens, final outbox states, tenant isolation | M10 |
 | `apps/server/src/modules/admin/admin.routes.ts` | admin console: suspension, 2FA reset, kill switches, manual resolve, audit access | M5b |
 | `apps/admin/src/api.ts`, `apps/admin/nginx.conf` | admin CSRF header; admin origin serves only /admin/ and its API path | M5b |
@@ -108,6 +110,8 @@ Status: `planned` until the mitigation's milestone lands, then the test that pro
 | Session theft / refresh replay | 10-min access JWT; httpOnly SameSite=Strict cookies; refresh rotation with reuse detection that revokes the whole family | `auth.test.ts` | M1 |
 | Account takeover via email (password reset) | Reset token: 256-bit, SHA-256 stored, single use, 1 h, emailed via encrypted outbox; with 2FA on, reset also needs an authenticator or recovery code (failures count toward lockout); every session revoked; "password changed" email; forgot always answers 202 (no enumeration), one email/min/account | `email.test.ts` | M10 |
 | Fake or mistyped signup email reaching live mode | Live API keys, xpubs, invoices, webhooks need a verified email (link token, 48 h, single use) | `email.test.ts` | M10 |
+| Removed or demoted team member keeps access | Sessions revoked on role change and removal; removed users cannot sign in, refresh or reset; access tokens expire within 10 min; management routes re-read roles from the DB | `team.test.ts` | M10 |
+| Admin escalates to owner / account left ownerless | Admins cannot grant or manage owner/admin; nobody changes their own role; last owner protected by API check and deferred DB trigger | `team.test.ts` | M10 |
 | Secrets in email at rest / in logs | Outbox payload (recipient, subject, body) envelope-encrypted, erased once sent or failed; only error codes stored; no-SMTP fallback logs subject only | `email.test.ts` | M10 |
 | CSRF / login CSRF | Double-submit token + Origin allowlist on all cookie-authenticated state changes; Origin check on signup/login | `auth.test.ts` | M1 |
 | TOTP replay | Last accepted time step persisted; codes at or below it refused | `crypto.test.ts`, `auth.test.ts`, `api-keys.test.ts` | M1 |

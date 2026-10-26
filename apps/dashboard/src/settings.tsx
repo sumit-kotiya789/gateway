@@ -264,7 +264,23 @@ export function Security(props: { totp: boolean; onChange: () => void }) {
       <div className="card">
         <h3>Two-factor authentication</h3>
         {props.totp ? (
-          <p>Enabled. You are asked for a code at sign-in and before sensitive changes (API keys, webhooks, payout xpub).</p>
+          <>
+            <p>Enabled. You are asked for a code at sign-in and before sensitive changes (API keys, webhooks, payout xpub, team).</p>
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                void a.run(async () => {
+                  setCodes((await api<{ recovery_codes: string[] }>('POST', '/auth/2fa/recovery-codes', undefined, totpHeader(code))).recovery_codes);
+                  setCode('');
+                });
+              }}
+            >
+              <p className="muted">Lost your recovery codes, or used some? Generate a new set; every earlier code stops working.</p>
+              <TotpInput value={code} onChange={setCode} />
+              <ErrorBox error={a.error} />
+              <button className="secondary" disabled={a.busy}>New recovery codes</button>
+            </form>
+          </>
         ) : setup ? (
           <form
             onSubmit={(e) => {

@@ -38,6 +38,14 @@ export const templates = {
     subject: 'Your payout wallet change did not apply',
     text: `The scheduled ${mode(p.livemode)} payout xpub change could not be applied: ${p.note}. The current xpub stays active.${footer}`,
   }),
+  teamInvite: (p: { merchantName: string; role: string; url: string }): Rendered => ({
+    subject: 'You are invited to a Gateway account',
+    text: `You are invited to join "${p.merchantName}" on Gateway as ${p.role.replace('_', ' ')}.\n\nAccept and choose a password:\n${p.url}\n\nThe link works once and expires in 7 days. If you did not expect this, ignore it.${footer}`,
+  }),
+  memberRemoved: (p: { merchantName: string }): Rendered => ({
+    subject: 'You were removed from a Gateway account',
+    text: `You no longer have access to "${p.merchantName}" on Gateway and were signed out.${footer}`,
+  }),
   feeBalance: (p: { status: 'low' | 'blocked'; token: string; prepaid: string; symbol: string }): Rendered => ({
     subject: p.status === 'blocked' ? 'Live invoices paused: prepaid fees used up' : 'Prepaid fee balance is running low',
     text:

@@ -4,6 +4,7 @@ import { Login, ResetPassword, VerifyBanner, VerifyEmail, linkToken } from './au
 import { ApiKeys, Webhooks } from './developers';
 import { InvoiceDetail, Invoices } from './invoices';
 import { Security, Xpubs } from './settings';
+import { AcceptInvite, Team } from './team';
 import { ErrorBox, errorText } from './ui';
 
 function useHash(): string {
@@ -55,6 +56,7 @@ export function App() {
   // Emailed links work signed in or out.
   if (hash.startsWith('#/verify-email')) return <VerifyEmail token={linkToken(hash)} onDone={loadMe} />;
   if (hash.startsWith('#/reset-password')) return <ResetPassword token={linkToken(hash)} />;
+  if (hash.startsWith('#/accept-invite')) return <AcceptInvite token={linkToken(hash)} onDone={loadMe} />;
   if (error) return <ErrorBox error={error} />;
   if (me === undefined) return <p className="muted center">Loading…</p>;
   if (me === null) return <Login onDone={loadMe} />;
@@ -68,6 +70,7 @@ export function App() {
     ['#/api-keys', 'API keys', dev],
     ['#/webhooks', 'Webhooks', dev],
     ['#/xpub', 'Payout wallet', true],
+    ['#/team', 'Team', true],
     ['#/security', 'Security', true],
   ] as const;
   const [, page = 'invoices', id] = hash.split('/');
@@ -78,6 +81,7 @@ export function App() {
   else if (page === 'webhooks' && dev) body = <Webhooks livemode={livemode} totp={totp} />;
   else if (page === 'xpub') body = <Xpubs livemode={livemode} canManage={role === 'owner'} totp={totp} custodyMode={me.merchant.custody_mode} />;
   else if (page === 'security') body = <Security totp={totp} onChange={loadMe} />;
+  else if (page === 'team') body = <Team me={me.user} totp={totp} />;
   else body = <Invoices livemode={livemode} canWrite={role !== 'read_only'} />;
 
   return (

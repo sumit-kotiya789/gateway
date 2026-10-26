@@ -82,12 +82,40 @@ export const merchantUsers = pgTable(
     lockedUntil: tstz('locked_until'),
     // Set when the user clicks the verification link (M10). Live-mode actions need it.
     emailVerifiedAt: tstz('email_verified_at'),
+    // Removed from the team (M10): cannot sign in or refresh. The row stays (audit, FKs); a re-invite reactivates it.
+    removedAt: tstz('removed_at'),
     createdAt: createdAt(),
   },
   (t) => [
     uniqueIndex('merchant_users_email_uq').on(sql`lower(${t.email})`),
     index('merchant_users_merchant_idx').on(t.merchantId),
     check('merchant_users_totp_enabled', sql`(${t.totpEnabledAt} is null) = (${t.totpSecretEnc} is null)`),
+  ],
+);
+
+/** Team invitations (M10). Single-use emailed token (hash stored), 7 days; accepting creates or reactivates the user. */
+export const teamInvites = pgTable(
+  'team_invites',
+  {
+    id: id(),
+    merchantId: uuid('merchant_id')
+      .notNull()
+      .references(() => merchants.id),
+    email: text('email').notNull(),
+    role: merchantRole('role').notNull(),
+    tokenHash: text('token_hash').notNull(),
+    invitedBy: uuid('invited_by')
+      .notNull()
+      .references(() => merchantUsers.id),
+    expiresAt: tstz('expires_at').notNull(),
+    acceptedAt: tstz('accepted_at'),
+    revokedAt: tstz('revoked_at'),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('team_invites_token_uq').on(t.tokenHash),
+    uniqueIndex('team_invites_open_uq').on(t.merchantId, sql`lower(${t.email})`).where(sql`${t.acceptedAt} is null and ${t.revokedAt} is null`),
+    check('team_invites_closed_once', sql`${t.acceptedAt} is null or ${t.revokedAt} is null`),
   ],
 );
 

@@ -142,7 +142,7 @@ export async function rotateSession(deps: Deps, req: FastifyRequest, reply: Fast
     }
     if (row.expiresAt <= now) throw new AppError('unauthorized', 'authentication required');
     const user = await tx.query.merchantUsers.findFirst({ where: (u, { eq: e }) => e(u.id, row.userId) });
-    if (!user) throw new AppError('unauthorized', 'authentication required');
+    if (!user || user.removedAt) throw new AppError('unauthorized', 'authentication required');
     const newId = await issueSession(deps, tx, req, reply, user, row.mfa, { id: row.familyId, expiresAt: row.familyExpiresAt });
     await tx.update(sessions).set({ replacedBy: newId }).where(eq(sessions.id, row.id));
     return false;

@@ -374,3 +374,18 @@ verification requires every placeholder to be set). Run `pnpm chains:verify` bef
   (once per crossing). Users get: password changed; 2FA reset by an admin.
 - Not yet: new-device login emails, team invites (next M10 part), digest/marketing mail.
 
+## D-078 Team management (amends D-052) (2026-10-26)
+- Invitations by email: single-use 7-day link (token hash stored), opened at `DASHBOARD_URL/#/accept-invite`. Accepting
+  sets the password, marks the email verified and signs the member in. Email addresses stay unique across merchants:
+  an address with an account elsewhere cannot be invited.
+- Who: owners grant any role; admins manage developer / finance / read-only only; nobody changes their own role or
+  removes themselves. Invites, role changes and removals need step-up TOTP; revoking an invite does not.
+- Role changes and removals revoke the member's sessions. The role in an already-issued access token stays valid for
+  up to its 10 minutes; every management route re-reads the target from the DB, and the last-owner check counts
+  owners in the DB, so a stale `owner` claim cannot remove the last owner.
+- Removal sets `removed_at` (no deletes: audit and FKs): no sign-in, refresh or password reset. A re-invite from the
+  same merchant reactivates the row; other merchants cannot claim the address. API keys belong to the merchant and
+  stay; owners revoke them if needed.
+- Every merchant keeps an active owner: API check plus a deferred DB constraint trigger.
+- Recovery codes can be regenerated with step-up (all earlier codes stop working).
+

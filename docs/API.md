@@ -111,6 +111,14 @@ Statuses: `pending → detected → confirming → paid | underpaid | overpaid �
 | POST | `/v1/dashboard/auth/verify-email/resend` | session | – (202; 429 within a minute of the last link; 409 when verified) | M10 |
 | POST | `/v1/dashboard/auth/password/forgot` | none | – (`email`; always 202; one email per minute per account) | M10 |
 | POST | `/v1/dashboard/auth/password/reset` | none | – (`token`, `password`, plus `code` or `recovery_code` when 2FA is on; revokes every session) | M10 |
+| POST | `/v1/dashboard/auth/2fa/recovery-codes` | session + **2FA** | – (10 new codes, shown once; earlier codes stop working) | M10 |
+| POST | `/v1/dashboard/auth/invite/preview` | none | – (`token`: merchant name, email, role) | M10 |
+| POST | `/v1/dashboard/auth/invite/accept` | none | – (`token`, `password`; creates or reactivates the member, verified, signed in) | M10 |
+| GET | `/v1/dashboard/team/` | session | `account:read` (active members + open invitations) | M10 |
+| POST | `/v1/dashboard/team/invites` | session + **2FA** | `team:manage` (`email`, `role`; admins: developer / finance / read_only only; 7-day link) | M10 |
+| DELETE | `/v1/dashboard/team/invites/:id` | session | `team:manage` | M10 |
+| POST | `/v1/dashboard/team/members/:id/role` | session + **2FA** | `team:manage` (`role`; not yourself; signs the member out) | M10 |
+| DELETE | `/v1/dashboard/team/members/:id` | session + **2FA** | `team:manage` (not yourself; the merchant keeps an owner) | M10 |
 | GET | `/v1/dashboard/api-keys/` | session | `api_keys:read` | M1 |
 | POST | `/v1/dashboard/api-keys/` | session + **2FA** | `api_keys:write` (returns full key once) | M1 |
 | DELETE | `/v1/dashboard/api-keys/:id` | session | `api_keys:write` | M1 |
