@@ -10,6 +10,7 @@ import { chains, invoices, merchants, tokens } from '../../db/schema.js';
 import type { Deps } from '../../deps.js';
 import { paymentUri } from '../invoices/invoices.js';
 import { STRINGS, html, jsonForHtml, raw, sendPage } from './html.js';
+import { WIDGET_JS } from './widget.js';
 
 export const CHECKOUT_RATE_LIMIT = { max: 60, timeWindow: '1 minute' } as const;
 const DONE = new Set(['paid', 'overpaid', 'settled']);
@@ -18,7 +19,7 @@ const DEAD = new Set(['expired', 'cancelled', 'failed', 'late_payment']);
 async function load(deps: Deps, id: string) {
   const [r] = await withSystem(deps.db, (tx) =>
     tx
-      .select({ inv: invoices, token: tokens, chain: chains, merchantName: merchants.name })
+      .select({ inv: invoices, token: tokens, chain: chains, merchantName: merchants.name, widgetOrigins: merchants.widgetOrigins })
       .from(invoices)
       .innerJoin(tokens, eq(tokens.id, invoices.tokenId))
       .innerJoin(chains, eq(chains.id, invoices.chainId))
@@ -50,7 +51,14 @@ const CLIENT_JS = `
   var cfg = JSON.parse(document.getElementById('cfg').textContent);
   var S = cfg.strings;
   function $(id){ return document.getElementById(id); }
+  function notify(v){
+    // Embedded (widget): tell the merchant page, and only that exact origin, never '*'.
+    if (cfg.parentOrigin && window.parent !== window) {
+      window.parent.postMessage({ source: 'gateway-checkout', invoice_id: cfg.invoiceId, status: v.status, amount_received: v.amount_received }, cfg.parentOrigin);
+    }
+  }
   function setStatus(v){
+    notify(v);
     var el = $('status'); el.textContent = S.status[v.status] || v.status;
     el.className = 'status ' + (cfg.done.indexOf(v.status) >= 0 ? 'ok' : (cfg.dead.indexOf(v.status) >= 0 ? 'bad' : ''));
     $('received').textContent = v.amount_received; $('remaining').textContent = v.remaining;
@@ -91,22 +99,36 @@ const CLIENT_JS = `
 })();
 `;
 
+/** The parent origin if the request asks for embedding and the merchant allowlisted it, else undefined. */
+export function embedOrigin(q: { embed?: string | undefined; origin?: string | undefined }, allowed: readonly string[]): string | undefined {
+  if (q.embed !== '1' || !q.origin || !URL.canParse(q.origin)) return undefined;
+  const o = new URL(q.origin).origin;
+  return o === q.origin && allowed.includes(o) ? o : undefined;
+}
+
 export function checkoutRoutes(deps: Deps): FastifyPluginAsyncZod {
   const S = STRINGS.en;
   const Params = z.strictObject({ id: z.string().max(64) });
+  // Not strict: links may carry unrelated parameters (analytics). Only embed + origin are read.
+  const Query = z.object({ embed: z.string().max(4).optional(), origin: z.string().max(200).optional() });
 
   return async (app) => {
-    app.get('/checkout/:id', { config: { rateLimit: CHECKOUT_RATE_LIMIT }, schema: { params: Params, hide: true } }, async (req, reply) => {
+    app.get('/checkout/:id', { config: { rateLimit: CHECKOUT_RATE_LIMIT }, schema: { params: Params, querystring: Query, hide: true } }, async (req, reply) => {
       const r = z.uuid().safeParse(req.params.id).success ? await load(deps, req.params.id) : undefined;
       if (!r) return sendPage(reply, { title: S.notFound, status: 404, body: () => html`<div class="card"><h1>${S.notFound}</h1></div>` });
 
       const v = statusView(r);
+      const parentOrigin = embedOrigin(req.query, r.widgetOrigins);
+      // Embedded: links leave the frame (the merchant page continues); never inside someone else's page.
+      const target = parentOrigin ? '_top' : '_self';
       const uri = paymentUri(r.token, r.chain, r.inv.depositAddress, r.inv.amountExpected);
       // QR SVG comes from our own generator over hex/decimal-only content (addresses, chain id, amount).
       const qr = await QRCode.toString(uri ?? r.inv.depositAddress, { type: 'svg', errorCorrectionLevel: 'M', margin: 1 });
       if (!qr.startsWith('<svg') || /<script|\bon\w+=/i.test(qr)) throw new Error('unexpected QR output');
       const qrSvg = raw(qr);
       const cfg = {
+        invoiceId: r.inv.id,
+        parentOrigin: parentOrigin ?? null,
         statusUrl: `/checkout/${r.inv.id}/status`,
         address: r.inv.depositAddress,
         token: r.token.contractAddress,
@@ -120,6 +142,7 @@ export function checkoutRoutes(deps: Deps): FastifyPluginAsyncZod {
       };
       return sendPage(reply, {
         title: `${S.pay} ${r.merchantName}`,
+        ...(parentOrigin ? { frameAncestor: parentOrigin } : {}),
         body: (nonce) => html`
 <div class="card">
   ${r.inv.livemode ? '' : html`<div class="test">${S.testMode}</div>`}
@@ -139,13 +162,22 @@ export function checkoutRoutes(deps: Deps): FastifyPluginAsyncZod {
     <div id="walletmsg" class="muted"></div>
   </div>
   <div id="status" class="status"></div>
-  <a id="ret" class="btn primary" hidden>${S.returnToMerchant}</a>
-  ${v.cancel_url ? html`<p><a href="${v.cancel_url}">${S.cancel}</a></p>` : ''}
+  <a id="ret" class="btn primary" target="${target}" hidden>${S.returnToMerchant}</a>
+  ${v.cancel_url ? html`<p><a href="${v.cancel_url}" target="${target}">${S.cancel}</a></p>` : ''}
 </div>
 <script type="application/json" id="cfg">${raw(jsonForHtml(cfg))}</script>
 <script nonce="${nonce}">${raw(CLIENT_JS)}</script>`,
       });
     });
+
+    /** Embeddable widget script (M10). Loaded cross-origin by merchant sites: CORP must allow it. */
+    app.get('/widget.js', { schema: { hide: true } }, async (_req, reply) =>
+      reply
+        .type('application/javascript; charset=utf-8')
+        .header('cache-control', 'public, max-age=3600')
+        .header('cross-origin-resource-policy', 'cross-origin')
+        .send(WIDGET_JS),
+    );
 
     app.get(
       '/checkout/:id/status',

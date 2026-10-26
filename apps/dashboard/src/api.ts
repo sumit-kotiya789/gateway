@@ -56,7 +56,7 @@ function errorMessage(b: ErrorBody | null, status: number): string {
   return e?.message ?? `request failed (${String(status)})`;
 }
 
-export async function api<T>(method: 'GET' | 'POST' | 'DELETE', path: string, body?: unknown, headers?: Record<string, string>): Promise<T> {
+export async function api<T>(method: 'GET' | 'POST' | 'PUT' | 'DELETE', path: string, body?: unknown, headers?: Record<string, string>): Promise<T> {
   let res = await send(method, path, body, headers);
   if (res.status === 401 && !NO_REFRESH.test(path) && (await refresh())) res = await send(method, path, body, headers);
   if (res.status === 204) return undefined as T;
@@ -91,6 +91,7 @@ export type Role = 'owner' | 'admin' | 'developer' | 'finance' | 'read_only';
 export interface Me {
   user: { id: string; email: string; email_verified: boolean; role: Role; totp_enabled: boolean; session_mfa: boolean };
   merchant: { id: string; name: string; status: string; custody_mode: string };
+  api_origin: string;
 }
 
 export interface Invoice {

@@ -162,10 +162,31 @@ func VerifyGatewayWebhook(rawBody []byte, header, secret string, tolerance time.
 `POST /v1/payment-links` with `amount` and `token` returns a `url` you can share. Each customer who clicks
 "Continue to payment" gets their own invoice and deposit address.
 
+## Checkout widget (no redirect)
+Open the hosted checkout in a dialog on your own page:
+
+1. Dashboard → Checkout widget: list the sites that may embed it (exact origins, e.g. `https://shop.example`).
+2. Your backend creates the invoice with your secret key (`POST /v1/invoices`) and passes its `id` to the page.
+3. On the page:
+
+```html
+<script src="https://<gateway>/widget.js"></script>
+<script>
+  GatewayCheckout.open({
+    invoiceId: '<invoice id>',
+    onStatus: (status) => {},   // pending, detected, confirming, paid, ...
+    onPaid: () => {},           // once, when paid / overpaid / settled
+    onClose: () => {},
+  });
+</script>
+```
+
+The checkout refuses to be framed by any site not on your list, and only talks to your page's exact origin. Treat
+`onPaid` as a display hint: fulfil orders from the `invoice.paid` webhook or `GET /v1/invoices/:id`.
+
 ## Non-custodial wallet tips
 Each invoice uses the next address of your xpub (`0/<index>`, shown in the dashboard). Invoices that expire unpaid leave
-unused addresses; if your wallet stops discovering addresses, raise its gap limit or scan up to the latest index.
+unused addresses; set your wallet's gap limit to the value the dashboard shows (Payout wallet → Derived addresses).
 
 ## Still to come
-SDKs, widget and WooCommerce plugin in M10;
-go-live checklist for merchants before launch.
+Node SDK and WooCommerce plugin (M10); go-live checklist for merchants before launch.

@@ -181,6 +181,8 @@ export function dashboardAuthRoutes(deps: Deps): FastifyPluginAsyncZod {
         return {
           user: { id: u.id, email: u.email, email_verified: u.emailVerifiedAt !== null, role: u.role, totp_enabled: u.totpEnabledAt !== null, session_mfa: user.mfa },
           merchant: { id: m.id, name: m.name, status: m.status, custody_mode: m.custodyMode },
+          // Where the hosted checkout and widget.js live (snippets in the dashboard).
+          api_origin: deps.config.PUBLIC_BASE_URL,
         };
       });
     });

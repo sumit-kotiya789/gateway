@@ -1,0 +1,2 @@
+ALTER TABLE "merchants" ADD COLUMN "widget_origins" text[] DEFAULT '{}' NOT NULL;--> statement-breakpoint
+ALTER TABLE "merchants" ADD CONSTRAINT "merchants_widget_origins" CHECK (cardinality("merchants"."widget_origins") <= 10);

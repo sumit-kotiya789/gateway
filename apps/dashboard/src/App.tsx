@@ -5,6 +5,7 @@ import { ApiKeys, Webhooks } from './developers';
 import { InvoiceDetail, Invoices } from './invoices';
 import { Security, Xpubs } from './settings';
 import { AcceptInvite, Team } from './team';
+import { Widget } from './widget';
 import { ErrorBox, errorText } from './ui';
 
 function useHash(): string {
@@ -69,6 +70,7 @@ export function App() {
     ['#/invoices', 'Invoices', true],
     ['#/api-keys', 'API keys', dev],
     ['#/webhooks', 'Webhooks', dev],
+    ['#/widget', 'Checkout widget', dev],
     ['#/xpub', 'Payout wallet', true],
     ['#/team', 'Team', true],
     ['#/security', 'Security', true],
@@ -82,6 +84,7 @@ export function App() {
   else if (page === 'xpub') body = <Xpubs livemode={livemode} canManage={role === 'owner'} totp={totp} custodyMode={me.merchant.custody_mode} />;
   else if (page === 'security') body = <Security totp={totp} onChange={loadMe} />;
   else if (page === 'team') body = <Team me={me.user} totp={totp} />;
+  else if (page === 'widget' && dev) body = <Widget canManage={role === 'owner' || role === 'admin'} apiOrigin={me.api_origin} />;
   else body = <Invoices livemode={livemode} canWrite={role !== 'read_only'} canExport={role !== 'developer'} />;
 
   return (

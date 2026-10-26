@@ -53,6 +53,8 @@ export const merchants = pgTable(
     underpayToleranceBps: integer('underpay_tolerance_bps').notNull().default(50),
     kyb: jsonb('kyb').notNull().default({}),
     riskFlags: merchantRiskFlag('risk_flags').array().notNull().default(sql`'{}'`),
+    // Sites allowed to embed the hosted checkout (widget, M10): exact origins. Empty = never framed.
+    widgetOrigins: text('widget_origins').array().notNull().default(sql`'{}'`),
     createdAt: createdAt(),
   },
   (t) => [
@@ -61,6 +63,7 @@ export const merchants = pgTable(
     check('merchants_fee_fixed_range', sql`${t.feeFixed} between 0 and 1000`),
     check('merchants_fee_grace_range', sql`${t.feeGrace} between 0 and 100000`),
     check('merchants_underpay_tolerance', sql`${t.underpayToleranceBps} between 0 and 500`),
+    check('merchants_widget_origins', sql`cardinality(${t.widgetOrigins}) <= 10`),
   ],
 );
 

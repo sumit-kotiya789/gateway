@@ -395,3 +395,13 @@ Dashboard-only (`reports:read`: owner, admin, finance, read-only) invoice and pa
 audited with its range and row count. Formula-looking cells are prefixed with `'` (OWASP CSV injection). Amounts are
 decimal token units like the API. Merchant-API exports and scheduled reports: later (M10 reports).
 
+## D-080 Checkout widget: framed hosted checkout, allowlisted origins (2026-10-26)
+`/widget.js` opens `/checkout/:id?embed=1&origin=<page origin>` in an overlay iframe. The checkout sends
+`frame-ancestors <origin>` only when that exact origin is in the merchant's `widget_origins` (dashboard setting,
+owner/admin, ≤ 10, https in production); otherwise `'none'` and `X-Frame-Options: DENY` as before. The frame posts
+`{ source: 'gateway-checkout', invoice_id, status }` to that origin only; the widget accepts a message only if its
+origin is the gateway's (taken from the script's own `src`) and its source is the widget's iframe, for the opened
+invoice. The widget takes only an invoice id created by the merchant's backend: no keys in the browser. Payment
+confirmation stays server-side (webhooks); `onPaid` is a UI hint. Publishable-key invoice creation is not needed for
+this and stays unused.
+

@@ -102,7 +102,8 @@ button,.btn{font:inherit;border:1px solid var(--line);background:var(--bg);color
 .row{display:flex;justify-content:space-between;font-size:14px;margin-top:6px}
 `;
 
-export function sendPage(reply: FastifyReply, opts: { title: string; body: (nonce: string) => SafeHtml; status?: number }) {
+/** `frameAncestor`: the one merchant-allowlisted origin that may embed this page (widget), else never framed. */
+export function sendPage(reply: FastifyReply, opts: { title: string; body: (nonce: string) => SafeHtml; status?: number; frameAncestor?: string }) {
   const nonce = randomBytes(16).toString('base64');
   const csp = [
     "default-src 'none'",
@@ -112,17 +113,14 @@ export function sendPage(reply: FastifyReply, opts: { title: string; body: (nonc
     "connect-src 'self'",
     "form-action 'self'",
     "base-uri 'none'",
-    // Widget embedding (merchant-allowlisted origins) arrives in M10; until then never framed.
-    "frame-ancestors 'none'",
+    `frame-ancestors ${opts.frameAncestor ?? "'none'"}`,
   ].join('; ');
   const page = html`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex"><title>${opts.title}</title><style nonce="${nonce}">${raw(STYLE)}</style></head>
 <body><main>${opts.body(nonce)}</main></body></html>`;
-  return reply
-    .status(opts.status ?? 200)
-    .header('content-security-policy', csp)
-    .header('cache-control', 'no-store')
-    .header('x-frame-options', 'DENY')
-    .type('text/html; charset=utf-8')
-    .send(page.value);
+  reply.status(opts.status ?? 200).header('content-security-policy', csp).header('cache-control', 'no-store').type('text/html; charset=utf-8');
+  // X-Frame-Options cannot name an origin: embeddable pages rely on frame-ancestors alone (helmet sets SAMEORIGIN).
+  if (opts.frameAncestor) reply.removeHeader('x-frame-options');
+  else reply.header('x-frame-options', 'DENY');
+  return reply.send(page.value);
 }
