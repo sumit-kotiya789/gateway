@@ -62,6 +62,7 @@ services:
       EVM_LOCAL_RPC_URL: http://anvil:8545
       BSC_RPC_URL: ${BSC_RPC_URL:-}
       BSC_TESTNET_RPC_URL: ${BSC_TESTNET_RPC_URL:-}
+      NEXIS_RPC_URL: ${NEXIS_RPC_URL:-}
     healthcheck: { disable: true }
     depends_on:
       migrate: { condition: service_completed_successfully }

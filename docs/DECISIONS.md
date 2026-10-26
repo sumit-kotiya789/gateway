@@ -307,3 +307,10 @@ hostname, so DNS rebinding cannot redirect it. 10 s deadline, 64 KiB response ca
 ## D-073 No signed return parameters on checkout redirects (amends D-045) (2026-10-23)
 `success_url` is a convenience for the payer. Which of up to 16 endpoint secrets would sign it is ambiguous, and
 merchants must confirm payment from a webhook or `GET /v1/invoices/:id` anyway (INTEGRATION.md).
+
+## D-074 Nexis Chain + Nexis mock USDT as the test network (2026-10-26, owner)
+Owner chose Nexis Chain (EVM chain id 5567, native NXC, RPC `https://rpc.nexischain.com`) for testing instead of real
+USDT. Seeded as `nexis` with `testnet: true` so only test API keys see it, and `nexis:usdt` =
+`0x3FF21b3856Cf144747C9e12262aab690820515f1` ("Nexis Usdt", 18 decimals, plain BEP-20: no fee-on-transfer, rebasing
+or hooks). Finality tag and block time are not verified, so `finality: 'confirmations'`, 12 confirmations, reorg depth
+64, same USDT tiers and 0.01 dust threshold. Run `pnpm chains:verify` before relying on it.

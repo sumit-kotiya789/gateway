@@ -50,6 +50,24 @@ export function registrySeed(env: Record<string, string | undefined>): { chains:
       testnet: true,
       enabled: true,
     },
+    {
+      // Nexis Chain (owner-designated test chain, D-074). A public chain, but registered as `testnet` so only test keys
+      // see it: its USDT is a mock, never real money. Finality tag and block time unverified -> count confirmations only.
+      id: 'nexis',
+      family: 'evm',
+      name: 'Nexis Chain',
+      evmChainId: 5567,
+      rpcUrls: ['${NEXIS_RPC_URL}', 'https://rpc.nexischain.com'],
+      explorerUrl: 'https://nexischain.com/explorer',
+      nativeSymbol: 'NXC',
+      nativeDecimals: 18,
+      blockTimeMs: 3000,
+      defaultConfirmations: 12,
+      reorgDepth: 64,
+      finality: 'confirmations',
+      testnet: true,
+      enabled: true,
+    },
   ];
   const t: TokenRow[] = [
     {
@@ -62,6 +80,21 @@ export function registrySeed(env: Record<string, string | undefined>): { chains:
       contractAddress: '0x55d398326f99059fF775485246999027B3197955',
       decimals: 18,
       minConfirmations: 15,
+      confirmationTiers: usdtTiers(18),
+      minAmount: toMinorUnits('0.01', 18),
+      enabled: true,
+    },
+    {
+      // "Nexis Usdt" (NXCUSDT): plain BEP-20 mock, no transfer fee or hooks; owner supplied the address and verified source
+      // (D-074). Explorer: https://nexischain.com/explorer/address/0x3ff21b3856cf144747c9e12262aab690820515f1
+      // Not Tether: test money only. `pnpm chains:verify` checks decimals() on-chain.
+      id: 'nexis:usdt',
+      chainId: 'nexis',
+      symbol: 'USDT',
+      name: 'Nexis test USDT (mock)',
+      contractAddress: '0x3FF21b3856Cf144747C9e12262aab690820515f1',
+      decimals: 18,
+      minConfirmations: 12,
       confirmationTiers: usdtTiers(18),
       minAmount: toMinorUnits('0.01', 18),
       enabled: true,
