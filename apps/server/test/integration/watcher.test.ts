@@ -485,7 +485,9 @@ describe('ledger, fees, outbox', () => {
     expect(fee.rows[0]?.fee).toBe('100000');
 
     const bal = (await m.api('GET', '/v1/balances')).json<{ data: { token: string; received: string; fees_owed: string }[] }>();
-    expect(bal.data).toEqual([{ token: 'evm-fake:usdt', symbol: 'USDT', received: '10', fees_owed: '0.1' }]);
+    expect(bal.data).toEqual([
+      { token: 'evm-fake:usdt', symbol: 'USDT', received: '10', fees_owed: '0.1', fees_charged: '0.1', prepaid_fees: '-0.1', fee_status: 'not_enforced' },
+    ]);
     const dash = (await m.agent.req('GET', '/v1/dashboard/balances/?livemode=false')).json<{ data: unknown[] }>();
     expect(dash.data).toEqual(bal.data);
 
@@ -637,6 +639,47 @@ describe('ledger, fees, outbox', () => {
     const a = await owner.query(`select after from audit_logs where action = 'admin.invoice_resolved' and target_id = $1 and actor_id = $2`, [inv.id, op.id]);
     expect(a.rows).toEqual([{ after: body }]);
     expect((await auditor.agent.req('GET', `/admin/v1/invoices/${inv.id}`)).json()).toMatchObject({ id: inv.id, history: expect.arrayContaining([expect.objectContaining({ to: 'paid', reason: 'manual: merchant accepts the shortfall' })]) });
+  });
+
+  // ---------------------------------------------------------------- M8: fixed fee, prepaid top-ups
+
+  it('fixed fee + percentage; settlement draws on prepaid top-ups; reconciliation checks top-ups', async () => {
+    const m = await merchantWithKey(app, clock, owner);
+    const op = await adminAgent(t, owner);
+    const B = `/admin/v1/merchants/${m.merchantId}`;
+    const fees = await op.agent.req('PUT', `${B}/fees`, { fee_bps: 100, fee_fixed: '0.5', fee_grace: '0', reason: 'new pricing' }, op.stepUp());
+    expect(fees.json()).toMatchObject({ fee_bps: 100, fee_fixed: '0.5', fee_grace: '0' });
+    const top = await op.agent.req('POST', `${B}/fee-topups`, { livemode: false, token: 'evm-fake:usdt', amount: '1', reference: '0xfeed', reason: 'paid by transfer' }, op.stepUp());
+    expect(top.statusCode).toBe(201);
+    expect(top.json()).toMatchObject({ livemode: false, token: 'evm-fake:usdt', amount: '1', reference: '0xfeed' });
+
+    const inv = (await m.api('POST', '/v1/invoices', { amount: '10', token: 'evm-fake:usdt' })).json<Inv>();
+    chain.pay(inv.deposit_address, units(10));
+    chain.mine(3);
+    await settle();
+    expect((await m.agent.req('GET', `/v1/dashboard/invoices/${inv.id}`)).json()).toMatchObject({ status: 'settled', fee_amount: '0.6' }); // 1% of 10 + 0.5
+    expect((await m.api('GET', '/v1/balances')).json<{ data: unknown[] }>().data).toEqual([
+      { token: 'evm-fake:usdt', symbol: 'USDT', received: '10', fees_owed: '0', fees_charged: '0.6', prepaid_fees: '0.4', fee_status: 'not_enforced' },
+    ]);
+    const j = await owner.query(
+      `select a.kind::text account, e.amount::text amount from ledger_journals j join ledger_entries e on e.journal_id = j.id
+       join ledger_accounts a on a.id = e.account_id where j.kind = 'fee_topup' and j.merchant_id = $1 order by e.id`,
+      [m.merchantId],
+    );
+    expect(j.rows).toEqual([
+      { account: 'platform_topups', amount: '1000000' },
+      { account: 'merchant_fees_owed', amount: '-1000000' },
+    ]);
+    expect((await reconcileAll()).length).toBe(0);
+
+    // Append-only, and a top-up never commits without its journal.
+    await expect(owner.query('update fee_topups set amount = 2 where merchant_id = $1', [m.merchantId])).rejects.toThrow();
+    await expect(
+      owner.query(`insert into fee_topups (id, merchant_id, livemode, token_id, amount, reference, created_by) values (gen_random_uuid(), $1, false, 'evm-fake:usdt', 5, 'no journal', $2)`, [
+        m.merchantId,
+        op.id,
+      ]),
+    ).rejects.toThrow(/no ledger journal/);
   });
 
   it('admin resolves a late payment: fee capped at the expected amount; unknown or open invoices are refused', async () => {

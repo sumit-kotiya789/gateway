@@ -44,6 +44,8 @@ export const ADMIN_PERMISSIONS = {
   'kill_switch:manage': ['superadmin', 'operator'],
   // Marks an underpaid / late invoice paid (charges the fee). Step-up 2FA on top.
   'invoices:resolve': ['superadmin', 'operator'],
+  // Merchant fee settings and recording prepaid fee top-ups. Step-up 2FA on top.
+  'fees:manage': ['superadmin', 'operator'],
   // Turning a chain or token back ON (turning it off is kill_switch:manage).
   'registry:enable': ['superadmin'],
   'admins:manage': ['superadmin'],

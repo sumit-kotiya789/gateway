@@ -17,6 +17,7 @@ const MONEY_CRITICAL = [
   'apps/server/src/modules/watcher/scanner.ts',
   'packages/core/src/fees.ts',
   'apps/server/src/modules/ledger/ledger.ts',
+  'apps/server/src/modules/ledger/fee-balance.ts',
 ];
 const gate = { lines: 90, functions: 90, branches: 90, statements: 90 };
 

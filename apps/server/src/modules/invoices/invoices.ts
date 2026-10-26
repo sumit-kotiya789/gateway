@@ -3,6 +3,7 @@
 import {
   AppError,
   canTransition,
+  feeUnitsToMinor,
   fromMinorUnits,
   toMinorUnits,
   type InvoiceStatus,
@@ -13,6 +14,7 @@ import { withSystem, type Tx } from '../../common/db.js';
 import { chainCursors, chains, depositAddresses, invoices, merchants, tokens } from '../../db/schema.js';
 import type { Deps } from '../../deps.js';
 import { allocateDepositAddress } from '../custody/custody.js';
+import { assertFeeBalance } from '../ledger/fee-balance.js';
 import { rowToChain } from '../registry/registry.js';
 
 export const EXPIRY_S = { min: 300, max: 86_400, default: 1800 } as const;
@@ -65,8 +67,13 @@ export async function createInvoice(deps: Deps, tx: Tx, merchantId: string, live
   if (!Number.isInteger(expiresIn) || expiresIn < EXPIRY_S.min || expiresIn > EXPIRY_S.max) {
     throw new AppError('validation_error', `expires_in must be between ${EXPIRY_S.min} and ${EXPIRY_S.max} seconds`);
   }
-  const [m] = await tx.select({ tolerance: merchants.underpayToleranceBps, feeBps: merchants.feeBps }).from(merchants).where(eq(merchants.id, merchantId));
+  const [m] = await tx
+    .select({ tolerance: merchants.underpayToleranceBps, feeBps: merchants.feeBps, feeFixed: merchants.feeFixed, feeGrace: merchants.feeGrace })
+    .from(merchants)
+    .where(eq(merchants.id, merchantId));
   if (!m) throw new AppError('not_found', 'merchant not found');
+  // Before an address is allocated: a refused invoice must not burn a derivation index (wallet gap).
+  await assertFeeBalance(tx, merchantId, livemode, token, m.feeGrace);
 
   const addr = await allocateDepositAddress(tx, { merchantId, livemode, chain: rowToChain(chain) }, { custodialEnabled: deps.config.FEATURE_CUSTODIAL });
   const expiresAt = new Date(deps.clock() + expiresIn * 1000);
@@ -87,6 +94,7 @@ export async function createInvoice(deps: Deps, tx: Tx, merchantId: string, live
       custodyMode: addr.custodyMode,
       underpayToleranceBps: m.tolerance,
       feeBps: m.feeBps,
+      feeFixed: feeUnitsToMinor(m.feeFixed, token.decimals),
       description: input.description ?? null,
       metadata: input.metadata ?? {},
       successUrl: input.successUrl ?? null,

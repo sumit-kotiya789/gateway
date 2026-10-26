@@ -15,6 +15,7 @@ OpenAPI 3.1 is generated from route schemas and served at `GET /v1/openapi.json`
   |---|---|
   | validation_error, invalid_amount | 400 |
   | unauthorized | 401 |
+  | insufficient_fee_balance (live invoice, prepaid fees used up) | 402 |
   | forbidden | 403 |
   | not_found | 404 |
   | conflict, idempotency_conflict | 409 |
@@ -64,7 +65,7 @@ Step-up: endpoints marked **2FA** need header `x-totp-code` with a fresh code (a
 | GET | `/v1/payment-links`, `/v1/payment-links/:id` | API key | `read` | M3 |
 | PATCH | `/v1/payment-links/:id` | API key | `invoices:write` (affects future invoices only) | M3 |
 | DELETE | `/v1/payment-links/:id` | API key | `invoices:write` (deactivates) | M3 |
-| GET | `/v1/balances` | API key | `read` (per token: `received`, `fees_owed`) | M5 |
+| GET | `/v1/balances` | API key | `read` (per token: `received`, `fees_charged`, `fees_owed` (charged, not covered by top-ups), `prepaid_fees` (signed), `fee_status` ok / low / blocked / not_enforced; live keys also list every usable live token) | M5/M8 |
 | GET | `/v1/events`, `/v1/events/:id` | API key | `read` (`limit`, `starting_after`, `type`; newest first) | M5 |
 | GET | `/checkout/:id`, `/checkout/:id/status` | public (invoice id) | – | M3 |
 | GET, POST | `/pay/:id` | public (link id) | – (POST creates the invoice, 303 → checkout) | M3 |
@@ -124,6 +125,7 @@ Statuses: `pending → detected → confirming → paid | underpaid | overpaid �
 | GET | `/v1/dashboard/webhooks/:id/deliveries` | session | `webhooks:manage` (`limit`, `starting_after`; newest first) | M6 |
 | POST | `/v1/dashboard/webhooks/:id/deliveries/:deliveryId/retry` | session | `webhooks:manage` (finished deliveries only; fresh retry budget) | M6 |
 | GET | `/v1/dashboard/balances/` | session | `account:read` (`livemode`) | M5 |
+| GET | `/v1/dashboard/fee-topups/` | session | `account:read` (`livemode`; newest first) | M8 |
 | POST | `/admin/v1/auth/login` | none | password + TOTP | M1 |
 | POST | `/admin/v1/auth/logout` | admin session | `admin:read` | M1 |
 | GET | `/admin/v1/auth/me` | admin session | `admin:read` | M1 |
@@ -132,6 +134,9 @@ Statuses: `pending → detected → confirming → paid | underpaid | overpaid �
 | POST | `/admin/v1/merchants/:id/suspend` | admin session | `merchants:manage` (`reason`) | M5b |
 | POST | `/admin/v1/merchants/:id/reactivate` | admin session + **2FA** | `merchants:manage` (`reason`) | M5b |
 | PUT | `/admin/v1/merchants/:id/risk-flags` | admin session | `risk:manage` (`flags`, `reason`; replaces the set) | M5b |
+| PUT | `/admin/v1/merchants/:id/fees` | admin session + **2FA** | `fees:manage` (`fee_bps`, `fee_fixed`, `fee_grace` in token units ≤ 6 dp, `reason`; new invoices only) | M8 |
+| GET | `/admin/v1/merchants/:id/fee-topups` | admin session | `admin:read` (`livemode`, default true) | M8 |
+| POST | `/admin/v1/merchants/:id/fee-topups` | admin session + **2FA** | `fees:manage` (`livemode`, `token`, `amount`, `reference`, `reason`; posts a ledger journal; append-only) | M8 |
 | POST | `/admin/v1/merchants/:id/users/:userId/reset-2fa` | admin session + **2FA** | `merchants:manage` (`reason`; revokes sessions, deletes recovery codes) | M5b |
 | GET | `/admin/v1/invoices`, `/admin/v1/invoices/:id` | admin session | `admin:read` (default list: `underpaid` + `late_payment`; `status`, `merchant_id`, `livemode`) | M5b |
 | POST | `/admin/v1/invoices/:id/resolve` | admin session + **2FA** | `invoices:resolve` (`reason`; underpaid/late_payment -> paid -> settled) | M5b |

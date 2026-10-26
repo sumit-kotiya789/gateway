@@ -115,3 +115,4 @@ tr.clickable:hover { background: var(--bg); }
   main { padding: 1rem; }
 }
 .challenge { white-space: pre-wrap; word-break: break-all; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 0.6rem 0.8rem; font-size: 0.85rem; }
+.warn-text { color: var(--warn-text); font-size: 0.85rem; }

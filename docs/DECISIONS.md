@@ -337,3 +337,23 @@ verification requires every placeholder to be set). Run `pnpm chains:verify` bef
 - `xpub_changes.status` is text + CHECK, not an enum: drizzle applies all pending migrations in one transaction and
   Postgres forbids using an enum value added in the same transaction.
 
+## D-076 Fee models and prepaid fee balance (amends D-009, D-061) (2026-10-26)
+- **Fee model** per merchant: `fee_bps` (existing) + `fee_fixed` per settled invoice, in token units (stablecoins),
+  both snapshotted on the invoice at creation. Fee = floor(base × bps / 10000) + fixed, never above the base. Fixed
+  digits beyond a token's decimals are dropped (rounds down, D-011). Set by an admin (`fees:manage` + TOTP, audited).
+- **Prepaid balance** per merchant, mode and token = top-ups − fees charged (the negated `merchant_fees_owed`
+  balance). Per token because tokens on different chains are different assets.
+- **Top-ups are admin-recorded for the MVP**: the merchant pays the platform (any channel), an admin records it with a
+  reference (tx hash / bank ref), TOTP and a reason. One `fee_topups` row + one `fee_topup` journal
+  (Dr `platform_topups` / Cr `merchant_fees_owed`) in the same transaction (DB-enforced at commit); append-only;
+  reconciliation checks every top-up is booked once for its amount. Self-serve on-chain top-ups need a platform
+  receiving wallet and come later (M9/M10).
+- **Blocking**: a new live invoice is refused with `402 insufficient_fee_balance` when prepaid + grace ≤ 0 for its
+  token, checked before an address is allocated (no wallet gap). `fee_grace` (token units, per merchant, default 0)
+  lets a merchant start or keep going a little into debt. Test mode is never blocked. Fees still accrue past zero
+  (an invoice created while funded settles normally), so the balance can go below −grace.
+- **Low balance**: `fee_status` = `low` when prepaid + grace < 10 token units, shown on the dashboard and admin console.
+  No webhook event: the outbox is invoice-trigger-only (D-062); email alerts come with the mailer (M10).
+- `fees_owed` keeps its meaning (charged, not covered by top-ups; never negative); `fees_charged` and `prepaid_fees` are
+  new. New ledger enum values are added by recreating the enum types (same one-transaction migration reason as D-075).
+

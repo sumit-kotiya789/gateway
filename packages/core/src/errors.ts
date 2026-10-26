@@ -3,6 +3,8 @@ export const ERROR_STATUS = {
   validation_error: 400,
   invalid_amount: 400,
   unauthorized: 401,
+  // Live invoice refused: the merchant's prepaid fee balance for that token is used up (M8).
+  insufficient_fee_balance: 402,
   forbidden: 403,
   not_found: 404,
   conflict: 409,

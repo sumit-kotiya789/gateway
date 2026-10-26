@@ -59,6 +59,6 @@ Database guards that hold even if application code is wrong:
 Keep their seed safe; supply an account-level xpub (not an xprv or seed, which are refused); set their wallet's address
 gap limit to the value the dashboard shows (invoices that expire unpaid create gaps beyond the usual 20-address limit);
 sign the ownership challenge with the wallet's first account when registering a live xpub;
-keep the prepaid fee balance above zero, or new live invoices are blocked (enforced from M8, with fee top-ups).
+keep the prepaid fee balance (per token) above zero, or new live invoices are refused with 402 (D-076).
 
-Full fee-model and key-exposure details are written in M8 (non-custodial) and M7 (custodial).
+Fee model and prepaid balance: D-076. Custodial key exposure: M7.

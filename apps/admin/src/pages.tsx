@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { ErrorBox, Field, StatusBadge, TotpInput, fmtDate, short, useAction, useLoad } from '../../dashboard/src/ui';
-import { RISK_FLAGS, api, totpHeader, type AuditRow, type Invoice, type Merchant, type MerchantDetail as MerchantData, type Page, type Registry as RegistryData } from './api';
+import { RISK_FLAGS, api, totpHeader, type AuditRow, type FeeTopup, type Invoice, type Merchant, type MerchantDetail as MerchantData, type Page, type Registry as RegistryData } from './api';
 
 /** First page of a list, plus "load more" via the server cursor. Refetches when `path` changes. */
 interface Paged<T> {
@@ -171,6 +171,83 @@ function RiskFlags(props: { merchant: MerchantData; onSaved: () => void }) {
   );
 }
 
+/** Fee model and fee-balance grace (D-076). Applies to invoices created afterwards. */
+function FeeSettings(props: { merchant: MerchantData; onSaved: () => void }) {
+  const [bps, setBps] = useState(String(props.merchant.fee_bps));
+  const [fixed, setFixed] = useState(props.merchant.fee_fixed);
+  const [grace, setGrace] = useState(props.merchant.fee_grace);
+  return (
+    <fieldset className="card">
+      <legend>Fees</legend>
+      <p className="muted">Fee = rate × amount + fixed, never more than the amount. Live invoices need prepaid fees above minus the grace.</p>
+      <div className="row">
+        <Field label="Rate (bps)"><input type="number" min={0} max={10000} value={bps} onChange={(e) => { setBps(e.target.value); }} /></Field>
+        <Field label="Fixed per invoice (token units)"><input value={fixed} onChange={(e) => { setFixed(e.target.value); }} inputMode="decimal" /></Field>
+        <Field label="Grace (token units)"><input value={grace} onChange={(e) => { setGrace(e.target.value); }} inputMode="decimal" /></Field>
+      </div>
+      <ReasonAction
+        label="Save fees"
+        totp
+        onSubmit={async (reason, h) => {
+          await api('PUT', `/merchants/${props.merchant.id}/fees`, { fee_bps: Number(bps), fee_fixed: fixed.trim(), fee_grace: grace.trim(), reason }, h);
+          props.onSaved();
+        }}
+      />
+    </fieldset>
+  );
+}
+
+/** Prepaid fee top-ups: record one after the merchant paid, and the history. */
+function FeeTopups(props: { merchantId: string; manage: boolean; onSaved: () => void }) {
+  const [livemode, setLivemode] = useState(true);
+  const [token, setToken] = useState('');
+  const [amount, setAmount] = useState('');
+  const [reference, setReference] = useState('');
+  const list = useLoad(() => api<{ data: FeeTopup[] }>('GET', `/merchants/${props.merchantId}/fee-topups?livemode=${String(livemode)}`), [props.merchantId, livemode]);
+  return (
+    <div className="card">
+      <h3>Prepaid fee top-ups</h3>
+      <div className="row">
+        <label className="check"><input type="radio" checked={livemode} onChange={() => { setLivemode(true); }} /> live</label>
+        <label className="check"><input type="radio" checked={!livemode} onChange={() => { setLivemode(false); }} /> test</label>
+      </div>
+      <ErrorBox error={list.error} />
+      <div className="table-wrap">
+        <table>
+          <thead><tr><th>Date</th><th>Token</th><th>Amount</th><th>Reference</th></tr></thead>
+          <tbody>
+            {(list.data?.data ?? []).length === 0 && <tr><td colSpan={4} className="muted">None yet.</td></tr>}
+            {(list.data?.data ?? []).map((t) => (
+              <tr key={t.id}><td>{fmtDate(t.created_at)}</td><td>{t.token}</td><td className="num">{t.amount} {t.symbol}</td><td><code>{t.reference}</code></td></tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {props.manage && (
+        <>
+          <p className="muted">Record a top-up only after the payment has arrived. It cannot be edited or removed.</p>
+          <div className="row">
+            <Field label="Token id"><input value={token} onChange={(e) => { setToken(e.target.value); }} placeholder="bsc:usdt" /></Field>
+            <Field label="Amount"><input value={amount} onChange={(e) => { setAmount(e.target.value); }} inputMode="decimal" /></Field>
+            <Field label="Reference" hint="Transaction hash or bank reference."><input value={reference} onChange={(e) => { setReference(e.target.value); }} /></Field>
+          </div>
+          <ReasonAction
+            label={`Record ${livemode ? 'live' : 'test'} top-up`}
+            totp
+            onSubmit={async (reason, h) => {
+              await api('POST', `/merchants/${props.merchantId}/fee-topups`, { livemode, token: token.trim(), amount: amount.trim(), reference: reference.trim(), reason }, h);
+              setAmount('');
+              setReference('');
+              list.reload();
+              props.onSaved();
+            }}
+          />
+        </>
+      )}
+    </div>
+  );
+}
+
 export function MerchantDetail(props: { id: string; manage: boolean }) {
   const m = useLoad(() => api<MerchantData>('GET', `/merchants/${props.id}`), [props.id]);
   if (m.error) return <ErrorBox error={m.error} />;
@@ -184,7 +261,7 @@ export function MerchantDetail(props: { id: string; manage: boolean }) {
       <dl className="details card">
         <dt>Merchant id</dt><dd><code>{d.id}</code></dd>
         <dt>Custody mode</dt><dd>{label(d.custody_mode)}</dd>
-        <dt>Platform fee</dt><dd>{d.fee_bps} bps</dd>
+        <dt>Platform fee</dt><dd>{d.fee_bps} bps + {d.fee_fixed} fixed · grace {d.fee_grace}</dd>
         <dt>Underpay tolerance</dt><dd>{d.underpay_tolerance_bps} bps</dd>
         <dt>Risk flags</dt><dd>{d.risk_flags.map(label).join(', ') || '—'}</dd>
         <dt>Created</dt><dd>{fmtDate(d.created_at)}</dd>
@@ -207,28 +284,33 @@ export function MerchantDetail(props: { id: string; manage: boolean }) {
         </div>
       )}
       {props.manage && <RiskFlags merchant={d} onSaved={m.reload} />}
+      {props.manage && <FeeSettings merchant={d} onSaved={m.reload} />}
 
       <h3>Balances</h3>
       <div className="table-wrap">
         <table>
           <thead>
-            <tr><th>Mode</th><th>Token</th><th>Received</th><th>Platform fees charged</th></tr>
+            <tr><th>Mode</th><th>Token</th><th>Received</th><th>Fees charged</th><th>Prepaid fees</th><th>Fee status</th></tr>
           </thead>
           <tbody>
             {balances.length === 0 && (
-              <tr><td colSpan={4} className="muted">No payments yet.</td></tr>
+              <tr><td colSpan={6} className="muted">No payments yet.</td></tr>
             )}
             {balances.map((b) => (
               <tr key={`${String(b.livemode)}:${b.token}`}>
                 <td>{b.livemode ? 'live' : 'test'}</td>
                 <td>{b.token}</td>
                 <td className="num">{b.received} {b.symbol}</td>
-                <td className="num">{b.fees_owed} {b.symbol}</td>
+                <td className="num">{b.fees_charged} {b.symbol}</td>
+                <td className="num">{b.prepaid_fees} {b.symbol}</td>
+                <td>{label(b.fee_status)}</td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
+
+      <FeeTopups merchantId={d.id} manage={props.manage} onSaved={m.reload} />
 
       <h3>Users</h3>
       <div className="table-wrap">

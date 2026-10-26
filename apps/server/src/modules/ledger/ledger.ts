@@ -5,17 +5,19 @@
 //
 // Non-custodial (MVP) postings:
 //   payment confirmed (A):  Dr merchant_received A   / Cr merchant_sales A      (memo: funds in the merchant's wallet)
-//   invoice settled  (fee): Dr merchant_fees_owed F  / Cr platform_fee_revenue F (prepaid top-ups credit fees_owed, M8)
+//   invoice settled  (fee): Dr merchant_fees_owed F  / Cr platform_fee_revenue F
+//   fee top-up       (T):   Dr platform_topups T     / Cr merchant_fees_owed T   (prepaid fees, D-076)
 // Custodial postings (pending/available balances, sweeps) arrive with M7; custodial invoices stay `paid` until then.
 import { AppError, computeFee, feeBase } from '@gw/core';
 import { and, eq, sql } from 'drizzle-orm';
 import type { Tx } from '../../common/db.js';
-import { ledgerAccounts, ledgerEntries, ledgerJournals, invoices, payments } from '../../db/schema.js';
+import { feeTopups, ledgerAccounts, ledgerEntries, ledgerJournals, invoices, payments } from '../../db/schema.js';
 import type { Deps } from '../../deps.js';
 import { transitionInvoice } from '../invoices/invoices.js';
 
 type AccountKind = (typeof ledgerAccounts.$inferSelect)['kind'];
 type PaymentRow = typeof payments.$inferSelect;
+type FeeTopupRow = typeof feeTopups.$inferSelect;
 
 async function accountId(tx: Tx, kind: AccountKind, merchantId: string | null, livemode: boolean, tokenId: string): Promise<string> {
   await tx.insert(ledgerAccounts).values({ kind, merchantId, livemode, tokenId }).onConflictDoNothing();
@@ -36,19 +38,20 @@ async function accountId(tx: Tx, kind: AccountKind, merchantId: string | null, l
 }
 
 interface JournalHead {
-  kind: 'payment' | 'fee';
+  kind: 'payment' | 'fee' | 'fee_topup';
   merchantId: string;
   livemode: boolean;
   tokenId: string;
-  invoiceId: string;
+  invoiceId?: string;
   paymentId?: string;
+  topupId?: string;
 }
 
 /** Writes a journal and its lines. Returns false (and writes nothing) if this journal already exists. */
 async function post(tx: Tx, head: JournalHead, lines: [AccountKind, 'merchant' | 'platform', bigint][]): Promise<boolean> {
   const [j] = await tx
     .insert(ledgerJournals)
-    .values({ ...head, paymentId: head.paymentId ?? null })
+    .values({ ...head, invoiceId: head.invoiceId ?? null, paymentId: head.paymentId ?? null, topupId: head.topupId ?? null })
     .onConflictDoNothing()
     .returning({ id: ledgerJournals.id });
   if (!j) return false;
@@ -76,14 +79,15 @@ export async function postPayment(tx: Tx, p: PaymentRow): Promise<void> {
 }
 
 /**
- * Non-custodial settlement: charges the platform fee on min(received, expected) at the invoice's snapshotted rate and
+ * Non-custodial settlement: charges the platform fee on min(received, expected) at the invoice's snapshotted rate (plus
+ * its snapshotted fixed fee, never more than the base) and
  * moves paid/overpaid -> settled, all in the caller's transaction. No-op for any other invoice. Also the path for
  * manual resolutions that end in `paid` (resolveInvoice).
  */
 export async function settleInvoice(deps: Deps, tx: Tx, invoiceId: string): Promise<void> {
   const [inv] = await tx.select().from(invoices).where(eq(invoices.id, invoiceId)).for('update');
   if (!inv || inv.custodyMode !== 'non_custodial_xpub' || (inv.status !== 'paid' && inv.status !== 'overpaid')) return;
-  const fee = computeFee(feeBase(inv.amountExpected, inv.amountReceived), inv.feeBps);
+  const fee = computeFee(feeBase(inv.amountExpected, inv.amountReceived), inv.feeBps, inv.feeFixed);
   if (fee > 0n) {
     const head = { kind: 'fee' as const, merchantId: inv.merchantId, livemode: inv.livemode, tokenId: inv.tokenId, invoiceId: inv.id };
     await post(tx, head, [
@@ -109,19 +113,55 @@ export async function resolveInvoice(deps: Deps, tx: Tx, invoiceId: string, reas
   await settleInvoice(deps, tx, invoiceId);
 }
 
-/** Per-token balances of one merchant in one mode (minor units). Positive = debit balance. */
+export interface TopupInput {
+  merchantId: string;
+  livemode: boolean;
+  tokenId: string;
+  amount: bigint;
+  reference: string;
+  adminId: string;
+}
+
+/** Records a prepaid fee top-up and posts its journal, in the caller's transaction (a top-up never exists alone). */
+export async function recordFeeTopup(tx: Tx, t: TopupInput): Promise<FeeTopupRow> {
+  if (t.amount <= 0n) throw new AppError('invalid_amount', 'top-up amount must be greater than zero');
+  const [row] = await tx
+    .insert(feeTopups)
+    .values({ merchantId: t.merchantId, livemode: t.livemode, tokenId: t.tokenId, amount: t.amount, reference: t.reference, createdBy: t.adminId })
+    .returning();
+  /* v8 ignore next -- invariant: INSERT ... RETURNING yields the row or throws */
+  if (!row) throw new Error('fee top-up insert failed');
+  await post(tx, { kind: 'fee_topup', merchantId: t.merchantId, livemode: t.livemode, tokenId: t.tokenId, topupId: row.id }, [
+    ['platform_topups', 'platform', t.amount],
+    ['merchant_fees_owed', 'merchant', -t.amount],
+  ]);
+  return row;
+}
+
+/**
+ * Per-token balances of one merchant in one mode (minor units). Positive = debit balance. `feesOwed` is the net
+ * merchant_fees_owed balance (fees charged minus top-ups: negative = prepaid); `feesCharged` is its gross debit side.
+ */
 export async function merchantBalances(tx: Tx, merchantId: string, livemode: boolean) {
   const rows = await tx
-    .select({ kind: ledgerAccounts.kind, tokenId: ledgerAccounts.tokenId, total: sql<string>`coalesce(sum(${ledgerEntries.amount}), 0)::text` })
+    .select({
+      kind: ledgerAccounts.kind,
+      tokenId: ledgerAccounts.tokenId,
+      total: sql<string>`coalesce(sum(${ledgerEntries.amount}), 0)::text`,
+      debits: sql<string>`coalesce(sum(${ledgerEntries.amount}) filter (where ${ledgerEntries.amount} > 0), 0)::text`,
+    })
     .from(ledgerAccounts)
     .leftJoin(ledgerEntries, eq(ledgerEntries.accountId, ledgerAccounts.id))
     .where(and(eq(ledgerAccounts.merchantId, merchantId), eq(ledgerAccounts.livemode, livemode)))
     .groupBy(ledgerAccounts.kind, ledgerAccounts.tokenId);
-  const out = new Map<string, { received: bigint; feesOwed: bigint }>();
+  const out = new Map<string, { received: bigint; feesOwed: bigint; feesCharged: bigint }>();
   for (const r of rows) {
-    const b = out.get(r.tokenId) ?? { received: 0n, feesOwed: 0n };
+    const b = out.get(r.tokenId) ?? { received: 0n, feesOwed: 0n, feesCharged: 0n };
     if (r.kind === 'merchant_received') b.received = BigInt(r.total);
-    if (r.kind === 'merchant_fees_owed') b.feesOwed = BigInt(r.total);
+    if (r.kind === 'merchant_fees_owed') {
+      b.feesOwed = BigInt(r.total);
+      b.feesCharged = BigInt(r.debits);
+    }
     out.set(r.tokenId, b);
   }
   return out;

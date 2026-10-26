@@ -87,7 +87,7 @@ export class Agent {
     private readonly origin = DASH_ORIGIN,
   ) {}
 
-  async req(method: 'GET' | 'POST' | 'DELETE', url: string, payload?: unknown, headers: Record<string, string> = {}) {
+  async req(method: 'GET' | 'POST' | 'PUT' | 'DELETE', url: string, payload?: unknown, headers: Record<string, string> = {}) {
     const cookie = [...this.cookies].map(([k, v]) => `${k}=${v}`).join('; ');
     const csrf = this.cookies.get('gw_csrf') ?? this.cookies.get('gw_admin_csrf');
     const res = await this.app.inject({

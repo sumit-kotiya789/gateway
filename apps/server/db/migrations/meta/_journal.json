@@ -120,6 +120,20 @@
       "when": 1793004617431,
       "tag": "0016_xpub_security",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1793005867448,
+      "tag": "0017_fees",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1793005898856,
+      "tag": "0018_fees_security",
+      "breakpoints": true
     }
   ]
 }

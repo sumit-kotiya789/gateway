@@ -28,6 +28,8 @@ Every file with a `// MONEY-CRITICAL` header is listed here and in the coverage 
 | `packages/core/src/fees.ts` | fee base and rounding | M5 |
 | `apps/server/src/modules/ledger/ledger.ts` | ledger postings, fee charge, settlement, manual resolution | M5 |
 | `apps/server/db/migrations/0011_ledger_outbox_security.sql` | balanced append-only ledger, fee immutability, trigger-only outbox | M5 |
+| `apps/server/src/modules/ledger/fee-balance.ts` | prepaid fee balance and the live-invoice block | M8 |
+| `apps/server/db/migrations/0017_fees.sql`, `0018_fees_security.sql` | fixed fee snapshot, top-up journals, append-only top-ups, journal/top-up consistency | M8 |
 
 ## Security-critical files (mandatory human review)
 

@@ -1,7 +1,7 @@
 // Admin console API (M5b), mounted under /admin/v1 behind the admin network guard. Every route needs an admin session
 // (separate auth domain, D-025) and a permission; actions that lower a safety control also need step-up TOTP (D-064).
 // Every change is audited with the admin's reason, in the same transaction as the change.
-import { AppError, INVOICE_STATUSES, UUID_RE } from '@gw/core';
+import { AppError, INVOICE_STATUSES, UUID_RE, toMinorUnits } from '@gw/core';
 import { and, arrayContains, asc, desc, eq, ilike, inArray, isNull, lt, or, sql } from 'drizzle-orm';
 import type { FastifyRequest } from 'fastify';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
@@ -24,8 +24,8 @@ import type { Deps } from '../../deps.js';
 import { requireAdmin, requireAdminTotp, type AuthedAdmin } from '../auth/guards.js';
 import { invoiceDetail } from '../invoices/invoices.routes.js';
 import { invoiceView } from '../invoices/invoices.js';
-import { balancesView } from '../ledger/ledger.routes.js';
-import { resolveInvoice } from '../ledger/ledger.js';
+import { balancesView, feeTopupsView } from '../ledger/ledger.routes.js';
+import { recordFeeTopup, resolveInvoice } from '../ledger/ledger.js';
 
 const Reason = z.string().trim().min(3).max(500);
 const ReasonBody = z.strictObject({ reason: Reason });
@@ -35,6 +35,15 @@ const Page = { limit: z.coerce.number().int().min(1).max(100).default(50), start
 const ATTENTION = ['underpaid', 'late_payment'] as const;
 
 const like = (s: string) => `%${s.replace(/[\\%_]/g, '\\$&')}%`;
+/** Token-unit setting (stablecoin units, up to 6 decimals), bounded like the DB check. */
+const feeUnits = (max: number) =>
+  z
+    .string()
+    .trim()
+    .regex(/^(0|[1-9]\d{0,5})(\.\d{1,6})?$/, 'a plain decimal with at most 6 decimals')
+    .refine((v) => Number(v) <= max, `at most ${String(max)}`);
+/** NUMERIC(20,6) as stored ("0.500000") in its canonical form ("0.5"). */
+const units = (v: string) => (v.includes('.') ? v.replace(/\.?0+$/, '') : v);
 
 function adminOf(req: FastifyRequest): AuthedAdmin {
   /* v8 ignore next -- requireAdmin runs first on every route */
@@ -49,6 +58,8 @@ const merchantView = (m: MerchantRow) => ({
   status: m.status,
   custody_mode: m.custodyMode,
   fee_bps: m.feeBps,
+  fee_fixed: units(m.feeFixed),
+  fee_grace: units(m.feeGrace),
   underpay_tolerance_bps: m.underpayToleranceBps,
   risk_flags: m.riskFlags,
   created_at: m.createdAt.toISOString(),
@@ -177,6 +188,83 @@ export function adminRoutes(deps: Deps): FastifyPluginAsyncZod {
           });
           return merchantView(next);
         }),
+    );
+
+    // ---------------------------------------------------------------- fees (M8, D-076)
+
+    /** Fee model and fee-balance grace. Changes apply to invoices created afterwards (snapshotted at creation). */
+    app.put(
+      '/merchants/:id/fees',
+      {
+        preHandler: [requireAdmin(deps, 'fees:manage'), requireAdminTotp(deps)],
+        schema: {
+          params: IdParams,
+          body: z.strictObject({ fee_bps: z.number().int().min(0).max(10_000), fee_fixed: feeUnits(1000), fee_grace: feeUnits(100_000), reason: Reason }),
+        },
+      },
+      async (req) =>
+        withSystem(deps.db, async (tx) => {
+          const m = await lockedMerchant(tx, req.params.id);
+          const b = req.body;
+          const [next] = await tx.update(merchants).set({ feeBps: b.fee_bps, feeFixed: b.fee_fixed, feeGrace: b.fee_grace }).where(eq(merchants.id, m.id)).returning();
+          /* v8 ignore next -- row locked above */
+          if (!next) throw new Error('merchant update failed');
+          await record(tx, req, {
+            merchantId: m.id,
+            action: 'admin.merchant_fees_changed',
+            targetType: 'merchant',
+            targetId: m.id,
+            before: { fee_bps: m.feeBps, fee_fixed: units(m.feeFixed), fee_grace: units(m.feeGrace) },
+            after: { fee_bps: b.fee_bps, fee_fixed: units(next.feeFixed), fee_grace: units(next.feeGrace), reason: b.reason },
+          });
+          return merchantView(next);
+        }),
+    );
+
+    app.get(
+      '/merchants/:id/fee-topups',
+      { preHandler: requireAdmin(deps, 'admin:read'), schema: { params: IdParams, querystring: z.strictObject({ livemode: z.stringbool().default(true) }) } },
+      async (req) => withSystem(deps.db, (tx) => feeTopupsView(tx, req.params.id, req.query.livemode)),
+    );
+
+    /** Records a prepaid fee top-up the merchant paid (on-chain or off-platform) and posts its ledger journal. */
+    app.post(
+      '/merchants/:id/fee-topups',
+      {
+        preHandler: [requireAdmin(deps, 'fees:manage'), requireAdminTotp(deps)],
+        schema: {
+          params: IdParams,
+          body: z.strictObject({
+            livemode: z.boolean(),
+            token: z.string().min(1).max(100),
+            amount: z.string().max(100),
+            reference: z.string().trim().min(3).max(200),
+            reason: Reason,
+          }),
+        },
+      },
+      async (req, reply) => {
+        const b = req.body;
+        const view = await withSystem(deps.db, async (tx) => {
+          const m = await lockedMerchant(tx, req.params.id);
+          const [tk] = await tx.select({ token: tokens, chain: chains }).from(tokens).innerJoin(chains, eq(chains.id, tokens.chainId)).where(eq(tokens.id, b.token));
+          if (!tk || tk.chain.testnet === b.livemode) {
+            throw new AppError('validation_error', `token ${b.token} is not a ${b.livemode ? 'live' : 'test'} mode token`, { field: 'token' });
+          }
+          const amount = toMinorUnits(b.amount, tk.token.decimals);
+          const row = await recordFeeTopup(tx, { merchantId: m.id, livemode: b.livemode, tokenId: b.token, amount, reference: b.reference, adminId: adminOf(req).id });
+          await record(tx, req, {
+            merchantId: m.id,
+            action: 'admin.fee_topup_recorded',
+            targetType: 'fee_topup',
+            targetId: row.id,
+            // `asset`: the audit redaction treats any key containing "token" as a secret.
+            after: { livemode: b.livemode, asset: b.token, amount: b.amount, reference: b.reference, reason: b.reason },
+          });
+          return (await feeTopupsView(tx, m.id, b.livemode, 1)).data[0];
+        });
+        return reply.status(201).send(view);
+      },
     );
 
     // Lost authenticator without recovery codes (RUNBOOK). The user signs in with the password only and must re-enroll.

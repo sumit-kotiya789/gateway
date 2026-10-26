@@ -72,6 +72,8 @@ export interface Merchant {
   status: 'active' | 'suspended';
   custody_mode: string;
   fee_bps: number;
+  fee_fixed: string;
+  fee_grace: string;
   underpay_tolerance_bps: number;
   risk_flags: string[];
   created_at: string;
@@ -79,7 +81,20 @@ export interface Merchant {
 
 export interface MerchantDetail extends Merchant {
   users: { id: string; email: string; role: string; totp_enabled: boolean; locked_until: string | null; created_at: string }[];
-  balances: { livemode: boolean; data: { token: string; symbol: string | null; received: string; fees_owed: string }[] }[];
+  balances: {
+    livemode: boolean;
+    data: { token: string; symbol: string | null; received: string; fees_charged: string; prepaid_fees: string; fee_status: string }[];
+  }[];
+}
+
+export interface FeeTopup {
+  id: string;
+  livemode: boolean;
+  token: string;
+  symbol: string | null;
+  amount: string;
+  reference: string;
+  created_at: string;
 }
 
 export interface Invoice {

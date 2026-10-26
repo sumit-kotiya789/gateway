@@ -22,7 +22,7 @@ import { auditDashboardRoutes } from './modules/audit/audit.routes.js';
 import { registryDashboardRoutes, registryRoutes } from './modules/registry/registry.routes.js';
 import { checkoutRoutes } from './modules/checkout/checkout.routes.js';
 import { invoiceDashboardRoutes, invoiceRoutes } from './modules/invoices/invoices.routes.js';
-import { ledgerDashboardRoutes, ledgerRoutes } from './modules/ledger/ledger.routes.js';
+import { feeTopupDashboardRoutes, ledgerDashboardRoutes, ledgerRoutes } from './modules/ledger/ledger.routes.js';
 import { webhookDashboardRoutes } from './modules/webhooks/webhooks.routes.js';
 import { xpubDashboardRoutes } from './modules/xpubs/xpubs.routes.js';
 import { paymentLinkRoutes, publicPayRoutes } from './modules/payment-links/payment-links.routes.js';
@@ -138,6 +138,7 @@ export function buildApp(logger: FastifyBaseLogger, deps?: Deps) {
   void app.register(webhookDashboardRoutes(deps), { prefix: '/v1/dashboard/webhooks' });
   void app.register(xpubDashboardRoutes(deps), { prefix: '/v1/dashboard/xpubs' });
   void app.register(ledgerDashboardRoutes(deps), { prefix: '/v1/dashboard/balances' });
+  void app.register(feeTopupDashboardRoutes(deps), { prefix: '/v1/dashboard/fee-topups' });
   void app.register(accountRoutes(deps), { prefix: '/v1' });
   void app.register(registryRoutes(deps), { prefix: '/v1' });
   void app.register(invoiceRoutes(deps), { prefix: '/v1' });

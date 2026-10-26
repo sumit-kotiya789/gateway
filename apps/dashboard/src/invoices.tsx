@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { api, type Balance, type Invoice, type Page, type Token } from './api';
+import { api, type Balance, type FeeTopup, type Invoice, type Page, type Token } from './api';
 import { ConfirmButton, ErrorBox, Field, StatusBadge, fmtDate, short, useAction, useLoad } from './ui';
 
 const STATUSES = ['pending', 'detected', 'confirming', 'paid', 'underpaid', 'overpaid', 'settled', 'expired', 'cancelled', 'failed', 'late_payment'];
@@ -28,11 +28,17 @@ export function Invoices(props: { livemode: boolean; canWrite: boolean }) {
             <div key={b.token} className="card">
               <small className="muted">Received · {b.token}</small>
               <strong className="num">{b.received} {b.symbol}</strong>
-              <small className="muted">Platform fees charged: {b.fees_owed} {b.symbol}</small>
+              <small className="muted">Platform fees charged: {b.fees_charged} {b.symbol}</small>
+              <small className={b.fee_status === 'blocked' || b.fee_status === 'low' ? 'warn-text' : 'muted'}>
+                Prepaid fees: {b.prepaid_fees} {b.symbol}
+                {b.fee_status === 'blocked' && ' · used up: top up to create live invoices'}
+                {b.fee_status === 'low' && ' · running low'}
+              </small>
             </div>
           ))}
         </div>
       )}
+      <FeeTopups livemode={props.livemode} />
       <header className="page-head">
         <h2>Invoices</h2>
         <div className="row">
@@ -222,5 +228,28 @@ export function InvoiceDetail(props: { id: string; canWrite: boolean }) {
         </>
       )}
     </section>
+  );
+}
+
+/** Prepaid fee top-ups recorded for this mode (D-076). Live invoices need a positive prepaid balance per token. */
+function FeeTopups(props: { livemode: boolean }) {
+  const list = useLoad(() => api<{ data: FeeTopup[] }>('GET', `/fee-topups/?livemode=${String(props.livemode)}`), [props.livemode]);
+  const rows = list.data?.data ?? [];
+  if (rows.length === 0) return null;
+  return (
+    <details className="card">
+      <summary>Prepaid fee top-ups ({rows.length})</summary>
+      <ErrorBox error={list.error} />
+      <div className="table-wrap">
+        <table>
+          <thead><tr><th>Date</th><th>Amount</th><th>Reference</th></tr></thead>
+          <tbody>
+            {rows.map((t) => (
+              <tr key={t.id}><td>{fmtDate(t.created_at)}</td><td className="num">{t.amount} {t.symbol} <small className="muted">{t.token}</small></td><td><code>{t.reference}</code></td></tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </details>
   );
 }

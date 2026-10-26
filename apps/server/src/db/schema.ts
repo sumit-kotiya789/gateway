@@ -46,6 +46,10 @@ export const merchants = pgTable(
     status: merchantStatus('status').notNull().default('active'),
     custodyMode: custodyMode('custody_mode').notNull().default('non_custodial_xpub'),
     feeBps: integer('fee_bps').notNull().default(100),
+    // Fixed fee per settled invoice and the fee-balance grace, in token units (stablecoins): converted with the
+    // invoice token's decimals when used (M8, D-076).
+    feeFixed: numeric('fee_fixed', { precision: 20, scale: 6 }).notNull().default('0'),
+    feeGrace: numeric('fee_grace', { precision: 20, scale: 6 }).notNull().default('0'),
     underpayToleranceBps: integer('underpay_tolerance_bps').notNull().default(50),
     kyb: jsonb('kyb').notNull().default({}),
     riskFlags: merchantRiskFlag('risk_flags').array().notNull().default(sql`'{}'`),
@@ -54,6 +58,8 @@ export const merchants = pgTable(
   (t) => [
     check('merchants_name_len', sql`char_length(${t.name}) between 1 and 200`),
     check('merchants_fee_bps_range', sql`${t.feeBps} between 0 and 10000`),
+    check('merchants_fee_fixed_range', sql`${t.feeFixed} between 0 and 1000`),
+    check('merchants_fee_grace_range', sql`${t.feeGrace} between 0 and 100000`),
     check('merchants_underpay_tolerance', sql`${t.underpayToleranceBps} between 0 and 500`),
   ],
 );
@@ -464,6 +470,7 @@ export const invoices = pgTable(
     underpayToleranceBps: integer('underpay_tolerance_bps').notNull(),
     // Snapshot of the merchant's fee at creation: a later fee change never affects existing invoices.
     feeBps: integer('fee_bps').notNull().default(100),
+    feeFixed: money('fee_fixed').notNull().default(sql`0`),
     description: text('description'),
     metadata: jsonb('metadata').notNull().default({}),
     successUrl: text('success_url'),
@@ -485,6 +492,7 @@ export const invoices = pgTable(
     check('invoices_amounts', sql`${t.amountExpected} > 0 and ${t.amountReceived} >= 0 and (${t.feeAmount} is null or ${t.feeAmount} >= 0)`),
     check('invoices_tolerance', sql`${t.underpayToleranceBps} between 0 and 500`),
     check('invoices_fee_bps', sql`${t.feeBps} between 0 and 10000`),
+    check('invoices_fee_fixed', sql`${t.feeFixed} >= 0`),
     check('invoices_metadata_size', sql`octet_length(${t.metadata}::text) <= 4096`),
     check('invoices_external_order_len', sql`${t.externalOrderId} is null or char_length(${t.externalOrderId}) between 1 and 200`),
   ],
@@ -617,6 +625,36 @@ export const chainCursors = pgTable('chain_cursors', {
 
 // ---------------------------------------------------------------- M5: ledger, outbox, reconciliation
 
+/**
+ * Prepaid fee top-ups (M8, D-076): the merchant paid the platform, an admin records it. Each one posts a fee_topup
+ * journal in the same transaction. Append-only.
+ */
+export const feeTopups = pgTable(
+  'fee_topups',
+  {
+    id: id(),
+    merchantId: uuid('merchant_id')
+      .notNull()
+      .references(() => merchants.id),
+    livemode: boolean('livemode').notNull(),
+    tokenId: text('token_id')
+      .notNull()
+      .references(() => tokens.id),
+    amount: money('amount').notNull(),
+    // Where the money came from: a transaction hash or bank reference.
+    reference: text('reference').notNull(),
+    createdBy: uuid('created_by')
+      .notNull()
+      .references(() => adminUsers.id),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index('fee_topups_merchant_idx').on(t.merchantId, t.livemode),
+    check('fee_topups_amount', sql`${t.amount} > 0`),
+    check('fee_topups_reference_len', sql`char_length(${t.reference}) between 3 and 200`),
+  ],
+);
+
 export const ledgerAccountKind = pgEnum('ledger_account_kind', [
   // Non-custodial memo pair: funds received into the merchant's own wallet (asset) / the merchant's sales (income).
   'merchant_received',
@@ -625,8 +663,10 @@ export const ledgerAccountKind = pgEnum('ledger_account_kind', [
   'merchant_fees_owed',
   // Platform income from fees. merchant_id is null.
   'platform_fee_revenue',
+  // Prepaid fee top-ups the platform received (asset). merchant_id is null.
+  'platform_topups',
 ]);
-export const ledgerJournalKind = pgEnum('ledger_journal_kind', ['payment', 'fee']);
+export const ledgerJournalKind = pgEnum('ledger_journal_kind', ['payment', 'fee', 'fee_topup']);
 
 /** One account per (kind, merchant, mode, token). Platform accounts have merchant_id null. */
 export const ledgerAccounts = pgTable(
@@ -643,11 +683,14 @@ export const ledgerAccounts = pgTable(
   },
   (t) => [
     unique('ledger_accounts_uq').on(t.kind, t.merchantId, t.livemode, t.tokenId).nullsNotDistinct(),
-    check('ledger_accounts_owner', sql`(${t.kind} = 'platform_fee_revenue') = (${t.merchantId} is null)`),
+    check('ledger_accounts_owner', sql`(${t.kind} in ('platform_fee_revenue', 'platform_topups')) = (${t.merchantId} is null)`),
   ],
 );
 
-/** A balanced set of entries (sum = 0, one token). Append-only. One payment journal per payment, one fee journal per invoice. */
+/**
+ * A balanced set of entries (sum = 0, one token). Append-only. One payment journal per payment, one fee journal per
+ * invoice, one fee_topup journal per top-up (no invoice).
+ */
 export const ledgerJournals = pgTable(
   'ledger_journals',
   {
@@ -660,17 +703,19 @@ export const ledgerJournals = pgTable(
     tokenId: text('token_id')
       .notNull()
       .references(() => tokens.id),
-    invoiceId: uuid('invoice_id')
-      .notNull()
-      .references(() => invoices.id),
+    invoiceId: uuid('invoice_id').references(() => invoices.id),
     paymentId: uuid('payment_id').references(() => payments.id),
+    topupId: uuid('topup_id').references(() => feeTopups.id),
     createdAt: createdAt(),
   },
   (t) => [
     uniqueIndex('ledger_journals_payment_uq').on(t.paymentId).where(sql`${t.kind} = 'payment'`),
     uniqueIndex('ledger_journals_fee_uq').on(t.invoiceId).where(sql`${t.kind} = 'fee'`),
+    uniqueIndex('ledger_journals_topup_uq').on(t.topupId).where(sql`${t.kind} = 'fee_topup'`),
     index('ledger_journals_merchant_idx').on(t.merchantId, t.livemode),
     check('ledger_journals_payment_ref', sql`(${t.kind} = 'payment') = (${t.paymentId} is not null)`),
+    check('ledger_journals_invoice_ref', sql`(${t.kind} = 'fee_topup') = (${t.invoiceId} is null)`),
+    check('ledger_journals_topup_ref', sql`(${t.kind} = 'fee_topup') = (${t.topupId} is not null)`),
   ],
 );
 

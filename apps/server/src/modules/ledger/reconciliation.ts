@@ -35,6 +35,11 @@ const CHECKS = {
         select sum(e.amount) from ledger_journals j join ledger_entries e on e.journal_id = j.id
         join ledger_accounts a on a.id = e.account_id and a.kind = 'merchant_fees_owed'
         where j.kind = 'fee' and j.invoice_id = i.id), 0))`,
+  /** Every prepaid fee top-up is booked once, for exactly its amount, against the merchant's fees owed (D-076). */
+  topup_journal: sql`select t.id from fee_topups t
+    where coalesce((select sum(e.amount) from ledger_journals j join ledger_entries e on e.journal_id = j.id
+      join ledger_accounts a on a.id = e.account_id and a.kind = 'merchant_fees_owed'
+      where j.kind = 'fee_topup' and j.topup_id = t.id), 0) <> -t.amount`,
   /** Paid non-custodial invoices settle in the same transaction; one left behind is stuck. */
   unsettled: sql`select i.id from invoices i where i.status in ('paid', 'overpaid') and i.custody_mode = ${NC}`,
   /** Whole ledger nets to zero per token (holds by construction; guards against disabled triggers). */

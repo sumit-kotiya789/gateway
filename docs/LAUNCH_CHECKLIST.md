@@ -23,6 +23,7 @@ Every item needs an owner and a date before launch.
 - [ ] Signup decision: email verification live (M10) or `SIGNUP_ENABLED=false`
 - [ ] App DB user is a member of `gw_app` only; owner credentials used by migrations only
 - [ ] `ADMIN_IP_ALLOWLIST` set (VPN / office ranges)
+- [ ] Fee model per merchant agreed and set (rate, fixed, grace); prepaid top-up process (how merchants pay, who records) agreed (D-076)
 
 ## Custodial only (M7)
 - [ ] KMS decision implemented (D-010); key ceremony performed and recorded

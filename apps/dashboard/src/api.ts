@@ -107,6 +107,18 @@ export interface Balance {
   symbol: string | null;
   received: string;
   fees_owed: string;
+  fees_charged: string;
+  prepaid_fees: string;
+  fee_status: 'ok' | 'low' | 'blocked' | 'not_enforced';
+}
+
+export interface FeeTopup {
+  id: string;
+  token: string;
+  symbol: string | null;
+  amount: string;
+  reference: string;
+  created_at: string;
 }
 
 export interface Token {

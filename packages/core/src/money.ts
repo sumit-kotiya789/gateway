@@ -44,3 +44,8 @@ export function fromMinorUnits(value: bigint, decimals: number): string {
   const frac = s.slice(-decimals).replace(/0+$/, '');
   return frac ? `${int}.${frac}` : int;
 }
+
+/** Like fromMinorUnits, for balances that may be negative (e.g. a prepaid fee balance used into its grace). */
+export function fromSignedMinorUnits(value: bigint, decimals: number): string {
+  return value < 0n ? `-${fromMinorUnits(-value, decimals)}` : fromMinorUnits(value, decimals);
+}

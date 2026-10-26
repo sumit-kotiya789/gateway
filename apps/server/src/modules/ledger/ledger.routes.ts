@@ -1,12 +1,13 @@
-import { AppError, fromMinorUnits } from '@gw/core';
+import { AppError, fromMinorUnits, fromSignedMinorUnits } from '@gw/core';
 import { and, desc, eq, inArray, lt, sql } from 'drizzle-orm';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { withTenant, type Tx } from '../../common/db.js';
-import { outboxEvents, tokens } from '../../db/schema.js';
+import { chains, feeTopups, merchants, outboxEvents, tokens } from '../../db/schema.js';
 import type { Deps } from '../../deps.js';
 import { requireApiKey } from '../api-keys/api-keys.js';
 import { authedUser, requirePermission, requireUser } from '../auth/guards.js';
+import { feeBalanceOf } from './fee-balance.js';
 import { merchantBalances } from './ledger.js';
 
 async function decimalsOf(tx: Tx, ids: string[]) {
@@ -15,16 +16,65 @@ async function decimalsOf(tx: Tx, ids: string[]) {
   return new Map(rows.map((r) => [r.id, r]));
 }
 
+/** Ids of tokens a live invoice can use now (enabled token on an enabled mainnet chain). */
+async function liveTokenIds(tx: Tx): Promise<string[]> {
+  const rows = await tx
+    .select({ id: tokens.id })
+    .from(tokens)
+    .innerJoin(chains, eq(chains.id, tokens.chainId))
+    .where(and(eq(tokens.enabled, true), eq(chains.enabled, true), eq(chains.testnet, false)));
+  return rows.map((r) => r.id);
+}
+
+/**
+ * Per token: received, fees charged, fees owed (charged and not covered by top-ups), the prepaid fee balance (top-ups
+ * minus fees; negative when used into the grace or before any top-up) and its status (D-076). Live mode also lists every usable live token, so a merchant who has not topped
+ * up yet sees `blocked` instead of nothing.
+ */
 export async function balancesView(tx: Tx, merchantId: string, livemode: boolean) {
   const b = await merchantBalances(tx, merchantId, livemode);
-  const meta = await decimalsOf(tx, [...b.keys()]);
+  const ids = [...new Set([...b.keys(), ...(livemode ? await liveTokenIds(tx) : [])])].sort();
+  const meta = await decimalsOf(tx, ids);
+  const [m] = await tx.select({ grace: merchants.feeGrace }).from(merchants).where(eq(merchants.id, merchantId));
   return {
     livemode,
-    data: [...b].map(([token, v]) => {
+    data: ids.map((token) => {
+      const v = b.get(token) ?? { received: 0n, feesOwed: 0n, feesCharged: 0n };
       const d = meta.get(token)?.decimals ?? 0;
-      // fees_owed > 0: fees charged and not yet covered by prepaid top-ups (M8).
-      return { token, symbol: meta.get(token)?.symbol ?? null, received: fromMinorUnits(v.received, d), fees_owed: fromMinorUnits(v.feesOwed, d) };
+      const fb = feeBalanceOf(livemode, v.feesOwed, m?.grace ?? '0', d);
+      return {
+        token,
+        symbol: meta.get(token)?.symbol ?? null,
+        received: fromMinorUnits(v.received, d),
+        // Fees charged and not covered by top-ups (pre-M8 meaning), never negative; the prepaid side is prepaid_fees.
+        fees_owed: fromMinorUnits(v.feesOwed > 0n ? v.feesOwed : 0n, d),
+        fees_charged: fromMinorUnits(v.feesCharged, d),
+        prepaid_fees: fromSignedMinorUnits(fb.prepaid, d),
+        fee_status: fb.status,
+      };
     }),
+  };
+}
+
+/** Prepaid fee top-ups of one merchant and mode, newest first (D-076). */
+export async function feeTopupsView(tx: Tx, merchantId: string, livemode: boolean, limit = 100) {
+  const rows = await tx
+    .select({ t: feeTopups, decimals: tokens.decimals, symbol: tokens.symbol })
+    .from(feeTopups)
+    .innerJoin(tokens, eq(tokens.id, feeTopups.tokenId))
+    .where(and(eq(feeTopups.merchantId, merchantId), eq(feeTopups.livemode, livemode)))
+    .orderBy(desc(feeTopups.createdAt))
+    .limit(limit);
+  return {
+    data: rows.map(({ t, decimals, symbol }) => ({
+      id: t.id,
+      livemode: t.livemode,
+      token: t.tokenId,
+      symbol,
+      amount: fromMinorUnits(t.amount, decimals),
+      reference: t.reference,
+      created_at: t.createdAt.toISOString(),
+    })),
   };
 }
 
@@ -102,15 +152,22 @@ export function ledgerRoutes(deps: Deps): FastifyPluginAsyncZod {
   };
 }
 
+const ModeQuery = z.strictObject({ livemode: z.stringbool().default(false) });
+
 export function ledgerDashboardRoutes(deps: Deps): FastifyPluginAsyncZod {
   return async (app) => {
-    app.get(
-      '/',
-      { preHandler: [requireUser(deps), requirePermission('account:read')], schema: { querystring: z.strictObject({ livemode: z.stringbool().default(false) }) } },
-      async (req) => {
-        const u = authedUser(req);
-        return withTenant(deps.db, u.merchantId, (tx) => balancesView(tx, u.merchantId, req.query.livemode));
-      },
-    );
+    app.get('/', { preHandler: [requireUser(deps), requirePermission('account:read')], schema: { querystring: ModeQuery } }, async (req) => {
+      const u = authedUser(req);
+      return withTenant(deps.db, u.merchantId, (tx) => balancesView(tx, u.merchantId, req.query.livemode));
+    });
+  };
+}
+
+export function feeTopupDashboardRoutes(deps: Deps): FastifyPluginAsyncZod {
+  return async (app) => {
+    app.get('/', { preHandler: [requireUser(deps), requirePermission('account:read')], schema: { querystring: ModeQuery } }, async (req) => {
+      const u = authedUser(req);
+      return withTenant(deps.db, u.merchantId, (tx) => feeTopupsView(tx, u.merchantId, req.query.livemode));
+    });
   };
 }

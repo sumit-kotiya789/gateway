@@ -35,6 +35,7 @@ the user's sessions and recovery codes; the user signs in with the password and 
 
 ## Worker
 - `main-worker.cjs` (compose service `worker`) runs BullMQ schedulers. M3: `expire-invoices` every 15 s.
+- M8: `apply-xpub-changes` every minute (live xpub changes whose 24 h cooldown elapsed).
 - Several workers may run; jobs are idempotent and use `SKIP LOCKED`.
 - Pending invoices past `expires_at` that are still `pending` = worker down or Redis unavailable. Check `docker compose logs worker`.
 
@@ -55,9 +56,18 @@ the user's sessions and recovery codes; the user signs in with the password and 
 - Suspend a merchant: immediate (API keys stop working, no new invoices). Reactivation needs TOTP.
 - Dev: `pnpm --filter @gw/admin dev` (http://localhost:5174/admin/, proxies to the api on :3000).
 
+## Fees and prepaid top-ups
+- Live invoices need a prepaid fee balance per token (D-076). A merchant hitting `402 insufficient_fee_balance` has used
+  it up: they pay the platform, then an operator records the top-up (Admin console → merchant → Prepaid fee top-ups:
+  token id, amount, reference, TOTP). Only record money that has arrived; top-ups cannot be edited or removed. A wrong
+  entry is corrected by a decision with finance, not by editing rows (append-only, DB-enforced).
+- Fee rate, fixed fee and grace: merchant page → Fees (TOTP). Changes apply to invoices created afterwards.
+- Reconciliation check `topup_journal` flags a top-up whose ledger booking is missing or wrong.
+
 ## Wrong merchant xpub registered
-New invoices derive from the active xpub immediately. The owner registers the correct xpub (Payout wallet page, needs
-TOTP); the wrong one is retired, never deleted. Invoices already issued on the wrong key keep their addresses: find them
+New invoices derive from the active xpub. The owner registers the correct xpub (Payout wallet page, needs TOTP and,
+for live, a signature from the wallet; a live replacement takes effect after 24 h, D-075); the wrong one is retired,
+never deleted. Invoices already issued on the wrong key keep their addresses: find them
 with `select i.id, i.status from invoices i join deposit_addresses d on d.id = i.deposit_address_id where d.merchant_xpub_id = '<retired id>'`
 and cancel any still `pending`. Funds already paid there are only spendable by whoever holds that key.
 
