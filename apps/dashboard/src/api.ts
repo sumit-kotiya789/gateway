@@ -65,6 +65,23 @@ export async function api<T>(method: 'GET' | 'POST' | 'DELETE', path: string, bo
   return data as T;
 }
 
+/** GET a file (CSV export) with the same session refresh as api(), then hand it to the browser as a download. */
+export async function download(path: string): Promise<void> {
+  let res = await send('GET', path);
+  if (res.status === 401 && (await refresh())) res = await send('GET', path);
+  if (!res.ok) {
+    const data = (await res.json().catch(() => null)) as ErrorBody | null;
+    throw new ApiError(res.status, data?.error?.code ?? 'error', errorMessage(data, res.status));
+  }
+  const name = /filename="([^"]+)"/.exec(res.headers.get('content-disposition') ?? '')?.[1] ?? 'export.csv';
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 export const totpHeader = (code: string) => ({ 'x-totp-code': code.trim() });
 
 // ---------------------------------------------------------------- response shapes

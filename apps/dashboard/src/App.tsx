@@ -82,7 +82,7 @@ export function App() {
   else if (page === 'xpub') body = <Xpubs livemode={livemode} canManage={role === 'owner'} totp={totp} custodyMode={me.merchant.custody_mode} />;
   else if (page === 'security') body = <Security totp={totp} onChange={loadMe} />;
   else if (page === 'team') body = <Team me={me.user} totp={totp} />;
-  else body = <Invoices livemode={livemode} canWrite={role !== 'read_only'} />;
+  else body = <Invoices livemode={livemode} canWrite={role !== 'read_only'} canExport={role !== 'developer'} />;
 
   return (
     <div className={livemode ? 'app live' : 'app test'}>

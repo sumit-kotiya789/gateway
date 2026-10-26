@@ -1,10 +1,10 @@
 import { useState } from 'react';
-import { api, type Balance, type FeeTopup, type Invoice, type Page, type Token } from './api';
+import { api, download, type Balance, type FeeTopup, type Invoice, type Page, type Token } from './api';
 import { ConfirmButton, ErrorBox, Field, StatusBadge, fmtDate, short, useAction, useLoad } from './ui';
 
 const STATUSES = ['pending', 'detected', 'confirming', 'paid', 'underpaid', 'overpaid', 'settled', 'expired', 'cancelled', 'failed', 'late_payment'];
 
-export function Invoices(props: { livemode: boolean; canWrite: boolean }) {
+export function Invoices(props: { livemode: boolean; canWrite: boolean; canExport: boolean }) {
   const [status, setStatus] = useState('');
   const [extra, setExtra] = useState<Invoice[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
@@ -39,6 +39,7 @@ export function Invoices(props: { livemode: boolean; canWrite: boolean }) {
         </div>
       )}
       <FeeTopups livemode={props.livemode} />
+      {props.canExport && <Exports livemode={props.livemode} />}
       <header className="page-head">
         <h2>Invoices</h2>
         <div className="row">
@@ -250,6 +251,32 @@ function FeeTopups(props: { livemode: boolean }) {
           </tbody>
         </table>
       </div>
+    </details>
+  );
+}
+
+/** CSV exports of invoices and payments for a date range (UTC days, at most 366). */
+function Exports(props: { livemode: boolean }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const monthAgo = new Date(Date.now() - 30 * 86_400_000).toISOString().slice(0, 10);
+  const [from, setFrom] = useState(monthAgo);
+  const [to, setTo] = useState(today);
+  const a = useAction();
+  const get = (kind: 'invoices' | 'payments') => {
+    void a.run(() => download(`/exports/${kind}.csv?livemode=${String(props.livemode)}&from=${from}&to=${to}`));
+  };
+  return (
+    <details className="card">
+      <summary>Export CSV</summary>
+      <div className="row">
+        <Field label="From"><input type="date" value={from} max={to} onChange={(e) => { setFrom(e.target.value); }} /></Field>
+        <Field label="To"><input type="date" value={to} min={from} onChange={(e) => { setTo(e.target.value); }} /></Field>
+      </div>
+      <div className="row">
+        <button className="secondary" disabled={a.busy} onClick={() => { get('invoices'); }}>Invoices</button>
+        <button className="secondary" disabled={a.busy} onClick={() => { get('payments'); }}>Payments</button>
+      </div>
+      <ErrorBox error={a.error} />
     </details>
   );
 }

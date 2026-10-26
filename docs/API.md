@@ -141,6 +141,7 @@ Statuses: `pending → detected → confirming → paid | underpaid | overpaid �
 | POST | `/v1/dashboard/webhooks/:id/deliveries/:deliveryId/retry` | session | `webhooks:manage` (finished deliveries only; fresh retry budget) | M6 |
 | GET | `/v1/dashboard/balances/` | session | `account:read` (`livemode`) | M5 |
 | GET | `/v1/dashboard/fee-topups/` | session | `account:read` (`livemode`; newest first) | M8 |
+| GET | `/v1/dashboard/exports/invoices.csv`, `/v1/dashboard/exports/payments.csv` | session | `reports:read` (`livemode`, `from`, `to` as UTC dates, default last 31 days, ≤ 366 days, ≤ 50,000 rows; audited) | M10 |
 | POST | `/admin/v1/auth/login` | none | password + TOTP | M1 |
 | POST | `/admin/v1/auth/logout` | admin session | `admin:read` | M1 |
 | GET | `/admin/v1/auth/me` | admin session | `admin:read` | M1 |

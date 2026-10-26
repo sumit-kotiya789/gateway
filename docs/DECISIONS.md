@@ -389,3 +389,9 @@ verification requires every placeholder to be set). Run `pnpm chains:verify` bef
 - Every merchant keeps an active owner: API check plus a deferred DB constraint trigger.
 - Recovery codes can be regenerated with step-up (all earlier codes stop working).
 
+## D-079 CSV exports (2026-10-26)
+Dashboard-only (`reports:read`: owner, admin, finance, read-only) invoice and payment CSVs per mode and UTC date range
+(≤ 366 days, ≤ 50,000 rows, else narrow the range). Built in one query and sent with `no-store`; every download is
+audited with its range and row count. Formula-looking cells are prefixed with `'` (OWASP CSV injection). Amounts are
+decimal token units like the API. Merchant-API exports and scheduled reports: later (M10 reports).
+

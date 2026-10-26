@@ -112,6 +112,7 @@ Status: `planned` until the mitigation's milestone lands, then the test that pro
 | Fake or mistyped signup email reaching live mode | Live API keys, xpubs, invoices, webhooks need a verified email (link token, 48 h, single use) | `email.test.ts` | M10 |
 | Removed or demoted team member keeps access | Sessions revoked on role change and removal; removed users cannot sign in, refresh or reset; access tokens expire within 10 min; management routes re-read roles from the DB | `team.test.ts` | M10 |
 | Admin escalates to owner / account left ownerless | Admins cannot grant or manage owner/admin; nobody changes their own role; last owner protected by API check and deferred DB trigger | `team.test.ts` | M10 |
+| CSV/formula injection via exported merchant text | Cells starting with = + - @ tab CR are prefixed with `'`; RFC 4180 quoting; exports audited, bounded | `csv.test.ts`, `exports.test.ts` | M10 |
 | Secrets in email at rest / in logs | Outbox payload (recipient, subject, body) envelope-encrypted, erased once sent or failed; only error codes stored; no-SMTP fallback logs subject only | `email.test.ts` | M10 |
 | CSRF / login CSRF | Double-submit token + Origin allowlist on all cookie-authenticated state changes; Origin check on signup/login | `auth.test.ts` | M1 |
 | TOTP replay | Last accepted time step persisted; codes at or below it refused | `crypto.test.ts`, `auth.test.ts`, `api-keys.test.ts` | M1 |

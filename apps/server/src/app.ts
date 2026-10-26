@@ -26,6 +26,7 @@ import { feeTopupDashboardRoutes, ledgerDashboardRoutes, ledgerRoutes } from './
 import { webhookDashboardRoutes } from './modules/webhooks/webhooks.routes.js';
 import { xpubDashboardRoutes } from './modules/xpubs/xpubs.routes.js';
 import { inviteAuthRoutes, teamDashboardRoutes } from './modules/team/team.routes.js';
+import { exportDashboardRoutes } from './modules/exports/exports.routes.js';
 import { paymentLinkRoutes, publicPayRoutes } from './modules/payment-links/payment-links.routes.js';
 import { adminRoutes } from './modules/admin/admin.routes.js';
 import { adminAuthRoutes } from './modules/auth/admin-auth.routes.js';
@@ -141,6 +142,7 @@ export function buildApp(logger: FastifyBaseLogger, deps?: Deps) {
   void app.register(ledgerDashboardRoutes(deps), { prefix: '/v1/dashboard/balances' });
   void app.register(feeTopupDashboardRoutes(deps), { prefix: '/v1/dashboard/fee-topups' });
   void app.register(teamDashboardRoutes(deps), { prefix: '/v1/dashboard/team' });
+  void app.register(exportDashboardRoutes(deps), { prefix: '/v1/dashboard/exports' });
   void app.register(inviteAuthRoutes(deps), { prefix: '/v1/dashboard/auth/invite' });
   void app.register(accountRoutes(deps), { prefix: '/v1' });
   void app.register(registryRoutes(deps), { prefix: '/v1' });
