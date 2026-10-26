@@ -19,7 +19,15 @@ let pgc: StartedPostgreSqlContainer | undefined;
 let rc: StartedRedisContainer | undefined;
 let ac: StartedTestContainer | undefined;
 
-export default async function setup(project: TestProject) {
+/**
+ * Without Docker: point TEST_PG_URL (superuser, empty database), TEST_REDIS_URL and TEST_ANVIL_URL at services you run
+ * yourself (tests that need Anvil fail without TEST_ANVIL_URL). Containers are used unless both PG and Redis are set.
+ */
+async function services() {
+  const env = process.env;
+  if (env.TEST_PG_URL && env.TEST_REDIS_URL) {
+    return { ownerUrl: env.TEST_PG_URL, redisUrl: env.TEST_REDIS_URL, anvilUrl: env.TEST_ANVIL_URL ?? 'http://127.0.0.1:1' };
+  }
   [pgc, rc, ac] = await Promise.all([
     new PostgreSqlContainer('postgres:17-alpine').start(),
     new RedisContainer('redis:7-alpine').start(),
@@ -31,7 +39,15 @@ export default async function setup(project: TestProject) {
       .withWaitStrategy(Wait.forLogMessage(/Listening on/))
       .start(),
   ]);
-  const ownerUrl = pgc.getConnectionUri();
+  return {
+    ownerUrl: pgc.getConnectionUri(),
+    redisUrl: rc.getConnectionUrl(),
+    anvilUrl: `http://${ac.getHost()}:${String(ac.getMappedPort(8545))}`,
+  };
+}
+
+export default async function setup(project: TestProject) {
+  const { ownerUrl, redisUrl, anvilUrl } = await services();
   await runMigrations(ownerUrl, resolve(import.meta.dirname, '../../db/migrations'));
 
   // App connects as a non-owner LOGIN user in gw_app, exactly like production.
@@ -45,8 +61,8 @@ export default async function setup(project: TestProject) {
 
   project.provide('pgOwnerUrl', ownerUrl);
   project.provide('pgAppUrl', appUrl.toString());
-  project.provide('redisUrl', rc.getConnectionUrl());
-  project.provide('anvilUrl', `http://${ac.getHost()}:${String(ac.getMappedPort(8545))}`);
+  project.provide('redisUrl', redisUrl);
+  project.provide('anvilUrl', anvilUrl);
 
   return async () => {
     await Promise.all([pgc?.stop(), rc?.stop(), ac?.stop()]);

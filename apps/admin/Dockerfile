@@ -12,7 +12,7 @@ COPY apps/dashboard/src apps/dashboard/src
 RUN pnpm --filter @gw/admin build
 
 # Unprivileged image: runs as uid 101 on :8080; pid and temp files live in /tmp (tmpfs in compose).
-FROM nginxinc/nginx-unprivileged:1.30.4-alpine
+FROM nginxinc/nginx-unprivileged:1.30.6-alpine
 # Pick up Alpine security fixes released after the base image was built (trivy gate).
 USER root
 RUN apk upgrade --no-cache
