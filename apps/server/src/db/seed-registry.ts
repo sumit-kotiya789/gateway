@@ -48,7 +48,9 @@ export function registrySeed(env: Record<string, string | undefined>): { chains:
       reorgDepth: 64,
       finality: 'tag',
       testnet: true,
-      enabled: true,
+      // Nexis is the test network (D-074). Re-seeding never flips `enabled`, so existing DBs disable it via the admin
+      // kill switch.
+      enabled: false,
     },
     {
       // Nexis Chain (owner-designated test chain, D-074). A public chain, but registered as `testnet` so only test keys

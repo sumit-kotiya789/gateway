@@ -2,11 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { registrySeed } from '../../src/db/seed-registry.js';
 
 describe('registry seed data', () => {
-  it('base seed: BSC mainnet (disabled) + testnet + Nexis, mainnet USDT + Nexis mock USDT', () => {
+  it('base seed: BSC mainnet + testnet (both disabled) + Nexis, mainnet USDT + Nexis mock USDT', () => {
     const s = registrySeed({});
     expect(s.chains.map((c) => [c.id, c.enabled])).toEqual([
       ['bsc', false],
-      ['bsc-testnet', true],
+      ['bsc-testnet', false],
       ['nexis', true],
     ]);
     expect(s.tokens.map((t) => t.id)).toEqual(['bsc:usdt', 'nexis:usdt']);

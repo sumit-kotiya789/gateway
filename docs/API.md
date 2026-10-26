@@ -77,7 +77,7 @@ Authorization: Bearer sk_test_…
 Idempotency-Key: order-1001
 Content-Type: application/json
 
-{ "amount": "25.00", "token": "bsc-testnet:usdt", "external_order_id": "1001",
+{ "amount": "25.00", "token": "nexis:usdt", "external_order_id": "1001",
   "expires_in": 1800, "success_url": "https://shop.example/thanks", "metadata": { "cart": "42" } }
 ```
 
@@ -85,7 +85,7 @@ Response `201` (abridged):
 
 ```json
 { "id": "01a1…", "object": "invoice", "status": "pending", "livemode": false, "custody_mode": "non_custodial_xpub",
-  "amount": "25", "amount_received": "0", "token": "bsc-testnet:usdt", "symbol": "USDT", "chain": "bsc-testnet",
+  "amount": "25", "amount_received": "0", "token": "nexis:usdt", "symbol": "USDT", "chain": "nexis",
   "deposit_address": "0x…", "payment_uri": "ethereum:0xToken@97/transfer?address=0x…&uint256=25000000000000000000",
   "checkout_url": "https://pay.example/checkout/01a1…", "expires_at": "…" }
 ```

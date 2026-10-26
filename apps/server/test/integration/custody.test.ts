@@ -304,8 +304,9 @@ describe('GET /v1/chains and /v1/tokens', () => {
 
     const ch = (await app.inject({ url: '/v1/chains', headers: auth })).json<{ data: { id: string; testnet: boolean }[] }>();
     // Other test files register extra testnet chains in the shared DB: assert the rule, not an exact list.
-    expect(ch.data.map((c) => c.id)).toEqual(expect.arrayContaining(['bsc-testnet', 'evm-local']));
+    expect(ch.data.map((c) => c.id)).toEqual(expect.arrayContaining(['nexis', 'evm-local']));
     expect(ch.data.map((c) => c.id)).not.toContain('bsc');
+    expect(ch.data.map((c) => c.id)).not.toContain('bsc-testnet'); // seeded disabled: Nexis is the test network
     expect(ch.data.every((c) => c.testnet)).toBe(true);
 
     const tk = (await app.inject({ url: '/v1/tokens', headers: auth })).json<{ data: { id: string; min_amount: string }[] }>();

@@ -18,7 +18,7 @@ For merchants and developers integrating the gateway. Everything below runs in *
      -H "Authorization: Bearer sk_test_..." \
      -H "Idempotency-Key: order-1001" \
      -H "Content-Type: application/json" \
-     -d '{"amount":"25.00","token":"bsc-testnet:usdt","external_order_id":"1001","success_url":"https://shop.example/thanks"}'
+     -d '{"amount":"25.00","token":"nexis:usdt","external_order_id":"1001","success_url":"https://shop.example/thanks"}'
    ```
 
 5. **Send the customer to `checkout_url`** from the response (redirect, or link button). The hosted page shows the
@@ -45,7 +45,7 @@ Each invoice status change is POSTed as JSON to every endpoint of that mode (tes
 
 ```json
 { "id": "0b1c…", "object": "event", "type": "invoice.paid", "livemode": false, "created_at": "2026-10-23T10:00:00.000Z",
-  "data": { "invoice_id": "0192…", "status": "paid", "previous_status": "confirming", "token": "bsc-testnet:usdt",
+  "data": { "invoice_id": "0192…", "status": "paid", "previous_status": "confirming", "token": "nexis:usdt",
             "amount_expected": "10", "amount_received": "10", "fee_amount": null, "external_order_id": "order-123",
             "reason": "confirmed payments cover the amount" } }
 ```

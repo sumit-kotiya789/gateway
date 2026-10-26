@@ -315,3 +315,5 @@ USDT. Seeded as `nexis` with `testnet: true` so only test API keys see it, and `
 or hooks). Finality tag and block time are not verified, so `finality: 'confirmations'`, 12 confirmations, reorg depth
 64, same USDT tiers and 0.01 dust threshold. RPC list is the public keyless endpoint only (no `${ENV}` placeholder:
 verification requires every placeholder to be set). Run `pnpm chains:verify` before relying on it.
+`bsc-testnet` is seeded **disabled** from now on: Nexis is the only test network. Existing databases keep their
+`enabled` value (re-seeding never changes it), so an operator disables `bsc-testnet` with the admin kill switch.
