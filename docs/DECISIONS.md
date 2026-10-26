@@ -313,4 +313,5 @@ Owner chose Nexis Chain (EVM chain id 5567, native NXC, RPC `https://rpc.nexisch
 USDT. Seeded as `nexis` with `testnet: true` so only test API keys see it, and `nexis:usdt` =
 `0x3FF21b3856Cf144747C9e12262aab690820515f1` ("Nexis Usdt", 18 decimals, plain BEP-20: no fee-on-transfer, rebasing
 or hooks). Finality tag and block time are not verified, so `finality: 'confirmations'`, 12 confirmations, reorg depth
-64, same USDT tiers and 0.01 dust threshold. Run `pnpm chains:verify` before relying on it.
+64, same USDT tiers and 0.01 dust threshold. RPC list is the public keyless endpoint only (no `${ENV}` placeholder:
+verification requires every placeholder to be set). Run `pnpm chains:verify` before relying on it.

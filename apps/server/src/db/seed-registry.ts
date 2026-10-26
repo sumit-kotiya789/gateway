@@ -57,7 +57,8 @@ export function registrySeed(env: Record<string, string | undefined>): { chains:
       family: 'evm',
       name: 'Nexis Chain',
       evmChainId: 5567,
-      rpcUrls: ['${NEXIS_RPC_URL}', 'https://rpc.nexischain.com'],
+      // Public keyless RPC only: chains:verify (and the watcher) require every ${ENV} placeholder to be set.
+      rpcUrls: ['https://rpc.nexischain.com'],
       explorerUrl: 'https://nexischain.com/explorer',
       nativeSymbol: 'NXC',
       nativeDecimals: 18,
