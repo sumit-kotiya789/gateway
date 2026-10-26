@@ -405,3 +405,10 @@ invoice. The widget takes only an invoice id created by the merchant's backend: 
 confirmation stays server-side (webhooks); `onPaid` is a UI hint. Publishable-key invoice creation is not needed for
 this and stays unused.
 
+## D-081 Node SDK (2026-10-26)
+`packages/sdk-node`: zero-dependency ESM client on global `fetch` (Node >= 18). Creating calls always send an
+Idempotency-Key (generated unless given), so the SDK retries network errors, 429 and 5xx (twice, backoff, honours
+`retry-after`) without risking duplicates; GETs retry too. `constructEvent` verifies `gateway-signature` (any `v1`
+of any given secret, 5-minute tolerance, constant-time) and is tested against the server's own signer. Refuses
+non-secret keys. Private workspace package for now; publishing to npm is a release decision.
+

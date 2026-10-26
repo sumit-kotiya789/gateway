@@ -162,6 +162,10 @@ func VerifyGatewayWebhook(rawBody []byte, header, secret string, tolerance time.
 `POST /v1/payment-links` with `amount` and `token` returns a `url` you can share. Each customer who clicks
 "Continue to payment" gets their own invoice and deposit address.
 
+## Node SDK
+`packages/sdk-node` (`@gw/sdk-node`): typed client with automatic idempotency keys and retries, and
+`constructEvent(rawBody, signatureHeader, secret)` for webhooks. See its README.
+
 ## Checkout widget (no redirect)
 Open the hosted checkout in a dialog on your own page:
 
@@ -189,4 +193,4 @@ Each invoice uses the next address of your xpub (`0/<index>`, shown in the dashb
 unused addresses; set your wallet's gap limit to the value the dashboard shows (Payout wallet → Derived addresses).
 
 ## Still to come
-Node SDK and WooCommerce plugin (M10); go-live checklist for merchants before launch.
+WooCommerce plugin (M10); go-live checklist for merchants before launch.
