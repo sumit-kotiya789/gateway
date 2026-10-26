@@ -146,24 +146,26 @@ export function checkoutRoutes(deps: Deps): FastifyPluginAsyncZod {
         body: (nonce) => html`
 <div class="card">
   ${r.inv.livemode ? '' : html`<div class="test">${S.testMode}</div>`}
-  <h1>${r.merchantName}</h1>
-  <div class="muted">${S.sendExactly}</div>
+  <header class="merchant"><span class="avatar" aria-hidden="true">${(Array.from(r.merchantName)[0] ?? '').toUpperCase()}</span><div><h1>${r.merchantName}</h1><div class="muted">${S.pay}</div></div></header>
+  <div class="label">${S.sendExactly}</div>
   <div class="amount">${v.amount} ${r.token.symbol}</div>
-  <div class="row"><span class="muted">${S.network}</span><span>${r.chain.name}</span></div>
-  <div class="row"><span class="muted">${S.received}</span><span id="received">${v.amount_received}</span></div>
-  <div class="row"><span class="muted">${S.remaining}</span><span id="remaining">${v.remaining}</span></div>
+  <div class="facts">
+    <div class="row"><span class="muted">${S.network}</span><span>${r.chain.name}</span></div>
+    <div class="row"><span class="muted">${S.received}</span><span id="received">${v.amount_received}</span></div>
+    <div class="row"><span class="muted">${S.remaining}</span><span id="remaining">${v.remaining}</span></div>
+  </div>
   <div class="warn">${S.warning(r.token.symbol, r.chain.name)}</div>
   <div id="payarea">
     <div class="qr">${qrSvg}</div>
-    <div class="muted">${S.toAddress}</div>
+    <div class="label">${S.toAddress}</div>
     <div class="addr"><code id="addr">${r.inv.depositAddress}</code><button id="copy" type="button">${S.copy}</button></div>
     <div class="row"><span class="muted">${S.expiresIn}</span><span id="timer"></span></div>
     <button id="wallet" class="primary" type="button">${S.payWithWallet}</button>
-    <div id="walletmsg" class="muted"></div>
+    <div id="walletmsg"></div>
   </div>
   <div id="status" class="status"></div>
   <a id="ret" class="btn primary" target="${target}" hidden>${S.returnToMerchant}</a>
-  ${v.cancel_url ? html`<p><a href="${v.cancel_url}" target="${target}">${S.cancel}</a></p>` : ''}
+  ${v.cancel_url ? html`<p class="cancel"><a href="${v.cancel_url}" target="${target}">${S.cancel}</a></p>` : ''}
 </div>
 <script type="application/json" id="cfg">${raw(jsonForHtml(cfg))}</script>
 <script nonce="${nonce}">${raw(CLIENT_JS)}</script>`,

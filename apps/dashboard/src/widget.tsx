@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from './api';
-import { ErrorBox, Field, useAction, useLoad } from './ui';
+import { CopyButton, ErrorBox, Field, Submit, toast, useAction, useLoad } from './ui';
 
 /** Checkout widget: which sites may embed the hosted checkout, and the snippet to do it. */
 export function Widget(props: { canManage: boolean; apiOrigin: string }) {
@@ -31,6 +31,7 @@ export function Widget(props: { canManage: boolean; apiOrigin: string }) {
           void a.run(async () => {
             const origins = text.split(/\s+/).filter(Boolean);
             await api('PUT', '/settings/widget-origins', { widget_origins: origins });
+            toast.success('Allowed sites saved');
             settings.reload();
           });
         }}
@@ -39,9 +40,12 @@ export function Widget(props: { canManage: boolean; apiOrigin: string }) {
           <textarea rows={4} value={text} onChange={(e) => { setText(e.target.value); }} disabled={!props.canManage} spellCheck={false} />
         </Field>
         <ErrorBox error={a.error} />
-        {props.canManage && <button disabled={a.busy}>Save</button>}
+        {props.canManage && <Submit busy={a.busy}>Save</Submit>}
       </form>
-      <h3>Snippet</h3>
+      <div className="page-head">
+        <h3>Snippet</h3>
+        <CopyButton value={snippet} label="Copy snippet" />
+      </div>
       <pre className="challenge">{snippet}</pre>
       <p className="muted">The widget reports status to your page for display only. Confirm payment from a webhook or GET /v1/invoices/:id before fulfilling.</p>
     </section>

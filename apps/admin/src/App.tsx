@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ErrorBox, Field, TotpInput, errorText, useAction } from '../../dashboard/src/ui';
+import { BrandMark, ErrorBox, Field, Icon, Submit, Toaster, TotpInput, errorText, useAction, type IconName } from '../../dashboard/src/ui';
 import { ApiError, api, setUnauthorizedHandler, type Admin } from './api';
 import { Audit, InvoiceDetail, Invoices, MerchantDetail, Merchants, Registry } from './pages';
 
@@ -23,27 +23,37 @@ function Login(props: { onDone: (a: Admin) => void }) {
   const [code, setCode] = useState('');
   const a = useAction();
   return (
-    <form
-      className="auth card"
-      onSubmit={(e) => {
-        e.preventDefault();
-        void a.run(async () => {
-          const r = await api<{ admin: Admin }>('POST', '/auth/login', { email, password, code });
-          props.onDone(r.admin);
-        });
-      }}
-    >
-      <h1>Gateway admin</h1>
-      <Field label="Email">
-        <input type="email" value={email} onChange={(e) => { setEmail(e.target.value); }} autoComplete="username" autoFocus required />
-      </Field>
-      <Field label="Password">
-        <input type="password" value={password} onChange={(e) => { setPassword(e.target.value); }} autoComplete="current-password" required />
-      </Field>
-      <TotpInput value={code} onChange={setCode} />
-      <ErrorBox error={a.error} />
-      <button disabled={a.busy}>Sign in</button>
-    </form>
+    <div className="auth-solo">
+      <form
+        className="auth card glow"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void a.run(async () => {
+            const r = await api<{ admin: Admin }>('POST', '/auth/login', { email, password, code });
+            props.onDone(r.admin);
+          });
+        }}
+      >
+        <div className="brand">
+          <BrandMark />
+          <div>
+            Gateway
+            <small>Admin console</small>
+          </div>
+        </div>
+        <h1>Operator sign in</h1>
+        <p className="lede">Every action here is recorded in the audit log.</p>
+        <Field label="Email">
+          <input type="email" value={email} onChange={(e) => { setEmail(e.target.value); }} autoComplete="username" placeholder="you@company.com" autoFocus required />
+        </Field>
+        <Field label="Password">
+          <input type="password" value={password} onChange={(e) => { setPassword(e.target.value); }} autoComplete="current-password" placeholder="••••••••••••" required />
+        </Field>
+        <TotpInput value={code} onChange={setCode} />
+        <ErrorBox error={a.error} />
+        <Submit busy={a.busy}>Sign in</Submit>
+      </form>
+    </div>
   );
 }
 
@@ -62,18 +72,18 @@ export function App() {
     });
   }, []);
 
-  if (error) return <ErrorBox error={error} />;
-  if (admin === undefined) return <p className="muted center">Loading…</p>;
+  if (error) return <div className="auth-solo"><ErrorBox error={error} /></div>;
+  if (admin === undefined) return <div className="boot"><BrandMark /></div>;
   if (admin === null) return <Login onDone={setAdmin} />;
 
   // UI hints only; the server enforces every permission (packages/core/src/rbac.ts).
   const manage = admin.role !== 'auditor';
-  const nav = [
-    ['#/merchants', 'Merchants', true],
-    ['#/invoices', 'Invoices', true],
-    ['#/registry', 'Kill switches', true],
-    ['#/audit', 'Audit log', admin.role !== 'operator'],
-  ] as const;
+  const nav: { href: string; label: string; icon: IconName; show: boolean }[] = [
+    { href: '#/merchants', label: 'Merchants', icon: 'store', show: true },
+    { href: '#/invoices', label: 'Invoices', icon: 'invoice', show: true },
+    { href: '#/registry', label: 'Kill switches', icon: 'power', show: true },
+    { href: '#/audit', label: 'Audit log', icon: 'list', show: admin.role !== 'operator' },
+  ];
   const [path = '', query = ''] = hash.slice(1).split('?');
   const [, page = 'merchants', id] = path.split('/');
   const params = new URLSearchParams(query);
@@ -86,30 +96,63 @@ export function App() {
   else if (page === 'audit') body = <Audit merchantId={params.get('merchant') ?? undefined} />;
   else body = <Merchants />;
 
+  const current = nav.find((n) => n.href === `#/${page}`) ?? nav[0];
+
   return (
     <div className="app live">
-      <header className="topbar">
-        <strong className="brand">Gateway admin</strong>
-        <span className="muted">{admin.role}</span>
-        <button
-          className="secondary"
-          onClick={() => {
-            void api('POST', '/auth/logout').finally(() => {
-              setAdmin(null);
-            });
-          }}
-        >
-          Sign out
-        </button>
-      </header>
-      <div className="layout">
-        <nav>
-          {nav.filter(([, , show]) => show).map(([href, label]) => (
-            <a key={href} href={href} className={`#/${page}` === href ? 'active' : ''}>{label}</a>
-          ))}
-        </nav>
+      <aside className="sidebar">
+        <div className="brand">
+          <BrandMark />
+          <div>
+            Gateway
+            <small>Admin console</small>
+          </div>
+        </div>
+        <div className="nav-groups">
+          <div className="nav-group">
+            <div className="nav-label">Operations</div>
+            <nav>
+              {nav.filter((n) => n.show).map((n) => (
+                <a key={n.href} href={n.href} className={current?.href === n.href ? 'active' : ''} aria-current={current?.href === n.href ? 'page' : undefined}>
+                  <Icon name={n.icon} />
+                  {n.label}
+                </a>
+              ))}
+            </nav>
+          </div>
+        </div>
+        <div className="spacer" />
+        <div className="user-card">
+          <span className="avatar" aria-hidden="true">{admin.role.slice(0, 1).toUpperCase()}</span>
+          <div className="who">
+            <div>Platform staff</div>
+            <small>{admin.role}</small>
+          </div>
+          <button
+            type="button"
+            className="ghost icon-only"
+            aria-label="Sign out"
+            title="Sign out"
+            onClick={() => {
+              void api('POST', '/auth/logout').finally(() => {
+                setAdmin(null);
+              });
+            }}
+          >
+            <Icon name="logout" />
+          </button>
+        </div>
+      </aside>
+      <div className="shell-main">
+        <header className="topbar">
+          <div className="title">
+            <span className="workspace">{current?.label}</span>
+            <span className="mode-pill live">{admin.role}</span>
+          </div>
+        </header>
         <main key={hash}>{body}</main>
       </div>
+      <Toaster />
     </div>
   );
 }

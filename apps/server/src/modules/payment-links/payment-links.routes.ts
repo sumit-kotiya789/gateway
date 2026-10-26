@@ -201,8 +201,9 @@ export function publicPayRoutes(deps: Deps): FastifyPluginAsyncZod {
         title: S.pay,
         body: () => html`<div class="card">
   ${r.link.livemode ? '' : html`<div class="test">${S.testMode}</div>`}
+  <div class="label">${S.pay}</div>
   <div class="amount">${fromMinorUnits(r.link.amount, r.token.decimals)} ${r.token.symbol}</div>
-  ${r.link.description ? html`<p class="muted">${r.link.description}</p>` : ''}
+  ${r.link.description ? html`<p class="desc">${r.link.description}</p>` : ''}
   <form method="post" action="/pay/${r.link.id}"><button class="primary" type="submit">${S.continue}</button></form>
 </div>`,
       });

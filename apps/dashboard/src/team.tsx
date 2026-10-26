@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { api, totpHeader, type Role } from './api';
-import { ConfirmButton, ErrorBox, Field, TotpInput, fmtDate, useAction, useLoad } from './ui';
+import { Alert, ConfirmButton, ErrorBox, Field, Skeleton, Submit, TotpInput, fmtDate, toast, useAction, useLoad } from './ui';
 
 interface Member {
   id: string;
@@ -29,10 +29,11 @@ export function Team(props: { me: { id: string; role: Role }; totp: boolean }) {
   const [role, setRole] = useState<Role>('developer');
   const [code, setCode] = useState('');
   const a = useAction();
-  const run = (fn: () => Promise<unknown>) =>
+  const run = (fn: () => Promise<unknown>, done: string) =>
     void a.run(async () => {
       await fn();
       setCode('');
+      toast.success(done);
       team.reload();
     });
 
@@ -41,22 +42,40 @@ export function Team(props: { me: { id: string; role: Role }; totp: boolean }) {
       <header className="page-head"><h2>Team</h2></header>
       <ErrorBox error={team.error} />
       <ErrorBox error={a.error} />
-      {canManage && <TotpInput value={code} onChange={setCode} />}
-      {canManage && !props.totp && <p className="notice">Managing the team needs two-factor authentication. <a href="#/security">Enable it in Security.</a></p>}
+      {canManage && !props.totp && <Alert tone="warning">Managing the team needs two-factor authentication. <a href="#/security">Enable it in Security.</a></Alert>}
+      {canManage && props.totp && (
+        <div className="card stepup">
+          <div className="stepup-text">
+            <strong>Confirm changes with your authenticator</strong>
+            <span className="muted">Invites, role changes and removals each need a fresh code.</span>
+          </div>
+          <TotpInput value={code} onChange={setCode} />
+        </div>
+      )}
+      {!team.data && !team.error && <Skeleton />}
       <div className="table-wrap">
         <table>
-          <thead><tr><th>Email</th><th>Role</th><th>2FA</th><th>Since</th><th></th></tr></thead>
+          <thead><tr><th>Member</th><th>Role</th><th>2FA</th><th>Since</th><th></th></tr></thead>
           <tbody>
             {(team.data?.members ?? []).map((m) => (
               <tr key={m.id}>
-                <td>{m.email}{m.email_verified ? '' : <small className="muted"> (unverified)</small>}</td>
+                <td>
+                  <span className="row">
+                    <span className="avatar" aria-hidden="true">{m.email.slice(0, 1).toUpperCase()}</span>
+                    <span>
+                      {m.email}
+                      {m.id === props.me.id && <small className="muted"> (you)</small>}
+                      {!m.email_verified && <small className="muted"> · unverified</small>}
+                    </span>
+                  </span>
+                </td>
                 <td>
                   {canManage && m.id !== props.me.id && manageable(props.me.role, m.role) ? (
                     <select
                       value={m.role}
                       aria-label={`Role of ${m.email}`}
                       disabled={a.busy}
-                      onChange={(e) => { run(() => api('POST', `/team/members/${m.id}/role`, { role: e.target.value }, totpHeader(code))); }}
+                      onChange={(e) => { run(() => api('POST', `/team/members/${m.id}/role`, { role: e.target.value }, totpHeader(code)), `Role changed to ${label(e.target.value)}`); }}
                     >
                       {ROLES.filter((r) => manageable(props.me.role, r)).map((r) => <option key={r} value={r}>{label(r)}</option>)}
                     </select>
@@ -64,11 +83,17 @@ export function Team(props: { me: { id: string; role: Role }; totp: boolean }) {
                     label(m.role)
                   )}
                 </td>
-                <td>{m.totp_enabled ? 'on' : 'off'}</td>
+                <td>{m.totp_enabled ? <span className="badge s-ok">on</span> : <span className="badge s-low">off</span>}</td>
                 <td>{fmtDate(m.created_at)}</td>
                 <td>
                   {canManage && m.id !== props.me.id && manageable(props.me.role, m.role) && (
-                    <ConfirmButton label="Remove" confirm={`Remove ${m.email}?`} disabled={a.busy} onConfirm={() => { run(() => api('DELETE', `/team/members/${m.id}`, undefined, totpHeader(code))); }} />
+                    <ConfirmButton
+                      label="Remove"
+                      confirm={`Remove ${m.email}?`}
+                      message="They are signed out everywhere and cannot sign in again. API keys they created keep working until you revoke them."
+                      disabled={a.busy}
+                      onConfirm={() => { run(() => api('DELETE', `/team/members/${m.id}`, undefined, totpHeader(code)), 'Member removed'); }}
+                    />
                   )}
                 </td>
               </tr>
@@ -76,7 +101,7 @@ export function Team(props: { me: { id: string; role: Role }; totp: boolean }) {
           </tbody>
         </table>
       </div>
-      {canManage && <p className="muted">Changing a role signs the member out; the new role applies when they sign in again. Enter a fresh code above for each change.</p>}
+      {canManage && <p className="muted">Changing a role signs the member out; the new role applies when they sign in again.</p>}
 
       {(team.data?.invites ?? []).length > 0 && (
         <>
@@ -86,7 +111,7 @@ export function Team(props: { me: { id: string; role: Role }; totp: boolean }) {
               <li key={i.id}>
                 {i.email} · {label(i.role)} · expires {fmtDate(i.expires_at)}{' '}
                 {canManage && manageable(props.me.role, i.role) && (
-                  <button className="link" disabled={a.busy} onClick={() => { run(() => api('DELETE', `/team/invites/${i.id}`)); }}>Revoke</button>
+                  <button className="link" disabled={a.busy} onClick={() => { run(() => api('DELETE', `/team/invites/${i.id}`), 'Invitation revoked'); }}>Revoke</button>
                 )}
               </li>
             ))}
@@ -102,7 +127,7 @@ export function Team(props: { me: { id: string; role: Role }; totp: boolean }) {
             run(async () => {
               await api('POST', '/team/invites', { email, role }, totpHeader(code));
               setEmail('');
-            });
+            }, `Invitation sent to ${email}`);
           }}
         >
           <h3>Invite a member</h3>
@@ -114,7 +139,7 @@ export function Team(props: { me: { id: string; role: Role }; totp: boolean }) {
               </select>
             </Field>
           </div>
-          <button disabled={a.busy || !props.totp}>Send invitation</button>
+          <Submit busy={a.busy} disabled={!props.totp}>Send invitation</Submit>
         </form>
       )}
     </section>
@@ -126,6 +151,7 @@ export function AcceptInvite(props: { token: string; onDone: () => void }) {
   const [password, setPassword] = useState('');
   const a = useAction();
   return (
+    <div className="auth-solo">
     <form
       className="auth card"
       onSubmit={(e) => {
@@ -146,9 +172,10 @@ export function AcceptInvite(props: { token: string; onDone: () => void }) {
             <input type="password" value={password} onChange={(e) => { setPassword(e.target.value); }} autoComplete="new-password" minLength={12} maxLength={128} autoFocus required />
           </Field>
           <ErrorBox error={a.error} />
-          <button disabled={a.busy}>Accept invitation</button>
+          <Submit busy={a.busy}>Accept invitation</Submit>
         </>
       )}
     </form>
+    </div>
   );
 }

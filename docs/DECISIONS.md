@@ -412,3 +412,12 @@ Idempotency-Key (generated unless given), so the SDK retries network errors, 429
 of any given secret, 5-minute tolerance, constant-time) and is tested against the server's own signer. Refuses
 non-secret keys. Private workspace package for now; publishing to npm is a release decision.
 
+
+## D-082 UI design system: dark theme, self-hosted font, no inline styles (2026-10-26)
+Dashboard, admin console and hosted checkout share one look: near-black surfaces, neon-green accent, pill buttons
+(tokens in `apps/dashboard/src/styles.css`). Feedback goes through the UI kit (`ui.tsx`): `Alert` for inline state,
+toasts for completed actions, `Modal` for confirmations (destructive actions and every audited admin change, which
+asks for its reason there). Poppins is bundled from `@fontsource/poppins` and served by our nginx, so the SPA CSP
+gains only `font-src 'self'`; no third-party font host. Components never set `style` attributes (`style-src 'self'`
+stays without `'unsafe-inline'`). The hosted checkout keeps its per-response nonce CSP and no font downloads: it uses
+the same palette with a system font stack.

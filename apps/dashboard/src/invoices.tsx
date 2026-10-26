@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { api, download, type Balance, type FeeTopup, type Invoice, type Page, type Token } from './api';
-import { ConfirmButton, ErrorBox, Field, StatusBadge, fmtDate, short, useAction, useLoad } from './ui';
+import { ConfirmButton, CopyField, EmptyState, ErrorBox, Field, Icon, Skeleton, Stat, StatusBadge, Submit, fmtDate, short, toast, useAction, useLoad } from './ui';
 
 const STATUSES = ['pending', 'detected', 'confirming', 'paid', 'underpaid', 'overpaid', 'settled', 'expired', 'cancelled', 'failed', 'late_payment'];
 
@@ -9,6 +9,7 @@ export function Invoices(props: { livemode: boolean; canWrite: boolean; canExpor
   const [extra, setExtra] = useState<Invoice[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const qs = `livemode=${String(props.livemode)}${status ? `&status=${status}` : ''}`;
   const page = useLoad(async () => {
     const p = await api<Page<Invoice>>('GET', `/invoices/?${qs}`);
@@ -23,23 +24,25 @@ export function Invoices(props: { livemode: boolean; canWrite: boolean; canExpor
   return (
     <section>
       {(balances.data?.data ?? []).length > 0 && (
-        <div className="row balances">
+        <div className="stats">
           {(balances.data?.data ?? []).map((b) => (
-            <div key={b.token} className="card">
-              <small className="muted">Received · {b.token}</small>
-              <strong className="num">{b.received} {b.symbol}</strong>
-              <small className="muted">Platform fees charged: {b.fees_charged} {b.symbol}</small>
-              <small className={b.fee_status === 'blocked' || b.fee_status === 'low' ? 'warn-text' : 'muted'}>
-                Prepaid fees: {b.prepaid_fees} {b.symbol}
-                {b.fee_status === 'blocked' && ' · used up: top up to create live invoices'}
-                {b.fee_status === 'low' && ' · running low'}
-              </small>
-            </div>
+            <Stat
+              key={b.token}
+              label={`Received · ${b.token}`}
+              value={b.received}
+              unit={b.symbol}
+              icon="trend"
+              {...(b.fee_status === 'blocked' ? { tone: 'bad' as const } : b.fee_status === 'low' ? { tone: 'warn' as const } : {})}
+            >
+              <span>Fees {b.fees_charged}</span>
+              <span>·</span>
+              <span>Prepaid {b.prepaid_fees}</span>
+              {b.fee_status !== 'not_enforced' && b.fee_status !== 'ok' && <span className={`badge s-${b.fee_status}`}>{b.fee_status === 'blocked' ? 'top up needed' : 'running low'}</span>}
+            </Stat>
           ))}
         </div>
       )}
       <FeeTopups livemode={props.livemode} />
-      {props.canExport && <Exports livemode={props.livemode} />}
       <header className="page-head">
         <h2>Invoices</h2>
         <div className="row">
@@ -49,9 +52,20 @@ export function Invoices(props: { livemode: boolean; canWrite: boolean; canExpor
               <option key={s} value={s}>{s.replace('_', ' ')}</option>
             ))}
           </select>
-          {props.canWrite && !creating && <button onClick={() => { setCreating(true); }}>New invoice</button>}
+          {props.canExport && (
+            <button className="secondary" aria-expanded={exporting} onClick={() => { setExporting(!exporting); }}>
+              <Icon name="download" size={16} /> Export
+            </button>
+          )}
+          {props.canWrite && !creating && (
+            <button onClick={() => { setCreating(true); }}>
+              <Icon name="plus" size={16} />
+              New invoice
+            </button>
+          )}
         </div>
       </header>
+      {exporting && <Exports livemode={props.livemode} />}
       {creating && (
         <NewInvoice
           livemode={props.livemode}
@@ -60,7 +74,12 @@ export function Invoices(props: { livemode: boolean; canWrite: boolean; canExpor
         />
       )}
       <ErrorBox error={page.error} />
-      {page.data && rows.length === 0 && <p className="muted">No invoices yet.</p>}
+      {!page.data && !page.error && <Skeleton />}
+      {page.data && rows.length === 0 && (
+        <EmptyState icon="invoice" title={status ? `No ${status.replace('_', ' ')} invoices` : 'No invoices yet'}>
+          <p>Create one here, share a payment link, or call <code>POST /v1/invoices</code> from your backend.</p>
+        </EmptyState>
+      )}
       {rows.length > 0 && (
         <div className="table-wrap">
           <table>
@@ -123,6 +142,7 @@ function NewInvoice(props: { livemode: boolean; onCancel: () => void; onCreated:
             ...(form.description.trim() ? { description: form.description.trim() } : {}),
             ...(form.external_order_id.trim() ? { external_order_id: form.external_order_id.trim() } : {}),
           });
+          toast.success('Invoice created', `${inv.amount} ${inv.symbol} · share the checkout link with your customer.`);
           props.onCreated(inv);
         });
       }}
@@ -153,7 +173,7 @@ function NewInvoice(props: { livemode: boolean; onCancel: () => void; onCreated:
       </Field>
       <ErrorBox error={a.error} />
       <div className="row">
-        <button disabled={a.busy || !token}>Create invoice</button>
+        <Submit busy={a.busy} disabled={!token}>Create invoice</Submit>
         <button type="button" className="secondary" onClick={props.onCancel}>Cancel</button>
       </div>
     </form>
@@ -166,7 +186,7 @@ export function InvoiceDetail(props: { id: string; canWrite: boolean }) {
   const i = inv.data;
   return (
     <section>
-      <p><a href="#/invoices">← Invoices</a></p>
+      <a className="back" href="#/invoices"><Icon name="back" size={16} /> All invoices</a>
       <ErrorBox error={inv.error} />
       {i && (
         <>
@@ -177,18 +197,23 @@ export function InvoiceDetail(props: { id: string; canWrite: boolean }) {
                 label="Cancel invoice"
                 confirm="Confirm cancel"
                 disabled={a.busy}
-                onConfirm={() => { void a.run(async () => { await api('POST', `/invoices/${i.id}/cancel`); inv.reload(); }); }}
+                message="The customer can no longer pay it. A payment that still arrives is recorded as a late payment."
+                onConfirm={() => { void a.run(async () => { await api('POST', `/invoices/${i.id}/cancel`); toast.success('Invoice cancelled'); inv.reload(); }); }}
               />
             )}
           </header>
           <ErrorBox error={a.error} />
           {!i.livemode && <p className="muted">Test invoice: pay it with testnet tokens only.</p>}
-          <dl className="details">
-            <dt>Invoice id</dt><dd><code>{i.id}</code></dd>
+          <dl className="details card">
+            <dt>Invoice id</dt><dd><CopyField value={i.id} /></dd>
             <dt>Received</dt><dd>{i.amount_received} {i.symbol}</dd>
             <dt>Network</dt><dd>{i.network}</dd>
-            <dt>Deposit address</dt><dd><code>{i.deposit_address}</code></dd>
-            <dt>Checkout</dt><dd><a href={i.checkout_url} target="_blank" rel="noopener noreferrer">{i.checkout_url}</a></dd>
+            <dt>Deposit address</dt><dd><CopyField value={i.deposit_address} /></dd>
+            <dt>Checkout</dt>
+            <dd className="row">
+              <a href={i.checkout_url} target="_blank" rel="noopener noreferrer">Open hosted checkout <Icon name="external" size={14} /></a>
+              <CopyField value={i.checkout_url} />
+            </dd>
             <dt>Order id</dt><dd>{i.external_order_id ?? '—'}</dd>
             <dt>Description</dt><dd>{i.description ?? '—'}</dd>
             <dt>Expires</dt><dd>{fmtDate(i.expires_at)}</dd>
@@ -196,7 +221,9 @@ export function InvoiceDetail(props: { id: string; canWrite: boolean }) {
           </dl>
           <h3>Payments</h3>
           {(i.payments ?? []).length === 0 ? (
-            <p className="muted">No payment seen on-chain yet.</p>
+            <EmptyState icon="activity" title="No payment seen yet">
+              <p>Payments to the deposit address show up here within seconds of being mined.</p>
+            </EmptyState>
           ) : (
             <div className="table-wrap">
               <table>
@@ -239,7 +266,7 @@ function FeeTopups(props: { livemode: boolean }) {
   if (rows.length === 0) return null;
   return (
     <details className="card">
-      <summary>Prepaid fee top-ups ({rows.length})</summary>
+      <summary><Icon name="coins" size={16} /> Prepaid fee top-ups ({rows.length})</summary>
       <ErrorBox error={list.error} />
       <div className="table-wrap">
         <table>
@@ -266,17 +293,18 @@ function Exports(props: { livemode: boolean }) {
     void a.run(() => download(`/exports/${kind}.csv?livemode=${String(props.livemode)}&from=${from}&to=${to}`));
   };
   return (
-    <details className="card">
-      <summary>Export CSV</summary>
+    <div className="card">
+      <h3>Export CSV</h3>
+      <p className="muted">Invoices or on-chain payments created in this date range (UTC), for your accounting.</p>
       <div className="row">
         <Field label="From"><input type="date" value={from} max={to} onChange={(e) => { setFrom(e.target.value); }} /></Field>
         <Field label="To"><input type="date" value={to} min={from} onChange={(e) => { setTo(e.target.value); }} /></Field>
       </div>
       <div className="row">
-        <button className="secondary" disabled={a.busy} onClick={() => { get('invoices'); }}>Invoices</button>
-        <button className="secondary" disabled={a.busy} onClick={() => { get('payments'); }}>Payments</button>
+        <button className="secondary" disabled={a.busy} onClick={() => { get('invoices'); }}><Icon name="download" size={14} /> Invoices</button>
+        <button className="secondary" disabled={a.busy} onClick={() => { get('payments'); }}><Icon name="download" size={14} /> Payments</button>
       </div>
       <ErrorBox error={a.error} />
-    </details>
+    </div>
   );
 }

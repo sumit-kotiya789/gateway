@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { api, totpHeader, type DerivationReport, type Xpub, type XpubChange, type XpubList, type XpubPreview } from './api';
-import { ConfirmButton, ErrorBox, Field, SecretOnce, StatusBadge, TotpInput, fmtDate, useAction, useLoad } from './ui';
+import { Alert, ConfirmButton, CopyField, ErrorBox, Field, Icon, SecretOnce, Skeleton, StatusBadge, Submit, TotpInput, fmtDate, toast, useAction, useLoad } from './ui';
 
 interface Eip1193 {
   request(args: { method: string; params?: unknown[] }): Promise<unknown>;
@@ -22,8 +22,8 @@ function PendingChange(props: { change: XpubChange; canManage: boolean; onChange
   const a = useAction();
   const c = props.change;
   return (
-    <div className="card warning">
-      <h3>Payout xpub change scheduled</h3>
+    <div className="card glow">
+      <Alert tone="warning"><strong>Payout xpub change scheduled</strong></Alert>
       <p>
         From <strong>{fmtDate(c.activates_at)}</strong>, new invoices will use <code>{c.xpub_hint}</code> (first address <code>{c.first_address}</code>). Until
         then the current xpub stays active.
@@ -35,7 +35,8 @@ function PendingChange(props: { change: XpubChange; canManage: boolean; onChange
           label="Cancel change"
           confirm="Cancel the scheduled xpub change?"
           disabled={a.busy}
-          onConfirm={() => { void a.run(async () => { await api('POST', `/xpubs/changes/${c.id}/cancel`); props.onChange(); }); }}
+          message="The current xpub stays active and the new one is discarded."
+          onConfirm={() => { void a.run(async () => { await api('POST', `/xpubs/changes/${c.id}/cancel`); toast.success('Scheduled change cancelled'); props.onChange(); }); }}
         />
       )}
     </div>
@@ -74,8 +75,8 @@ function Addresses(props: { xpub: Xpub }) {
             </table>
           </div>
           <div className="row">
-            <button disabled={offset === 0} onClick={() => { setOffset(Math.max(0, offset - PAGE)); }}>Previous</button>
-            <button disabled={offset + PAGE >= rep.next_index} onClick={() => { setOffset(offset + PAGE); }}>Next</button>
+            <button className="secondary sm" disabled={offset === 0} onClick={() => { setOffset(Math.max(0, offset - PAGE)); }}>Previous</button>
+            <button className="secondary sm" disabled={offset + PAGE >= rep.next_index} onClick={() => { setOffset(offset + PAGE); }}>Next</button>
           </div>
         </>
       )}
@@ -122,16 +123,17 @@ export function Xpubs(props: { livemode: boolean; canManage: boolean; totp: bool
       </p>
       <ErrorBox error={list.error} />
       {pending && <PendingChange change={pending} canManage={props.canManage} onChange={list.reload} />}
-      {scheduled && !pending && <p className="notice">Change scheduled.</p>}
-      {list.data && !active && <p className="notice">No {mode} xpub yet: {mode} invoices cannot be created until you add one.</p>}
+      {!list.data && !list.error && <Skeleton />}
+      {scheduled && !pending && <Alert tone="success">Change scheduled.</Alert>}
+      {list.data && !active && <Alert tone="warning">No {mode} xpub yet: {mode} invoices cannot be created until you add one.</Alert>}
       {active && (
         <>
           <dl className="details card">
             <dt>Active {mode} xpub</dt><dd><code>{active.xpub_hint}</code></dd>
             <dt>Fingerprint</dt><dd><code>{active.fingerprint}</code></dd>
-            <dt>First address (0/0)</dt><dd><code>{active.first_address}</code></dd>
+            <dt>First address (0/0)</dt><dd><CopyField value={active.first_address} /></dd>
             <dt>Next index</dt><dd>{active.next_index} <small className="muted">(addresses used so far; unpaid invoices leave gaps)</small></dd>
-            <dt>Ownership</dt><dd>{active.ownership_proved_at ? `proved ${fmtDate(active.ownership_proved_at)}` : 'not proved'}</dd>
+            <dt>Ownership</dt><dd>{active.ownership_proved_at ? <span className="badge s-ok">proved {fmtDate(active.ownership_proved_at)}</span> : <span className="badge">not proved</span>}</dd>
             <dt>Added</dt><dd>{fmtDate(active.created_at)}</dd>
           </dl>
           <Addresses xpub={active} />
@@ -161,6 +163,8 @@ export function Xpubs(props: { livemode: boolean; canManage: boolean; totp: bool
               const ownership = signature.trim() ? { issued_at: preview.ownership_challenge.issued_at, signature: signature.trim() } : undefined;
               const r = await api<Xpub | { pending_change: XpubChange }>('POST', '/xpubs/', { livemode: props.livemode, xpub: xpub.trim(), ownership }, totpHeader(code));
               setScheduled('pending_change' in r);
+              if ('pending_change' in r) toast.info('Change scheduled', 'The new xpub takes effect in 24 hours.');
+              else toast.success('Payout xpub registered', 'New invoices now pay to this wallet.');
               setXpub('');
               setCode('');
               reset();
@@ -169,11 +173,11 @@ export function Xpubs(props: { livemode: boolean; canManage: boolean; totp: bool
           }}
         >
           <h3>{active ? `Replace ${mode} xpub` : `Add ${mode} xpub`}</h3>
-          <p className="warning">
+          <Alert tone="warning">
             Paste the <strong>account-level extended PUBLIC key</strong> (xpub/tpub, path m/44&apos;/60&apos;/0&apos;). Never paste a seed phrase or a private key
             (xprv). Use different keys for test and live mode.
-          </p>
-          {!props.totp && <p className="notice">Needs two-factor authentication. <a href="#/security">Enable it in Security.</a></p>}
+          </Alert>
+          {!props.totp && <Alert tone="warning">Needs two-factor authentication. <a href="#/security">Enable it in Security.</a></Alert>}
           <Field label="Extended public key">
             <textarea
               value={xpub}
@@ -216,7 +220,7 @@ export function Xpubs(props: { livemode: boolean; canManage: boolean; totp: bool
                 <input value={signature} onChange={(e) => { setSignature(e.target.value); }} spellCheck={false} autoComplete="off" />
               </Field>
               {active && props.livemode && (
-                <p className="notice">For your protection the new live xpub takes effect 24 hours after you register it. The current one keeps working until then.</p>
+                <Alert tone="info">For your protection the new live xpub takes effect 24 hours after you register it. The current one keeps working until then.</Alert>
               )}
               {active && !props.livemode && <p className="muted">The current xpub will be retired. Its existing invoices keep their addresses.</p>}
               <TotpInput value={code} onChange={setCode} />
@@ -224,9 +228,9 @@ export function Xpubs(props: { livemode: boolean; canManage: boolean; totp: bool
           )}
           <ErrorBox error={a.error} />
           {preview ? (
-            <button disabled={a.busy || !confirmed || !props.totp || (needsProof && !signature.trim())}>Register xpub</button>
+            <Submit busy={a.busy} disabled={!confirmed || !props.totp || (needsProof && !signature.trim())}>Register xpub</Submit>
           ) : (
-            <button disabled={a.busy}>Preview addresses</button>
+            <Submit busy={a.busy}>Preview addresses</Submit>
           )}
         </form>
       ) : (
@@ -265,20 +269,21 @@ export function Security(props: { totp: boolean; onChange: () => void }) {
         <h3>Two-factor authentication</h3>
         {props.totp ? (
           <>
-            <p>Enabled. You are asked for a code at sign-in and before sensitive changes (API keys, webhooks, payout xpub, team).</p>
+            <Alert tone="success">Enabled. You are asked for a code at sign-in and before sensitive changes (API keys, webhooks, payout xpub, team).</Alert>
             <form
               onSubmit={(e) => {
                 e.preventDefault();
                 void a.run(async () => {
                   setCodes((await api<{ recovery_codes: string[] }>('POST', '/auth/2fa/recovery-codes', undefined, totpHeader(code))).recovery_codes);
                   setCode('');
+                  toast.success('New recovery codes generated', 'Earlier codes no longer work.');
                 });
               }}
             >
               <p className="muted">Lost your recovery codes, or used some? Generate a new set; every earlier code stops working.</p>
               <TotpInput value={code} onChange={setCode} />
               <ErrorBox error={a.error} />
-              <button className="secondary" disabled={a.busy}>New recovery codes</button>
+              <Submit busy={a.busy} className="secondary"><Icon name="refresh" size={14} /> New recovery codes</Submit>
             </form>
           </>
         ) : setup ? (
@@ -288,6 +293,7 @@ export function Security(props: { totp: boolean; onChange: () => void }) {
               void a.run(async () => {
                 setCodes((await api<{ recovery_codes: string[] }>('POST', '/auth/2fa/enable', { code })).recovery_codes);
                 setSetup(undefined);
+                toast.success('Two-factor authentication enabled');
               });
             }}
           >
@@ -296,14 +302,14 @@ export function Security(props: { totp: boolean; onChange: () => void }) {
             <p className="muted">Can&apos;t scan? Enter this key manually: <code>{setup.secret}</code></p>
             <TotpInput value={code} onChange={setCode} />
             <ErrorBox error={a.error} />
-            <button disabled={a.busy}>Enable</button>
+            <Submit busy={a.busy}>Enable</Submit>
           </form>
         ) : (
           <>
-            <p>Not enabled. Two-factor authentication is required to create API keys, webhooks and to set your payout xpub.</p>
+            <Alert tone="warning">Not enabled. Two-factor authentication is required to create API keys, webhooks and to set your payout xpub.</Alert>
             <ErrorBox error={a.error} />
             <button disabled={a.busy} onClick={() => { void a.run(async () => { setSetup(await api<Setup>('POST', '/auth/2fa/setup')); }); }}>
-              Set up two-factor authentication
+              <Icon name="shield" size={16} /> Set up two-factor authentication
             </button>
           </>
         )}

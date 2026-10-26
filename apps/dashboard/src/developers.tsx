@@ -1,13 +1,13 @@
 import { useState } from 'react';
 import { api, totpHeader, type ApiKey, type Page, type WebhookDelivery, type WebhookEndpoint } from './api';
-import { ConfirmButton, ErrorBox, Field, SecretOnce, StatusBadge, TotpInput, fmtDate, short, useAction, useLoad } from './ui';
+import { Alert, ConfirmButton, EmptyState, ErrorBox, Field, Icon, SecretOnce, Skeleton, StatusBadge, Submit, TotpInput, fmtDate, short, toast, useAction, useLoad } from './ui';
 
 const SECRET_SCOPES = ['read', 'invoices:write', 'refunds:write', 'withdrawals:write', 'webhooks:write'];
 
 const Needs2fa = () => (
-  <p className="notice">
+  <Alert tone="warning">
     Creating this needs two-factor authentication. <a href="#/security">Enable it in Security.</a>
-  </p>
+  </Alert>
 );
 
 function keyState(k: ApiKey): string {
@@ -30,6 +30,7 @@ export function ApiKeys(props: { livemode: boolean; totp: boolean }) {
   return (
     <section>
       <header className="page-head"><h2>API keys</h2></header>
+      <p className="muted">Secret keys authenticate your backend against the API. Publishable keys are safe in browsers and can only start checkouts.</p>
       <ErrorBox error={keys.error} />
       {created && <SecretOnce label="Your new API key" value={created} onDone={() => { setCreated(undefined); }} />}
       {rows.length > 0 ? (
@@ -44,14 +45,15 @@ export function ApiKeys(props: { livemode: boolean; totp: boolean }) {
                   <td>{k.scopes.join(', ')}</td>
                   <td>{fmtDate(k.last_used_at)}</td>
                   <td>{fmtDate(k.created_at)}</td>
-                  <td>{keyState(k)}</td>
+                  <td><StatusBadge status={keyState(k)} /></td>
                   <td>
                     {keyState(k) === 'active' && (
                       <ConfirmButton
                         label="Revoke"
-                        confirm="Confirm revoke"
+                        confirm={`Revoke "${k.name}"?`}
+                        message="Requests using this key fail immediately. Make sure nothing in production still uses it."
                         disabled={revoke.busy}
-                        onConfirm={() => { void revoke.run(async () => { await api('DELETE', `/api-keys/${k.id}`); keys.reload(); }); }}
+                        onConfirm={() => { void revoke.run(async () => { await api('DELETE', `/api-keys/${k.id}`); toast.success('API key revoked'); keys.reload(); }); }}
                       />
                     )}
                   </td>
@@ -60,8 +62,12 @@ export function ApiKeys(props: { livemode: boolean; totp: boolean }) {
             </tbody>
           </table>
         </div>
+      ) : keys.data ? (
+        <EmptyState icon="key" title={`No ${props.livemode ? 'live' : 'test'} keys yet`}>
+          <p>Create one below to call the API from your server.</p>
+        </EmptyState>
       ) : (
-        keys.data && <p className="muted">No {props.livemode ? 'live' : 'test'} keys.</p>
+        !keys.error && <Skeleton />
       )}
       <ErrorBox error={revoke.error} />
 
@@ -77,6 +83,7 @@ export function ApiKeys(props: { livemode: boolean; totp: boolean }) {
               totpHeader(form.code),
             );
             setCreated(r.key);
+            toast.success('API key created', 'Copy it now: it is shown only once.');
             setForm({ ...form, name: '', code: '' });
             keys.reload();
           });
@@ -107,7 +114,9 @@ export function ApiKeys(props: { livemode: boolean; totp: boolean }) {
         )}
         <TotpInput value={form.code} onChange={(code) => { setForm({ ...form, code }); }} />
         <ErrorBox error={a.error} />
-        <button disabled={a.busy || !props.totp || (form.kind === 'secret' && form.scopes.length === 0)}>Create key</button>
+        <Submit busy={a.busy} disabled={!props.totp || (form.kind === 'secret' && form.scopes.length === 0)}>
+          <Icon name="plus" size={16} /> Create key
+        </Submit>
       </form>
     </section>
   );
@@ -121,11 +130,15 @@ function Deliveries(props: { endpointId: string }) {
     <div className="card">
       <div className="page-head">
         <h3>Recent deliveries</h3>
-        <button type="button" className="secondary" onClick={list.reload}>Refresh</button>
+        <button type="button" className="secondary sm" onClick={list.reload}><Icon name="refresh" size={14} /> Refresh</button>
       </div>
       <ErrorBox error={list.error ?? retry.error} />
       {rows.length === 0 ? (
-        list.data && <p className="muted">No deliveries yet. Events created after the endpoint was added are delivered within seconds.</p>
+        list.data && (
+          <EmptyState icon="activity" title="No deliveries yet">
+            <p>Events created after the endpoint was added are delivered within seconds.</p>
+          </EmptyState>
+        )
       ) : (
         <div className="table-wrap">
           <table>
@@ -143,9 +156,9 @@ function Deliveries(props: { endpointId: string }) {
                     {d.status !== 'pending' && (
                       <button
                         type="button"
-                        className="secondary"
+                        className="secondary sm"
                         disabled={retry.busy}
-                        onClick={() => { void retry.run(async () => { await api('POST', `/webhooks/${props.endpointId}/deliveries/${d.id}/retry`); list.reload(); }); }}
+                        onClick={() => { void retry.run(async () => { await api('POST', `/webhooks/${props.endpointId}/deliveries/${d.id}/retry`); toast.success('Delivery queued again'); list.reload(); }); }}
                       >
                         Resend
                       </button>
@@ -190,7 +203,7 @@ function RotateSecret(props: { endpoint: WebhookEndpoint; totp: boolean; onDone:
       <TotpInput value={code} onChange={setCode} />
       <ErrorBox error={a.error} />
       <div className="row">
-        <button disabled={a.busy || !props.totp}>Rotate</button>
+        <Submit busy={a.busy} disabled={!props.totp}>Rotate</Submit>
         <button type="button" className="secondary" onClick={props.onCancel}>Cancel</button>
       </div>
     </form>
@@ -221,7 +234,7 @@ export function Webhooks(props: { livemode: boolean; totp: boolean }) {
           endpoint={rotating}
           totp={props.totp}
           onCancel={() => { setRotating(undefined); }}
-          onDone={(value) => { setRotating(undefined); setSecret({ label: 'New signing secret', value }); list.reload(); }}
+          onDone={(value) => { setRotating(undefined); setSecret({ label: 'New signing secret', value }); toast.success('Signing secret rotated'); list.reload(); }}
         />
       )}
       {rows.length > 0 ? (
@@ -238,15 +251,16 @@ export function Webhooks(props: { livemode: boolean; totp: boolean }) {
                   <td>{w.description ?? '—'}</td>
                   <td>{fmtDate(w.created_at)}</td>
                   <td className="row">
-                    <button type="button" className="secondary" aria-expanded={open === w.id} onClick={() => { setOpen(open === w.id ? undefined : w.id); }}>
+                    <button type="button" className="secondary sm" aria-expanded={open === w.id} onClick={() => { setOpen(open === w.id ? undefined : w.id); }}>
                       Deliveries
                     </button>
-                    <button type="button" className="secondary" onClick={() => { setRotating(w); }}>Rotate secret</button>
+                    <button type="button" className="secondary sm" onClick={() => { setRotating(w); }}>Rotate secret</button>
                     <ConfirmButton
                       label="Delete"
-                      confirm="Confirm delete"
+                      confirm="Delete this endpoint?"
+                      message="It stops receiving events immediately and its delivery log is removed."
                       disabled={del.busy}
-                      onConfirm={() => { void del.run(async () => { await api('DELETE', `/webhooks/${w.id}`); list.reload(); }); }}
+                      onConfirm={() => { void del.run(async () => { await api('DELETE', `/webhooks/${w.id}`); toast.success('Endpoint deleted'); list.reload(); }); }}
                     />
                   </td>
                 </tr>
@@ -254,8 +268,12 @@ export function Webhooks(props: { livemode: boolean; totp: boolean }) {
             </tbody>
           </table>
         </div>
+      ) : list.data ? (
+        <EmptyState icon="zap" title={`No ${props.livemode ? 'live' : 'test'} endpoints`}>
+          <p>Add an endpoint below to be notified the moment an invoice is paid.</p>
+        </EmptyState>
       ) : (
-        list.data && <p className="muted">No {props.livemode ? 'live' : 'test'} endpoints.</p>
+        !list.error && <Skeleton />
       )}
       <ErrorBox error={del.error} />
       {open && rows.some((w) => w.id === open) && <Deliveries endpointId={open} />}
@@ -272,6 +290,7 @@ export function Webhooks(props: { livemode: boolean; totp: boolean }) {
               totpHeader(form.code),
             );
             setSecret({ label: 'Signing secret', value: r.secret });
+            toast.success('Endpoint added', 'Copy the signing secret now: it is shown only once.');
             setForm({ url: '', description: '', code: '' });
             list.reload();
           });
@@ -287,7 +306,9 @@ export function Webhooks(props: { livemode: boolean; totp: boolean }) {
         </Field>
         <TotpInput value={form.code} onChange={(code) => { setForm({ ...form, code }); }} />
         <ErrorBox error={a.error} />
-        <button disabled={a.busy || !props.totp}>Add endpoint</button>
+        <Submit busy={a.busy} disabled={!props.totp}>
+          <Icon name="plus" size={16} /> Add endpoint
+        </Submit>
       </form>
     </section>
   );
