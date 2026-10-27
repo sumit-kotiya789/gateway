@@ -215,6 +215,29 @@ export const sessions = pgTable(
   (t) => [uniqueIndex('sessions_token_hash_uq').on(t.tokenHash), index('sessions_family_idx').on(t.familyId)],
 );
 
+/**
+ * Browsers a dashboard user has signed in from (M10). The browser keeps a random token in a long-lived cookie; only
+ * its hash is stored. A sign-in without a known token registers a new device and emails the user (D-083).
+ */
+export const userDevices = pgTable(
+  'user_devices',
+  {
+    id: id(),
+    merchantId: uuid('merchant_id')
+      .notNull()
+      .references(() => merchants.id),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => merchantUsers.id),
+    tokenHash: text('token_hash').notNull(),
+    ip: inet('ip'),
+    userAgent: text('user_agent'),
+    lastSeenAt: tstz('last_seen_at').notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex('user_devices_token_uq').on(t.tokenHash), index('user_devices_user_idx').on(t.userId)],
+);
+
 export const apiKeys = pgTable(
   'api_keys',
   {

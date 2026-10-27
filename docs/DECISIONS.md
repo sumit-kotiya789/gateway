@@ -372,7 +372,7 @@ verification requires every placeholder to be set). Run `pnpm chains:verify` bef
   revokes every session, clears the lockout, counts as email verification, and sends a "password changed" email.
 - **Notices.** Owners get: xpub change requested / applied / failed; live fee balance crossing into low or blocked
   (once per crossing). Users get: password changed; 2FA reset by an admin.
-- Not yet: new-device login emails, team invites (next M10 part), digest/marketing mail.
+- Not yet: team invites (next M10 part), digest/marketing mail. New-device sign-in emails: D-083.
 
 ## D-078 Team management (amends D-052) (2026-10-26)
 - Invitations by email: single-use 7-day link (token hash stored), opened at `DASHBOARD_URL/#/accept-invite`. Accepting
@@ -421,3 +421,12 @@ asks for its reason there). Poppins is bundled from `@fontsource/poppins` and se
 gains only `font-src 'self'`; no third-party font host. Components never set `style` attributes (`style-src 'self'`
 stays without `'unsafe-inline'`). The hosted checkout keeps its per-response nonce CSP and no font downloads: it uses
 the same palette with a system font stack.
+
+## D-083 New-device sign-in emails (2026-10-27)
+A completed dashboard sign-in (password, plus 2FA when on) remembers the browser: a random 43-character token in the
+`gw_dev` cookie (httpOnly, SameSite=Strict, path `/v1/dashboard/auth`, 400 days); `user_devices` stores its SHA-256
+with first/last IP and User-Agent. A sign-in without a token known for that user registers a device and emails the user
+(time, IP, browser, how to reset). No email for signup, invite acceptance, or a user's first device (accounts that
+existed before devices were tracked). Detection is by cookie, not IP or User-Agent: those change on every network and
+browser update, and a new-device email nobody reads helps no one. A cleared cookie means one extra email. The
+`auth.login` audit entry records `new_device`. Devices are not listed or revocable in the dashboard yet.

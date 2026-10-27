@@ -14,6 +14,7 @@ import type { Deps } from '../../deps.js';
 import { enqueueEmail } from '../email/outbox.js';
 import { templates } from '../email/templates.js';
 import { TOKEN_RESEND_MS, findEmailToken, issueEmailToken, lastTokenAt, useEmailToken } from '../email/tokens.js';
+import { rememberDevice } from './devices.js';
 import { checkCsrf, checkOrigin, requireTotp, requireUser } from './guards.js';
 import { isLocked, lockoutUntil } from './lockout.js';
 import {
@@ -75,6 +76,7 @@ export function dashboardAuthRoutes(deps: Deps): FastifyPluginAsyncZod {
           await audit(tx, { actorType: 'merchant_user', actorId: u.id, merchantId: m.id, action: 'merchant.created', targetType: 'merchant', targetId: m.id, after: { name: m.name, custody_mode: m.custodyMode } }, req);
           await sendVerification(deps, tx, u);
           await issueSession(deps, tx, req, reply, u, false);
+          await rememberDevice(deps, tx, req, reply, u, { notify: false });
           return { merchant: { id: m.id, name: m.name, custody_mode: m.custodyMode }, user: { id: u.id, email: u.email, role: u.role } };
         });
         return reply.status(201).send(out);
@@ -100,7 +102,8 @@ export function dashboardAuthRoutes(deps: Deps): FastifyPluginAsyncZod {
           await tx.update(merchantUsers).set({ failedLogins: 0, lockedUntil: null }).where(eq(merchantUsers.id, u.id));
           if (u.totpEnabledAt) return { mfa_required: true as const, mfa_token: await signMfaToken(deps, u.id) };
           await issueSession(deps, tx, req, reply, u, false);
-          await audit(tx, { actorType: 'merchant_user', actorId: u.id, merchantId: u.merchantId, action: 'auth.login', after: { mfa: false } }, req);
+          const newDevice = await rememberDevice(deps, tx, req, reply, u, { notify: true });
+          await audit(tx, { actorType: 'merchant_user', actorId: u.id, merchantId: u.merchantId, action: 'auth.login', after: { mfa: false, new_device: newDevice } }, req);
           return { mfa_required: false as const };
         });
         if (result === false) throw INVALID();
@@ -150,7 +153,8 @@ export function dashboardAuthRoutes(deps: Deps): FastifyPluginAsyncZod {
           }
           await tx.update(merchantUsers).set({ failedLogins: 0, lockedUntil: null }).where(eq(merchantUsers.id, u.id));
           await issueSession(deps, tx, req, reply, u, true);
-          await audit(tx, { actorType: 'merchant_user', actorId: u.id, merchantId: u.merchantId, action: 'auth.login', after: { mfa: true, method } }, req);
+          const newDevice = await rememberDevice(deps, tx, req, reply, u, { notify: true });
+          await audit(tx, { actorType: 'merchant_user', actorId: u.id, merchantId: u.merchantId, action: 'auth.login', after: { mfa: true, method, new_device: newDevice } }, req);
           return true;
         });
         if (!ok) throw INVALID();

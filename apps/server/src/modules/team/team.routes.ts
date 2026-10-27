@@ -14,6 +14,7 @@ import { merchantUsers, merchants, sessions, teamInvites } from '../../db/schema
 import type { Deps } from '../../deps.js';
 import { AUTH_RATE_LIMIT } from '../auth/dashboard-auth.routes.js';
 import { authedUser, checkOrigin, requirePermission, requireTotp, requireUser, type AuthedUser } from '../auth/guards.js';
+import { rememberDevice } from '../auth/devices.js';
 import { issueSession } from '../auth/session.js';
 import { enqueueEmail } from '../email/outbox.js';
 import { templates } from '../email/templates.js';
@@ -240,6 +241,7 @@ export function inviteAuthRoutes(deps: Deps): FastifyPluginAsyncZod {
           await tx.update(teamInvites).set({ acceptedAt: now }).where(eq(teamInvites.id, i.id));
           await audit(tx, { actorType: 'merchant_user', actorId: u.id, merchantId: i.merchantId, action: 'team.invite_accepted', targetType: 'team_invite', targetId: i.id, after: { role: i.role, reactivated: Boolean(existing) } }, req);
           await issueSession(deps, tx, req, reply, u, false);
+          await rememberDevice(deps, tx, req, reply, u, { notify: false });
           return { user: { id: u.id, email: u.email, role: u.role } };
         });
         return reply.status(201).send(out);

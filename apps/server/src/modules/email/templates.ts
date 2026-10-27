@@ -8,6 +8,8 @@ export interface Rendered {
 
 const footer = '\n\n-- \nGateway. You get this email because of activity on your account.';
 const mode = (livemode: boolean) => (livemode ? 'live' : 'test');
+/** Client-supplied text (a User-Agent header): one line of printable characters, capped. */
+const printable = (s: string, max: number) => s.replace(/[^\x20-\x7e]/g, '?').slice(0, max);
 
 export const templates = {
   verifyEmail: (url: string): Rendered => ({
@@ -21,6 +23,10 @@ export const templates = {
   passwordChanged: (): Rendered => ({
     subject: 'Your password was changed',
     text: `The password of your account was just reset and every session was signed out.\n\nIf this was not you, contact support immediately.${footer}`,
+  }),
+  newDeviceLogin: (p: { at: string; ip: string; userAgent: string | null; dashboardUrl: string }): Rendered => ({
+    subject: 'New sign-in to your account',
+    text: `Your account was just signed in to from a browser we have not seen before.\n\nTime: ${p.at}\nIP address: ${p.ip}\nBrowser: ${printable(p.userAgent ?? 'unknown', 200)}\n\nIf this was you, there is nothing to do. If not, reset your password now ("Forgot password" on the sign-in page) and turn on two-factor authentication:\n${p.dashboardUrl}${footer}`,
   }),
   twoFactorReset: (): Rendered => ({
     subject: 'Two-factor authentication was reset',
