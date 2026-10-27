@@ -283,6 +283,8 @@ export const adminUsers = pgTable(
     failedLogins: integer('failed_logins').notNull().default(0),
     lockedUntil: tstz('locked_until'),
     disabledAt: tstz('disabled_at'),
+    // Carried in admin tokens (`sv`); bumping it signs every session of this admin out (credential reset, M9).
+    sessionEpoch: integer('session_epoch').notNull().default(0),
     createdAt: createdAt(),
   },
   (t) => [uniqueIndex('admin_users_email_uq').on(sql`lower(${t.email})`)],

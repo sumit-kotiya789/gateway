@@ -451,3 +451,12 @@ configured the route does not exist. No client library: a few gauges and counter
 - Alert rules in `infra/prometheus/alerts.yml` link to runbook headings. An RPC-disagreement alert waits for the quorum
   check (SECURITY.md "Lying RPC", still planned).
 
+## D-086 Admin accounts managed in the console (M9) (2026-10-27)
+`/admin/v1/admins` for superadmins (`admins:manage`); `pnpm admin:create` stays for the first one. Creating, role
+changes, re-enabling and credential resets need step-up TOTP; disabling does not (it only removes access). Generated
+password and TOTP secret are returned once (with a QR code) and never stored in clear. Nobody manages their own account
+there, so one superadmin cannot lock others out by accident or quietly raise themselves. An active superadmin always
+remains: API check under row locks, plus a deferred constraint trigger. Admin tokens carry `sv`, the account's
+`session_epoch`; a credential reset increments it, so every open session of that admin ends at once (role and disabled
+state were already re-read per request). The epoch only goes up (trigger). Console page: Admins (superadmin only).
+

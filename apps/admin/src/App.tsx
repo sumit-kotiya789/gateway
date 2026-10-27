@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { BrandMark, ErrorBox, Field, Icon, Submit, Toaster, TotpInput, errorText, useAction, type IconName } from '../../dashboard/src/ui';
 import { ApiError, api, setUnauthorizedHandler, type Admin } from './api';
-import { Audit, InvoiceDetail, Invoices, MerchantDetail, Merchants, Registry } from './pages';
+import { Admins, Audit, InvoiceDetail, Invoices, MerchantDetail, Merchants, Registry } from './pages';
 
 function useHash(): string {
   const [hash, setHash] = useState(location.hash);
@@ -83,6 +83,7 @@ export function App() {
     { href: '#/invoices', label: 'Invoices', icon: 'invoice', show: true },
     { href: '#/registry', label: 'Kill switches', icon: 'power', show: true },
     { href: '#/audit', label: 'Audit log', icon: 'list', show: admin.role !== 'operator' },
+    { href: '#/admins', label: 'Admins', icon: 'users', show: admin.role === 'superadmin' },
   ];
   const [path = '', query = ''] = hash.slice(1).split('?');
   const [, page = 'merchants', id] = path.split('/');
@@ -94,6 +95,7 @@ export function App() {
   else if (page === 'invoices') body = <Invoices merchantId={params.get('merchant') ?? undefined} />;
   else if (page === 'registry') body = <Registry manage={manage} superadmin={admin.role === 'superadmin'} />;
   else if (page === 'audit') body = <Audit merchantId={params.get('merchant') ?? undefined} />;
+  else if (page === 'admins' && admin.role === 'superadmin') body = <Admins selfId={admin.id} />;
   else body = <Merchants />;
 
   const current = nav.find((n) => n.href === `#/${page}`) ?? nav[0];

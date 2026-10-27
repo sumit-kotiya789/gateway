@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Alert, CopyField, EmptyState, ErrorBox, Field, Icon, Modal, Skeleton, StatusBadge, Submit, TotpInput, fmtDate, short, toast, useAction, useLoad, type IconName } from '../../dashboard/src/ui';
-import { RISK_FLAGS, api, totpHeader, type AuditRow, type FeeTopup, type Invoice, type Merchant, type MerchantDetail as MerchantData, type Page, type Registry as RegistryData } from './api';
+import { RISK_FLAGS, api, totpHeader, type AdminAccount, type AdminCredentials, type AdminRole, type AuditRow, type FeeTopup, type Invoice, type Merchant, type MerchantDetail as MerchantData, type Page, type Registry as RegistryData } from './api';
 
 /** First page of a list, plus "load more" via the server cursor. Refetches when `path` changes. */
 interface Paged<T> {
@@ -614,6 +614,178 @@ export function Registry(props: { manage: boolean; superadmin: boolean }) {
           </tbody>
         </table>
       </div>
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------- admin accounts (superadmin)
+
+const ADMIN_ROLES: AdminRole[] = ['superadmin', 'operator', 'auditor'];
+
+/** New password + authenticator, shown once. The superadmin hands them over out of band. */
+function CredentialsModal(props: { creds: AdminCredentials; onClose: () => void }) {
+  return (
+    <Modal title={`Credentials for ${props.creds.email}`} icon="lock" onClose={props.onClose}>
+      <Alert tone="warning">Shown once. Hand them over in person or through your password manager, never by email or chat.</Alert>
+      <Field label="Password"><CopyField value={props.creds.password} /></Field>
+      <Field label="Authenticator" hint="Scan in the authenticator app, or enter the URI.">
+        <img className="qr" src={`data:image/svg+xml;utf8,${encodeURIComponent(props.creds.qr_svg)}`} alt="TOTP QR code" width={200} height={200} />
+      </Field>
+      <CopyField value={props.creds.totp_uri} />
+      <div className="row end">
+        <button type="button" onClick={props.onClose}>I have handed them over</button>
+      </div>
+    </Modal>
+  );
+}
+
+function RoleAction(props: { current: AdminRole; onSubmit: (role: AdminRole, reason: string, headers: Record<string, string>) => Promise<void> }) {
+  const [open, setOpen] = useState(false);
+  const [role, setRole] = useState<AdminRole>(props.current);
+  const [reason, setReason] = useState('');
+  const [code, setCode] = useState('');
+  const a = useAction();
+  const close = () => {
+    setOpen(false);
+    setRole(props.current);
+    setReason('');
+    setCode('');
+  };
+  return (
+    <>
+      <button type="button" className="secondary sm" onClick={() => { setOpen(true); }}>Change role</button>
+      {open && (
+        <Modal title="Change role" icon="lock" onClose={close}>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              void a.run(async () => {
+                await props.onSubmit(role, reason.trim(), totpHeader(code));
+                close();
+                toast.success('Role changed', 'Applies to the open session at once; recorded in the audit log.');
+              });
+            }}
+          >
+            <Field label="Role">
+              <select value={role} onChange={(e) => { setRole(e.target.value as AdminRole); }} data-autofocus>
+                {ADMIN_ROLES.map((x) => <option key={x} value={x}>{x}</option>)}
+              </select>
+            </Field>
+            <Field label="Reason" hint="Recorded in the audit log.">
+              <input value={reason} onChange={(e) => { setReason(e.target.value); }} minLength={3} maxLength={500} required />
+            </Field>
+            <TotpInput value={code} onChange={setCode} />
+            <ErrorBox error={a.error} />
+            <div className="row end">
+              <button type="button" className="secondary" onClick={close}>Cancel</button>
+              <Submit busy={a.busy} disabled={role === props.current}>Change role</Submit>
+            </div>
+          </form>
+        </Modal>
+      )}
+    </>
+  );
+}
+
+function NewAdmin(props: { onCreated: (c: AdminCredentials) => void }) {
+  const [open, setOpen] = useState(false);
+  const [form, setForm] = useState({ email: '', role: 'operator' as AdminRole, reason: '' });
+  const [code, setCode] = useState('');
+  const a = useAction();
+  const close = () => {
+    setOpen(false);
+    setForm({ email: '', role: 'operator', reason: '' });
+    setCode('');
+  };
+  return (
+    <>
+      <button type="button" className="sm" onClick={() => { setOpen(true); }}><Icon name="plus" size={16} />New admin</button>
+      {open && (
+        <Modal title="New admin" icon="lock" onClose={close}>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              void a.run(async () => {
+                const c = await api<AdminCredentials>('POST', '/admins/', { ...form, reason: form.reason.trim() }, totpHeader(code));
+                close();
+                props.onCreated(c);
+              });
+            }}
+          >
+            <Field label="Email"><input type="email" value={form.email} onChange={(e) => { setForm({ ...form, email: e.target.value }); }} required data-autofocus /></Field>
+            <Field label="Role">
+              <select value={form.role} onChange={(e) => { setForm({ ...form, role: e.target.value as AdminRole }); }}>
+                {ADMIN_ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
+              </select>
+            </Field>
+            <Field label="Reason" hint="Recorded in the audit log.">
+              <input value={form.reason} onChange={(e) => { setForm({ ...form, reason: e.target.value }); }} minLength={3} maxLength={500} required />
+            </Field>
+            <TotpInput value={code} onChange={setCode} />
+            <ErrorBox error={a.error} />
+            <div className="row end">
+              <button type="button" className="secondary" onClick={close}>Cancel</button>
+              <Submit busy={a.busy}>Create</Submit>
+            </div>
+          </form>
+        </Modal>
+      )}
+    </>
+  );
+}
+
+export function Admins(props: { selfId: string }) {
+  const r = useLoad(() => api<{ data: AdminAccount[] }>('GET', '/admins/'), []);
+  const [creds, setCreds] = useState<AdminCredentials>();
+  if (r.error) return <ErrorBox error={r.error} />;
+  if (!r.data) return <Skeleton />;
+  return (
+    <section>
+      <header className="page-head">
+        <h2>Admins</h2>
+        <NewAdmin onCreated={(c) => { setCreds(c); r.reload(); }} />
+      </header>
+      <Alert tone="info">
+        Disabling and role changes apply to open sessions at once. A credential reset also signs the admin out everywhere. You cannot change your
+        own account here, and one active superadmin always remains.
+      </Alert>
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Email</th><th>Role</th><th>Status</th><th>Created</th><th></th></tr>
+          </thead>
+          <tbody>
+            {r.data.data.map((a) => (
+              <tr key={a.id}>
+                <td>{a.email}{a.id === props.selfId && <span className="muted"> (you)</span>}</td>
+                <td>{a.role}</td>
+                <td><OnOff on={!a.disabled} yes={a.locked_until ? 'locked' : 'active'} no="disabled" /></td>
+                <td>{fmtDate(a.created_at)}</td>
+                <td>
+                  {a.id !== props.selfId && (
+                    <div className="row">
+                      <RoleAction current={a.role} onSubmit={async (role, reason, h) => { await api('PUT', `/admins/${a.id}/role`, { role, reason }, h); r.reload(); }} />
+                      {a.disabled ? (
+                        <ReasonAction label="Enable" totp sm onSubmit={async (reason, h) => { await api('POST', `/admins/${a.id}/enable`, { reason }, h); r.reload(); }} />
+                      ) : (
+                        <ReasonAction label="Disable" danger sm message="Signs the admin out at once." onSubmit={async (reason) => { await api('POST', `/admins/${a.id}/disable`, { reason }); r.reload(); }} />
+                      )}
+                      <ReasonAction
+                        label="Reset credentials"
+                        totp
+                        sm
+                        message="New password and authenticator, shown once. The old ones and every open session stop working."
+                        onSubmit={async (reason, h) => { setCreds(await api<AdminCredentials>('POST', `/admins/${a.id}/reset-credentials`, { reason }, h)); r.reload(); }}
+                      />
+                    </div>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {creds && <CredentialsModal creds={creds} onClose={() => { setCreds(undefined); }} />}
     </section>
   );
 }

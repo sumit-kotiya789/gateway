@@ -52,7 +52,7 @@ export function adminAuthRoutes(deps: Deps): FastifyPluginAsyncZod {
           return a;
         });
         if (!admin) throw new AppError('unauthorized', 'invalid credentials');
-        const token = await signToken(deps.config.ADMIN_JWT_SECRET, 'admin', ADMIN_TTL_S, { role: admin.role }, admin.id);
+        const token = await signToken(deps.config.ADMIN_JWT_SECRET, 'admin', ADMIN_TTL_S, { role: admin.role, sv: admin.sessionEpoch }, admin.id);
         const base = cookieBase(deps);
         reply.setCookie(ADMIN_COOKIE.access, token, { ...base, path: COOKIE_PATH, maxAge: ADMIN_TTL_S });
         const csrf = randomBase62(32);

@@ -32,6 +32,10 @@ Each procedure is written when the component it covers ships. Headings are fixed
 ## Bootstrap the first admin
 `pnpm admin:create <email> superadmin` (compose: `docker compose run --rm api node cli/admin-create.cjs <email> superadmin`).
 Prints a generated password and a TOTP enrollment URI once. Store the password in a password manager and enroll TOTP immediately.
+Every further admin is managed by a superadmin in the admin console (Admins page, TOTP): create, change role, disable,
+re-enable, reset credentials (lost phone or leaked password: also signs the admin out everywhere). Credentials are shown
+once; hand them over in person or through the password manager. Keep at least two superadmins so one can recover the
+other; the last active superadmin cannot be disabled or demoted (API check + DB trigger).
 
 ## Verify audit log integrity
 As the owner or app role: `select audit_verify();` returns NULL when the chain is intact, otherwise the first bad `seq`.

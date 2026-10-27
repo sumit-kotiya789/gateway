@@ -190,6 +190,20 @@
       "when": 1793083783254,
       "tag": "0026_metrics",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1793085079770,
+      "tag": "0027_admin_users",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1793085081152,
+      "tag": "0028_admin_users_security",
+      "breakpoints": true
     }
   ]
 }

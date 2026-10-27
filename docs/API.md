@@ -164,6 +164,12 @@ Statuses: `pending → detected → confirming → paid | underpaid | overpaid �
 | GET | `/admin/v1/registry` | admin session | `admin:read` (chains and tokens with `enabled`) | M5b |
 | POST | `/admin/v1/registry/:kind/:id/disable` | admin session | `kill_switch:manage` (`kind`: chain or token; `reason`) | M5b |
 | POST | `/admin/v1/registry/:kind/:id/enable` | admin session + **2FA** | `registry:enable` (`reason`) | M5b |
+| GET | `/admin/v1/admins/` | admin session | `admins:manage` (every admin account) | M9 |
+| POST | `/admin/v1/admins/` | admin session + **2FA** | `admins:manage` (`email`, `role`, `reason`; returns `password`, `totp_uri`, `qr_svg` once) | M9 |
+| PUT | `/admin/v1/admins/:id/role` | admin session + **2FA** | `admins:manage` (`role`, `reason`; not yourself; a superadmin remains; applies to open sessions at once) | M9 |
+| POST | `/admin/v1/admins/:id/disable` | admin session | `admins:manage` (`reason`; not yourself; a superadmin remains) | M9 |
+| POST | `/admin/v1/admins/:id/enable` | admin session + **2FA** | `admins:manage` (`reason`; clears lockout) | M9 |
+| POST | `/admin/v1/admins/:id/reset-credentials` | admin session + **2FA** | `admins:manage` (`reason`; new password + TOTP shown once; signs the admin out everywhere) | M9 |
 | GET | `/admin/v1/audit-logs` | admin session | `audit:read` (`merchant_id`, `actor_id`, `action` prefix, `limit`, `starting_after` seq) | M5b |
 | GET | `/admin/v1/audit-logs/verify` | admin session | `audit:read` (`{ intact, first_bad_seq }`) | M5b |
 

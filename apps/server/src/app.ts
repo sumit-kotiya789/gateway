@@ -30,6 +30,7 @@ import { inviteAuthRoutes, teamDashboardRoutes } from './modules/team/team.route
 import { exportDashboardRoutes, exportRoutes } from './modules/exports/exports.routes.js';
 import { settingsDashboardRoutes } from './modules/settings/settings.routes.js';
 import { paymentLinkRoutes, publicPayRoutes } from './modules/payment-links/payment-links.routes.js';
+import { adminUserRoutes } from './modules/admin/admins.routes.js';
 import { adminRoutes } from './modules/admin/admin.routes.js';
 import { adminAuthRoutes } from './modules/auth/admin-auth.routes.js';
 import { dashboardAuthRoutes } from './modules/auth/dashboard-auth.routes.js';
@@ -166,6 +167,7 @@ export function buildApp(logger: FastifyBaseLogger, deps?: Deps) {
       admin.addHook('onRequest', requireAdminNetwork(deps));
       await admin.register(adminAuthRoutes(deps), { prefix: '/auth' });
       await admin.register(adminRoutes(deps));
+      await admin.register(adminUserRoutes(deps), { prefix: '/admins' });
     },
     { prefix: '/admin/v1' },
   );

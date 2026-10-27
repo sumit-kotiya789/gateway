@@ -135,3 +135,20 @@ export interface AuditRow {
   before: unknown;
   after: unknown;
 }
+
+export interface AdminAccount {
+  id: string;
+  email: string;
+  role: AdminRole;
+  disabled: boolean;
+  disabled_at: string | null;
+  locked_until: string | null;
+  created_at: string;
+}
+
+/** Returned once by create and reset-credentials: hand over out of band, never stored. */
+export interface AdminCredentials extends AdminAccount {
+  password: string;
+  totp_uri: string;
+  qr_svg: string;
+}
