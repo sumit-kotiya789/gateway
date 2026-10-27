@@ -70,6 +70,7 @@ verified email (`403`, `details.reason = "email_unverified"`). `GET /auth/me` re
 | DELETE | `/v1/payment-links/:id` | API key | `invoices:write` (deactivates) | M3 |
 | GET | `/v1/balances` | API key | `read` (per token: `received`, `fees_charged`, `fees_owed` (charged, not covered by top-ups), `prepaid_fees` (signed), `fee_status` ok / low / blocked / not_enforced; live keys also list every usable live token) | M5/M8 |
 | GET | `/v1/events`, `/v1/events/:id` | API key | `read` (`limit`, `starting_after`, `type`; newest first) | M5 |
+| GET | `/v1/exports/invoices.csv`, `/v1/exports/payments.csv` | API key | `read` (the key's mode; `from`, `to` as UTC dates, default last 31 days, ≤ 366 days, ≤ 50,000 rows; 10/min per key; audited as the key) | M10 |
 | GET | `/checkout/:id`, `/checkout/:id/status` | public (invoice id) | – | M3 |
 | GET | `/checkout/:id?embed=1&origin=<site>` | public | – (framable only by the merchant's allowlisted `origin`; posts status to it) | M10 |
 | GET | `/widget.js` | public | – (embeddable widget; `Cross-Origin-Resource-Policy: cross-origin`) | M10 |
@@ -143,7 +144,7 @@ Statuses: `pending → detected → confirming → paid | underpaid | overpaid �
 | POST | `/v1/dashboard/webhooks/:id/deliveries/:deliveryId/retry` | session | `webhooks:manage` (finished deliveries only; fresh retry budget) | M6 |
 | GET | `/v1/dashboard/balances/` | session | `account:read` (`livemode`) | M5 |
 | GET | `/v1/dashboard/fee-topups/` | session | `account:read` (`livemode`; newest first) | M8 |
-| GET | `/v1/dashboard/exports/invoices.csv`, `/v1/dashboard/exports/payments.csv` | session | `reports:read` (`livemode`, `from`, `to` as UTC dates, default last 31 days, ≤ 366 days, ≤ 50,000 rows; audited) | M10 |
+| GET | `/v1/dashboard/exports/invoices.csv`, `/v1/dashboard/exports/payments.csv` | session | `reports:read` (`livemode`, `from`, `to` as UTC dates, default last 31 days, ≤ 366 days, ≤ 50,000 rows; 10/min; audited) | M10 |
 | GET | `/v1/dashboard/settings/` | session | `account:read` (`widget_origins`) | M10 |
 | PUT | `/v1/dashboard/settings/widget-origins` | session | `settings:manage` (`widget_origins`: ≤ 10 exact origins, https in production; audited) | M10 |
 | POST | `/admin/v1/auth/login` | none | password + TOTP | M1 |

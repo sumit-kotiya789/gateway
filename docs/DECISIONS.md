@@ -393,7 +393,7 @@ verification requires every placeholder to be set). Run `pnpm chains:verify` bef
 Dashboard-only (`reports:read`: owner, admin, finance, read-only) invoice and payment CSVs per mode and UTC date range
 (≤ 366 days, ≤ 50,000 rows, else narrow the range). Built in one query and sent with `no-store`; every download is
 audited with its range and row count. Formula-looking cells are prefixed with `'` (OWASP CSV injection). Amounts are
-decimal token units like the API. Merchant-API exports and scheduled reports: later (M10 reports).
+decimal token units like the API. Merchant-API exports: D-084. Scheduled reports: later.
 
 ## D-080 Checkout widget: framed hosted checkout, allowlisted origins (2026-10-26)
 `/widget.js` opens `/checkout/:id?embed=1&origin=<page origin>` in an overlay iframe. The checkout sends
@@ -430,3 +430,11 @@ with first/last IP and User-Agent. A sign-in without a token known for that user
 existed before devices were tracked). Detection is by cookie, not IP or User-Agent: those change on every network and
 browser update, and a new-device email nobody reads helps no one. A cleared cookie means one extra email. The
 `auth.login` audit entry records `new_device`. Devices are not listed or revocable in the dashboard yet.
+
+## D-084 Exports over the merchant API (amends D-079) (2026-10-27)
+`GET /v1/exports/{invoices,payments}.csv` with a secret key's `read` scope, for accounting syncs. Same builders,
+columns, range and row limits as the dashboard; the mode is the key's (no `livemode` parameter, like every API-key
+route); the audit entry names the key as actor. Exports are rate limited to 10 a minute per key (dashboard: per client
+IP) because each one may scan a year of rows. No new scope: `read` already returns every invoice field via the list
+API. Scheduled (emailed) reports stay out: an email with a year of payments is a bigger leak than a link to sign in.
+

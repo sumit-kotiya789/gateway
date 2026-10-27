@@ -30,6 +30,10 @@ describe('Node SDK against the real API', () => {
     expect((await gw.invoices.cancel(inv.id)).status).toBe('cancelled');
     expect((await gw.events.list({ type: 'invoice.cancelled' })).data[0]?.data.invoice_id).toBe(inv.id);
     expect((await gw.balances()).livemode).toBe(false);
+    const csv = await gw.exports.invoicesCsv();
+    expect(csv.split('\r\n')[0]).toMatch(/^id,created_at,status,/);
+    expect(csv).toContain(inv.id);
+    await expect(gw.exports.paymentsCsv({ from: '2026-02-01', to: '2026-01-01' })).rejects.toMatchObject({ status: 400 });
 
     const err = await gw.invoices.create({ amount: '0', token: 'evm-local:usdt' }).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(GatewayError);

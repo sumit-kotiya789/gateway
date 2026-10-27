@@ -29,11 +29,13 @@ export interface GatewayOptions {
 }
 
 type Query = Record<string, string | number | boolean | undefined>;
+type ExportRange = { from?: string; to?: string };
 
 export class Gateway {
   readonly invoices;
   readonly paymentLinks;
   readonly events;
+  readonly exports;
   private readonly base: string;
   private readonly fetchFn: typeof fetch;
 
@@ -58,16 +60,21 @@ export class Gateway {
       retrieve: (id: string) => r<GatewayEvent>('GET', `/v1/events/${encodeURIComponent(id)}`),
       list: (params: { limit?: number; starting_after?: string; type?: string } = {}) => r<Page<GatewayEvent>>('GET', '/v1/events', { query: { ...params } }),
     };
+    // CSV text for the key's mode; `from` / `to` are inclusive UTC dates (YYYY-MM-DD), default the last 31 days.
+    this.exports = {
+      invoicesCsv: (params: ExportRange = {}) => r<string>('GET', '/v1/exports/invoices.csv', { query: { ...params }, csv: true }),
+      paymentsCsv: (params: ExportRange = {}) => r<string>('GET', '/v1/exports/payments.csv', { query: { ...params }, csv: true }),
+    };
   }
 
   balances(): Promise<{ livemode: boolean; data: Balance[] }> {
     return this.request('GET', '/v1/balances');
   }
 
-  private async request<T>(method: 'GET' | 'POST', path: string, o: { body?: unknown; query?: Query; idempotencyKey?: string } = {}): Promise<T> {
+  private async request<T>(method: 'GET' | 'POST', path: string, o: { body?: unknown; query?: Query; idempotencyKey?: string; csv?: boolean } = {}): Promise<T> {
     const url = new URL(this.base + path);
     for (const [k, v] of Object.entries(o.query ?? {})) if (v !== undefined) url.searchParams.set(k, String(v));
-    const headers: Record<string, string> = { authorization: `Bearer ${this.opts.apiKey}`, accept: 'application/json' };
+    const headers: Record<string, string> = { authorization: `Bearer ${this.opts.apiKey}`, accept: o.csv ? 'text/csv, application/json' : 'application/json' };
     if (o.body !== undefined) headers['content-type'] = 'application/json';
     if (o.idempotencyKey) headers['idempotency-key'] = o.idempotencyKey;
     // GETs are naturally idempotent; POSTs only with a key.
@@ -94,6 +101,7 @@ export class Gateway {
         continue;
       }
       const text = await res.text();
+      if (o.csv && res.ok) return text as T;
       const data: unknown = text ? JSON.parse(text) : undefined;
       if (!res.ok) {
         const e = (data as { error?: { code?: string; message?: string; request_id?: string; details?: unknown } } | undefined)?.error;
