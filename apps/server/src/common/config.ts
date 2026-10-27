@@ -57,6 +57,8 @@ const schema = z
     FEATURE_CUSTODIAL: z.stringbool().default(false),
     // Lets webhooks reach private/loopback addresses (local receivers in dev and tests). Refused in production.
     WEBHOOK_ALLOW_PRIVATE_NETWORKS: z.stringbool().default(false),
+    // Live withdrawals at or above this amount (token units) need two different admins; below, one (D-090).
+    WITHDRAWAL_TWO_PERSON_MIN: z.string().regex(/^\d+(\.\d+)?$/).default('10000'),
     // Custodial (M7): the worker asks the signer to sign sweeps and payouts. Required when FEATURE_CUSTODIAL is on.
     SIGNER_URL: z
       .union([z.literal(''), z.url()])

@@ -156,6 +156,16 @@ Custodial mode is off unless `FEATURE_CUSTODIAL=true`, which also needs `SIGNER_
 - `status = failed`, `last_error = sweep_reverted`: the next round plans a new sweep automatically. Any other failed
   sweep (`over_booked`, `not_our_address`, `wrong_destination`, `wallet_mismatch`) is an incident: data and keys
   disagree. Pause the signer and investigate before anything else moves.
+## Withdrawals (M7)
+- Approval queue: admin console → Withdrawals (or `GET /admin/v1/withdrawals`). Check the merchant, the amount
+  against its history, and that the payout address was not changed recently (dashboard audit log) before approving.
+- Approved but not sent: `select id, status, attempts, last_error, next_attempt_at from withdrawals where status = 'approved';`
+  `over_limit` / `no_limits`: `SIGNER_LIMITS` (24 h window; raise it in the signer's config only after review).
+  `insufficient_funds` / `needs_gas`: refill the hot wallet from cold (two signers) or fund it with BNB.
+  `paused`: the signer is paused.
+- Failed with `payout_address_changed`, `merchant_inactive`, `payouts_frozen`: released automatically; the merchant
+  requests again if appropriate.
+
 ## Hot wallet compromise (M7)
 ## Emergency kill switch (M7)
 ## Key rotation

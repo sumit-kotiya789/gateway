@@ -198,7 +198,8 @@ describe('custody mode selection', () => {
 
   it('custodial without a platform wallet for the mode -> 503', async () => {
     const mid = await merchant('custodial');
-    await expect(alloc(mid, bsc, true, true)).rejects.toMatchObject({ code: 'service_unavailable' });
+    // evm platform wallets exist for both modes in the shared test DB; no family has one for tron.
+    await expect(alloc(mid, { ...local, family: 'tron' }, false, true)).rejects.toMatchObject({ code: 'service_unavailable' });
   });
 
   it('unknown merchant -> 404', async () => {

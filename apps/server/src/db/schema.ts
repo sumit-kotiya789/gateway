@@ -787,7 +787,9 @@ export const ledgerAccountKind = pgEnum('ledger_account_kind', [
   'merchant_available',
   'merchant_withdrawing',
 ]);
-export const ledgerJournalKind = pgEnum('ledger_journal_kind', ['payment', 'fee', 'fee_topup', 'settlement', 'sweep']);
+export const ledgerJournalKind = pgEnum('ledger_journal_kind', ['payment', 'fee', 'fee_topup', 'settlement', 'sweep', 'withdrawal_hold', 'withdrawal', 'withdrawal_release']);
+/** Journal kinds that book no invoice. */
+export const NON_INVOICE_JOURNAL_KINDS = ['fee_topup', 'withdrawal_hold', 'withdrawal', 'withdrawal_release'] as const;
 /** Account kinds owned by the platform (merchant_id null); every other kind belongs to one merchant. */
 export const PLATFORM_ACCOUNT_KINDS = ['platform_fee_revenue', 'platform_topups', 'custody_deposits', 'custody_hot', 'custody_cold'] as const;
 
@@ -833,6 +835,7 @@ export const ledgerJournals = pgTable(
     paymentId: uuid('payment_id').references(() => payments.id),
     topupId: uuid('topup_id').references(() => feeTopups.id),
     sweepId: uuid('sweep_id').references((): AnyPgColumn => sweeps.id),
+    withdrawalId: uuid('withdrawal_id').references((): AnyPgColumn => withdrawals.id),
     createdAt: createdAt(),
   },
   (t) => [
@@ -844,7 +847,9 @@ export const ledgerJournals = pgTable(
     check('ledger_journals_sweep_ref', sql`(${t.kind} = 'sweep') = (${t.sweepId} is not null)`),
     index('ledger_journals_merchant_idx').on(t.merchantId, t.livemode),
     check('ledger_journals_payment_ref', sql`(${t.kind} = 'payment') = (${t.paymentId} is not null)`),
-    check('ledger_journals_invoice_ref', sql`(${t.kind} = 'fee_topup') = (${t.invoiceId} is null)`),
+    check('ledger_journals_invoice_ref', sql`(${t.kind} in ('fee_topup', 'withdrawal_hold', 'withdrawal', 'withdrawal_release')) = (${t.invoiceId} is null)`),
+    check('ledger_journals_withdrawal_ref', sql`(${t.kind} in ('withdrawal_hold', 'withdrawal', 'withdrawal_release')) = (${t.withdrawalId} is not null)`),
+    uniqueIndex('ledger_journals_withdrawal_uq').on(t.withdrawalId, t.kind).where(sql`${t.withdrawalId} is not null`),
     check('ledger_journals_topup_ref', sql`(${t.kind} = 'fee_topup') = (${t.topupId} is not null)`),
   ],
 );
@@ -1050,5 +1055,85 @@ export const signerSignatures = pgTable(
     uniqueIndex('signer_signatures_intent_uq').on(t.intentKind, t.intentId),
     uniqueIndex('signer_signatures_nonce_uq').on(t.chainId, sql`lower(${t.fromAddress})`, t.nonce),
     index('signer_signatures_day_idx').on(t.tokenId, t.createdAt),
+  ],
+);
+
+// ---------------------------------------------------------------- M7d: payout addresses and withdrawals
+
+/**
+ * Where a custodial merchant's withdrawals go, per mode and family (M7d, D-090). The newest row whose `activates_at`
+ * has passed (and was not cancelled) is the current one. Live addresses activate 24 h after registration (owners are
+ * emailed); test addresses at once. Rows never change except a pending one being cancelled.
+ */
+export const payoutAddresses = pgTable(
+  'payout_addresses',
+  {
+    id: id(),
+    merchantId: uuid('merchant_id')
+      .notNull()
+      .references(() => merchants.id),
+    livemode: boolean('livemode').notNull(),
+    family: chainFamily('family').notNull(),
+    address: text('address').notNull(),
+    label: text('label'),
+    createdBy: uuid('created_by')
+      .notNull()
+      .references(() => merchantUsers.id),
+    activatesAt: tstz('activates_at').notNull(),
+    cancelledAt: tstz('cancelled_at'),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index('payout_addresses_merchant_idx').on(t.merchantId, t.livemode, t.family, t.activatesAt),
+    check('payout_addresses_address', sql`${t.address} ~ '^0x[0-9a-fA-F]{40}$'`),
+    check('payout_addresses_label', sql`${t.label} is null or char_length(${t.label}) <= 100`),
+  ],
+);
+
+export const withdrawalStatus = pgEnum('withdrawal_status', ['pending_approval', 'approved', 'sent', 'confirmed', 'failed', 'rejected', 'cancelled']);
+
+/**
+ * A custodial payout (M7d, D-090). The amount is held (merchant_available -> merchant_withdrawing) when requested;
+ * it leaves custody when the transfer confirms, or goes back to available when rejected, cancelled or reverted.
+ */
+export const withdrawals = pgTable(
+  'withdrawals',
+  {
+    id: id(),
+    merchantId: uuid('merchant_id')
+      .notNull()
+      .references(() => merchants.id),
+    livemode: boolean('livemode').notNull(),
+    chainId: text('chain_id')
+      .notNull()
+      .references(() => chains.id),
+    tokenId: text('token_id')
+      .notNull()
+      .references(() => tokens.id),
+    amount: money('amount').notNull(),
+    payoutAddressId: uuid('payout_address_id')
+      .notNull()
+      .references(() => payoutAddresses.id),
+    toAddress: text('to_address').notNull(),
+    status: withdrawalStatus('status').notNull(),
+    // How many distinct admins must approve (0: auto-approved, test mode).
+    approvalsRequired: integer('approvals_required').notNull(),
+    approvedBy: uuid('approved_by').array().notNull().default(sql`'{}'`),
+    requestedBy: text('requested_by').notNull(), // 'user:<id>' or 'api_key:<id>'
+    decisionReason: text('decision_reason'),
+    txHash: text('tx_hash'),
+    blockNumber: bigint('block_number', { mode: 'bigint' }),
+    attempts: integer('attempts').notNull().default(0),
+    nextAttemptAt: tstz('next_attempt_at').notNull().defaultNow(),
+    lastError: text('last_error'),
+    confirmedAt: tstz('confirmed_at'),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index('withdrawals_merchant_idx').on(t.merchantId, t.livemode, t.createdAt),
+    index('withdrawals_due_idx').on(t.nextAttemptAt).where(sql`${t.status} in ('approved', 'sent')`),
+    index('withdrawals_status_idx').on(t.status),
+    check('withdrawals_amount', sql`${t.amount} > 0`),
+    check('withdrawals_approvals', sql`${t.approvalsRequired} between 0 and 2 and cardinality(${t.approvedBy}) <= ${t.approvalsRequired}`),
   ],
 );

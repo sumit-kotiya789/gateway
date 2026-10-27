@@ -30,6 +30,7 @@ export class Keyring {
   account(path: string): PrivateKeyAccount {
     if (!PATH_RE.test(path)) throw new Error('invalid derivation path');
     const k = this.root.derive(path);
+    /* v8 ignore next -- a key derived from a master seed always has its private key */
     if (!k.privateKey) throw new Error('derivation produced no private key');
     return privateKeyToAccount(bytesToHex(k.privateKey));
   }

@@ -14,7 +14,7 @@ import { Keyring } from '../../../signer/src/keys.js';
 import { createSignerClient } from '../../src/modules/custody/signer-client.js';
 import { authHeader, requestHandler } from '../../../signer/src/server.js';
 import { createSigner, Refusal } from '../../../signer/src/signer.js';
-import { LOCAL_USDT, TEST_MNEMONIC, buildTestApp, ensureLocalRegistry, ensurePlatformCustody, merchantWithKey, ownerPool } from './helpers.js';
+import { LOCAL_USDT, TEST_MNEMONIC, buildTestApp, ensureLiveSimRegistry, ensureLocalRegistry, ensurePlatformCustody, merchantWithKey, ownerPool } from './helpers.js';
 
 const t = buildTestApp({ FEATURE_CUSTODIAL: 'true' });
 const { app, clock, deps } = t;
@@ -26,14 +26,15 @@ let custody: Awaited<ReturnType<typeof ensurePlatformCustody>>;
 
 /** In-memory chain: balances and nonces the test sets. */
 const chain = {
-  id: 31337,
+  /** Set to make the RPC answer the wrong network. */
+  wrongChain: false,
   gasPrice: 3n * GWEI,
   native: new Map<string, bigint>(),
   token: new Map<string, bigint>(),
   nonces: new Map<string, bigint>(),
 };
 const rpc: ChainRpc = {
-  chainId: async () => chain.id,
+  chainId: async () => 0,
   pendingNonce: async (a) => chain.nonces.get(a.toLowerCase()) ?? 0n,
   gasPrice: async () => chain.gasPrice,
   nativeBalance: async (a) => chain.native.get(a.toLowerCase()) ?? 0n,
@@ -51,13 +52,12 @@ beforeAll(async () => {
   signerPool = new pg.Pool({ connectionString: url.toString(), max: 3 });
 });
 afterAll(async () => {
-  await owner.query('update signer_controls set paused = false where id = 1');
   await signerPool.end();
   await t.close();
   await owner.end();
 });
 
-function makeSigner(env: Record<string, string> = {}) {
+function makeSigner(env: Record<string, string> = {}, mnemonic = TEST_MNEMONIC) {
   const config = loadSignerConfig({
     SIGNER_DATABASE_URL: 'postgres://unused@localhost/db',
     SIGNER_HMAC_SECRET: 'h'.repeat(32),
@@ -65,29 +65,48 @@ function makeSigner(env: Record<string, string> = {}) {
     SIGNER_SEED_KEK: Buffer.alloc(32, 7).toString('base64'),
     ...env,
   });
-  return createSigner({ pool: signerPool, keyring: Keyring.fromMnemonic(TEST_MNEMONIC), config, rpcFor: () => rpc });
+  return createSigner({
+    pool: signerPool,
+    keyring: Keyring.fromMnemonic(mnemonic),
+    config,
+    rpcFor: (row) => ({ ...rpc, chainId: async () => (chain.wrongChain ? 1 : row.evm_chain_id) }),
+  });
 }
 
 let logIndex = 0;
 /** A custodial invoice with a confirmed payment of `amount` and a pending sweep of `sweepAmount` (default: all of it). */
-async function paidDeposit(amount: bigint, sweepAmount = amount) {
-  const m = await merchantWithKey(app, clock, owner);
+async function paidDeposit(amount: bigint, sweepAmount: bigint | null = amount, where: { chain: string; livemode: boolean; m?: Awaited<ReturnType<typeof merchantWithKey>> } = { chain: 'evm-local', livemode: false }) {
+  const m = where.m ?? (await merchantWithKey(app, clock, owner, { livemode: where.livemode }));
   await owner.query("update merchants set custody_mode = 'custodial' where id = $1", [m.merchantId]);
-  const inv = (await m.api('POST', '/v1/invoices', { amount: '1', token: 'evm-local:usdt' })).json<{ id: string; deposit_address: string }>();
+  const token = `${where.chain}:usdt`;
+  const inv = (await m.api('POST', '/v1/invoices', { amount: '1', token })).json<{ id: string; deposit_address: string }>();
   const r = await owner.query<{ id: string }>(
     `insert into payments (id, merchant_id, livemode, invoice_id, chain_id, token_id, tx_hash, log_index, from_address, to_address, amount, block_number, block_hash, block_time, required_confirmations)
-     values (gen_random_uuid(), $1, false, $2, 'evm-local', 'evm-local:usdt', '0xfeed', $3, '0x0000000000000000000000000000000000000001', $4, $5, 7, '0x01', now(), 2) returning id`,
-    [m.merchantId, inv.id, 1000 + logIndex++, inv.deposit_address, amount.toString()],
+     values (gen_random_uuid(), $1, $6, $2, $7, $8, '0xfeed', $3, '0x0000000000000000000000000000000000000001', $4, $5, 7, '0x01', now(), 2) returning id`,
+    [m.merchantId, inv.id, 1000 + logIndex++, inv.deposit_address, amount.toString(), where.livemode, where.chain, token],
   );
   const sweepId = await withSystem(deps.db, async (tx) => {
     const [p] = await tx.update(payments).set({ status: 'confirmed', confirmedAt: new Date(clock()) }).where(eq(payments.id, r.rows[0]?.id ?? '')).returning();
     if (!p) throw new Error('payment missing');
     await postPayment(tx, p);
     await transitionInvoice(deps, tx, inv.id, 'detected', 'test');
+    if (sweepAmount === null) return '';
     const [d] = await tx.execute<{ id: string }>(`select deposit_address_id as id from invoices where id = '${inv.id}'`).then((x) => x.rows);
     const [s] = await tx
       .insert(sweeps)
-      .values({ merchantId: m.merchantId, livemode: false, chainId: 'evm-local', tokenId: 'evm-local:usdt', depositAddressId: d?.id ?? '', invoiceId: inv.id, fromAddress: inv.deposit_address, toAddress: custody.hot, amount: sweepAmount })
+      .values({
+        merchantId: m.merchantId,
+        livemode: where.livemode,
+        chainId: where.chain,
+        tokenId: token,
+        depositAddressId: d?.id ?? '',
+        invoiceId: inv.id,
+        fromAddress: inv.deposit_address,
+        toAddress: where.livemode ? custody.liveHot : custody.hot,
+        amount: sweepAmount,
+        // Signed directly by these tests: never due for a worker run in another test file.
+        nextAttemptAt: new Date(Date.now() + 365 * 86_400_000),
+      })
       .returning();
     return s?.id ?? '';
   });
@@ -137,19 +156,83 @@ describe('signer', () => {
     await expect(signer.sign({ kind: 'sweep', id: over.sweepId })).rejects.toEqual(refusal('over_booked'));
 
     const d = await paidDeposit(1n * E18);
-    await owner.query("update signer_controls set paused = true, reason = 'test' where id = 1");
-    await expect(signer.sign({ kind: 'gas_topup', id: d.sweepId })).rejects.toEqual(refusal('paused'));
-    await owner.query('update signer_controls set paused = false where id = 1');
+    // The admin switch, seen only by this signer: set inside a transaction that is rolled back, so test files
+    // signing in parallel never see a paused signer.
+    const c = await owner.connect();
+    try {
+      await c.query('begin');
+      await c.query("update signer_controls set paused = true, reason = 'test' where id = 1");
+      const config = loadSignerConfig({ SIGNER_DATABASE_URL: 'postgres://unused@localhost/db', SIGNER_HMAC_SECRET: 'h'.repeat(32), SIGNER_SEED_FILE: '/unused', SIGNER_SEED_KEK: Buffer.alloc(32, 7).toString('base64') });
+      const isolated = createSigner({ pool: { query: (q: string, a: unknown[]) => c.query(q, a) } as unknown as pg.Pool, keyring: Keyring.fromMnemonic(TEST_MNEMONIC), config, rpcFor: () => rpc });
+      await expect(isolated.sign({ kind: 'gas_topup', id: d.sweepId })).rejects.toEqual(refusal('paused'));
+    } finally {
+      await c.query('rollback');
+      c.release();
+    }
     await expect(makeSigner({ SIGNER_PAUSED: 'true' }).sign({ kind: 'gas_topup', id: d.sweepId })).rejects.toEqual(refusal('paused'));
 
     chain.gasPrice = 50n * GWEI;
     await expect(signer.sign({ kind: 'gas_topup', id: d.sweepId })).rejects.toEqual(refusal('gas_price_too_high'));
     chain.gasPrice = 3n * GWEI;
-    chain.id = 1;
+    chain.wrongChain = true;
     await expect(signer.sign({ kind: 'gas_topup', id: d.sweepId })).rejects.toEqual(refusal('rpc_wrong_chain'));
-    chain.id = 31337;
-    await expect(signer.sign({ kind: 'withdrawal', id: d.sweepId })).rejects.toEqual(refusal('unsupported'));
+    chain.wrongChain = false;
+    await expect(makeSigner({ SIGNER_MAX_GAS_TOPUP: '0.0000001' }).sign({ kind: 'gas_topup', id: d.sweepId })).rejects.toEqual(refusal('over_limit'));
+    await expect(makeSigner({}, 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about').sign({ kind: 'gas_topup', id: d.sweepId })).rejects.toEqual(
+      refusal('not_our_address'),
+    );
+    await owner.query("update sweeps set status = 'failed' where id = $1", [d.sweepId]);
+    await expect(signer.sign({ kind: 'gas_topup', id: d.sweepId })).rejects.toEqual(refusal('wrong_status'));
+    await expect(signer.sign({ kind: 'treasury', id: d.sweepId })).rejects.toEqual(refusal('unsupported'));
     await expect(signer.sign({ kind: 'sweep', id: '00000000-0000-7000-8000-000000000000' })).rejects.toBeInstanceOf(Refusal);
+  });
+
+  it('refuses on a disabled chain, without an active hot wallet, and to a hot wallet that was replaced', async () => {
+    const signer = makeSigner();
+    // A chain only this test uses, so switching it off cannot disturb other test files.
+    await owner.query(`insert into chains (id, family, name, evm_chain_id, rpc_urls, native_symbol, native_decimals, block_time_ms, default_confirmations, reorg_depth, finality, testnet, enabled)
+      values ('evm-sgn', 'evm', 'Signer test chain', 31339, '{}', 'ETH', 18, 1000, 2, 16, 'tag', true, true) on conflict do nothing`);
+    await owner.query(`insert into tokens (id, chain_id, symbol, name, contract_address, decimals, min_confirmations, min_amount, enabled)
+      values ('evm-sgn:usdt', 'evm-sgn', 'USDT', 'Signer test USDT', $1, 18, 2, 1, true) on conflict do nothing`, [LOCAL_USDT]);
+    const off = await paidDeposit(1n * E18, 1n * E18, { chain: 'evm-sgn', livemode: false });
+    await owner.query("update chains set enabled = false where id = 'evm-sgn'");
+    await expect(signer.sign({ kind: 'gas_topup', id: off.sweepId })).rejects.toEqual(refusal('chain_disabled'));
+
+    // Live hot wallet retired: nothing signs to it and no new sweep is planned for live funds.
+    await ensureLiveSimRegistry(owner);
+    const live = await paidDeposit(1n * E18, 1n * E18, { chain: 'evm-mainsim', livemode: true });
+    chain.token.set(live.address, 1n * E18);
+    chain.native.set(live.address, 10n ** 16n);
+    // Inside a transaction that is rolled back, seen only by a signer bound to it: other test files keep the hot wallet.
+    const c = await owner.connect();
+    try {
+      await c.query('begin');
+      await c.query("update platform_wallets set retired_at = now() where kind = 'hot' and livemode and retired_at is null");
+      const config = loadSignerConfig({ SIGNER_DATABASE_URL: 'postgres://unused@localhost/db', SIGNER_HMAC_SECRET: 'h'.repeat(32), SIGNER_SEED_FILE: '/unused', SIGNER_SEED_KEK: Buffer.alloc(32, 7).toString('base64') });
+      const bound = createSigner({
+        pool: { query: (q: string, a: unknown[]) => c.query(q, a) } as unknown as pg.Pool,
+        keyring: Keyring.fromMnemonic(TEST_MNEMONIC),
+        config,
+        rpcFor: (row) => ({ ...rpc, chainId: async () => row.evm_chain_id }),
+      });
+      await expect(bound.sign({ kind: 'sweep', id: live.sweepId })).rejects.toEqual(refusal('no_platform_wallet'));
+      // A replacement hot wallet (same seed, next index): the old sweep's destination is no longer allowed.
+      const next = "m/44'/60'/10'/0/1";
+      await c.query("insert into platform_wallets (id, family, livemode, kind, address, derivation_path) values (gen_random_uuid(), 'evm', true, 'hot', $1, $2)", [custody.keyring.address(next), next]);
+      await expect(bound.sign({ kind: 'sweep', id: live.sweepId })).rejects.toEqual(refusal('wrong_destination'));
+    } finally {
+      await c.query('rollback');
+      c.release();
+    }
+    expect((await signer.sign({ kind: 'sweep', id: live.sweepId })).reused).toBe(false);
+  });
+
+  it('two identical requests at once return the same transaction', async () => {
+    const d = await paidDeposit(1n * E18);
+    const signer = makeSigner();
+    const [a, b] = await Promise.all([signer.sign({ kind: 'gas_topup', id: d.sweepId }), signer.sign({ kind: 'gas_topup', id: d.sweepId })]);
+    expect(a.raw_tx).toBe(b.raw_tx);
+    expect((await owner.query('select count(*)::int as n from signer_signatures where intent_id = $1', [d.sweepId])).rows[0]).toEqual({ n: 1 });
   });
 
   it('nonces: never reused for one sender, at least the chain pending nonce', async () => {
@@ -181,7 +264,7 @@ describe('signer', () => {
       const ok = await call(body, authHeader(secret, body, now));
       expect(ok.status).toBe(200);
       expect(await ok.json()).toMatchObject({ reused: false, tx_hash: expect.stringMatching(/^0x[0-9a-f]{64}$/) as unknown });
-      const w = JSON.stringify({ kind: 'withdrawal', id: d.sweepId });
+      const w = JSON.stringify({ kind: 'treasury', id: d.sweepId });
       const refused = await call(w, authHeader(secret, w, now));
       expect(refused.status).toBe(409);
       expect(await refused.json()).toMatchObject({ error: 'unsupported' });
@@ -190,7 +273,7 @@ describe('signer', () => {
       // The worker's client: same answers through its HMAC-signed requests.
       const client = createSignerClient({ ...deps.config, SIGNER_URL: `http://127.0.0.1:${String(port)}`, SIGNER_HMAC_SECRET: secret });
       expect(await client.sign('gas_topup', d.sweepId)).toMatchObject({ ok: true, tx: { reused: true } });
-      expect(await client.sign('withdrawal', d.sweepId)).toEqual({ ok: false, code: 'unsupported', message: expect.any(String) as unknown });
+      expect(await client.sign('treasury', d.sweepId)).toEqual({ ok: false, code: 'unsupported', message: expect.any(String) as unknown });
       const wrong = createSignerClient({ ...deps.config, SIGNER_URL: `http://127.0.0.1:${String(port)}`, SIGNER_HMAC_SECRET: 'w'.repeat(32) });
       await expect(wrong.sign('sweep', d.sweepId)).rejects.toThrow(/HTTP 401/);
     } finally {

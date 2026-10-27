@@ -82,6 +82,21 @@ Worker queue `custody` (every 15 s, only with `FEATURE_CUSTODIAL`):
 Unmined transactions are rebroadcast with the same bytes; only a mined revert fails a sweep. Reconciliation:
 `sweep_journal`, `negative_custody`. Metrics: `gw_sweeps_open`, `gw_sweep_oldest_open_seconds`, `gw_sweeps_failed_24h`.
 
+## Withdrawals (M7d, D-090)
+1. **Payout address** (dashboard, owner + TOTP): EIP-55 checksum checked; live addresses become current 24 h after
+   they are added (owners emailed; cancellable meanwhile); test addresses at once. Withdrawals always go to the
+   current one; a newer address or a cancellation stops older requests (the signer re-checks).
+2. **Request** (dashboard: owner/finance + TOTP; API: `withdrawals:write`): at most the available balance, held at
+   once (`withdrawal_hold`). Refused while suspended or `payouts_frozen`. Test mode: approved at once.
+3. **Approval** (admin console, `withdrawals:approve` + TOTP): live needs one admin; at or above
+   `WITHDRAWAL_TWO_PERSON_MIN` (token units) two different admins. Rejecting (or the merchant cancelling) releases.
+4. **Sending** (custody worker): the signer re-checks status and approvals, merchant state and flags, current payout
+   address, the hold, its own per-token limits (per transaction, per 24 h) and the hot wallet's token and gas, then
+   signs a token transfer from the hot wallet. Confirmed: `withdrawal` journal (leaves custody). Reverted or refused
+   as wrong: `withdrawal_release` (back to available). Refused for the moment (paused, limits, hot wallet short):
+   waits with backoff; admins see `last_error`.
+5. Webhook events `withdrawal.<status>`; owners are emailed on request and on the outcome.
+
 ## Merchant responsibilities (non-custodial)
 
 Keep their seed safe; supply an account-level xpub (not an xprv or seed, which are refused); set their wallet's address

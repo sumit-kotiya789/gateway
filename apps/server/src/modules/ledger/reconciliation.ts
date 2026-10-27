@@ -42,6 +42,21 @@ const CHECKS = {
   /** Platform custody accounts never go negative (nothing leaves custody that was not booked into it). */
   negative_custody: sql`select a.id from ledger_accounts a join ledger_entries e on e.account_id = a.id
     where a.kind in ('custody_deposits', 'custody_hot', 'custody_cold') group by a.id having sum(e.amount) < 0`,
+  /**
+   * Every withdrawal's journals match its state: a hold of its amount always; then exactly one payout (confirmed) or
+   * one release (failed, rejected, cancelled), and neither while it is still open.
+   */
+  withdrawal_journal: sql`select w.id from withdrawals w
+    left join lateral (select
+        coalesce(sum(-e.amount) filter (where j.kind = 'withdrawal_hold'), 0) as hold,
+        coalesce(sum(e.amount) filter (where j.kind = 'withdrawal'), 0) as paid,
+        coalesce(sum(e.amount) filter (where j.kind = 'withdrawal_release'), 0) as released
+      from ledger_journals j join ledger_entries e on e.journal_id = j.id
+      join ledger_accounts a on a.id = e.account_id and a.kind = 'merchant_withdrawing'
+      where j.withdrawal_id = w.id) x on true
+    where x.hold <> w.amount
+       or x.paid <> case when w.status = 'confirmed' then w.amount else 0 end
+       or x.released <> case when w.status in ('failed', 'rejected', 'cancelled') then w.amount else 0 end`,
   /** No merchant balance is ever negative (a withdrawal can never take more than was available). */
   negative_merchant_balance: sql`select a.id from ledger_accounts a join ledger_entries e on e.account_id = a.id
     where a.kind in ('merchant_pending', 'merchant_available', 'merchant_withdrawing') group by a.id having sum(e.amount) > 0`,

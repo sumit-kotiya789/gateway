@@ -24,6 +24,7 @@ import { checkoutRoutes } from './modules/checkout/checkout.routes.js';
 import { invoiceDashboardRoutes, invoiceRoutes } from './modules/invoices/invoices.routes.js';
 import { feeTopupDashboardRoutes, ledgerDashboardRoutes, ledgerRoutes } from './modules/ledger/ledger.routes.js';
 import { HttpMetrics, metricsRoutes } from './modules/metrics/metrics.js';
+import { withdrawalAdminRoutes, withdrawalDashboardRoutes, withdrawalRoutes } from './modules/withdrawals/withdrawals.routes.js';
 import { webhookDashboardRoutes } from './modules/webhooks/webhooks.routes.js';
 import { xpubDashboardRoutes } from './modules/xpubs/xpubs.routes.js';
 import { inviteAuthRoutes, teamDashboardRoutes } from './modules/team/team.routes.js';
@@ -152,6 +153,7 @@ export function buildApp(logger: FastifyBaseLogger, deps?: Deps) {
   void app.register(feeTopupDashboardRoutes(deps), { prefix: '/v1/dashboard/fee-topups' });
   void app.register(teamDashboardRoutes(deps), { prefix: '/v1/dashboard/team' });
   void app.register(exportDashboardRoutes(deps), { prefix: '/v1/dashboard/exports' });
+  void app.register(withdrawalDashboardRoutes(deps), { prefix: '/v1/dashboard/withdrawals' });
   void app.register(settingsDashboardRoutes(deps), { prefix: '/v1/dashboard/settings' });
   void app.register(inviteAuthRoutes(deps), { prefix: '/v1/dashboard/auth/invite' });
   void app.register(accountRoutes(deps), { prefix: '/v1' });
@@ -160,6 +162,7 @@ export function buildApp(logger: FastifyBaseLogger, deps?: Deps) {
   void app.register(paymentLinkRoutes(deps), { prefix: '/v1' });
   void app.register(ledgerRoutes(deps), { prefix: '/v1' });
   void app.register(exportRoutes(deps), { prefix: '/v1' });
+  void app.register(withdrawalRoutes(deps), { prefix: '/v1' });
   void app.register(checkoutRoutes(deps));
   void app.register(publicPayRoutes(deps));
   void app.register(
@@ -168,6 +171,7 @@ export function buildApp(logger: FastifyBaseLogger, deps?: Deps) {
       await admin.register(adminAuthRoutes(deps), { prefix: '/auth' });
       await admin.register(adminRoutes(deps));
       await admin.register(adminUserRoutes(deps), { prefix: '/admins' });
+      await admin.register(withdrawalAdminRoutes(deps), { prefix: '/withdrawals' });
     },
     { prefix: '/admin/v1' },
   );

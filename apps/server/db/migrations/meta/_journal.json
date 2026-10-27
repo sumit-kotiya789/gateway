@@ -246,6 +246,20 @@
       "when": 1793092851992,
       "tag": "0034_sweep_journal_security",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1793093596549,
+      "tag": "0035_withdrawals",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1793093616061,
+      "tag": "0036_withdrawals_security",
+      "breakpoints": true
     }
   ]
 }

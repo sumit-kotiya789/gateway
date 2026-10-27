@@ -153,6 +153,20 @@ export async function ensureLocalRegistry(owner: pg.Pool): Promise<void> {
     on conflict do nothing`, [LOCAL_USDT]);
 }
 
+/**
+ * A simulated MAINNET chain (testnet = false) for live-mode tests: same mock token address, chain id 31338. Never
+ * reachable: tests that use it fake every RPC call.
+ */
+export async function ensureLiveSimRegistry(owner: pg.Pool): Promise<void> {
+  await owner.query(`insert into chains (id, family, name, evm_chain_id, rpc_urls, native_symbol, native_decimals, block_time_ms,
+      default_confirmations, reorg_depth, finality, testnet, enabled)
+    values ('evm-mainsim', 'evm', 'Simulated mainnet', 31338, $1, 'ETH', 18, 1000, 2, 16, 'tag', false, true)
+    on conflict do nothing`, [['http://127.0.0.1:1']]);
+  await owner.query(`insert into tokens (id, chain_id, symbol, name, contract_address, decimals, min_confirmations, min_amount, enabled)
+    values ('evm-mainsim:usdt', 'evm-mainsim', 'USDT', 'Simulated USDT', $1, 18, 2, 10000000000000000, true)
+    on conflict do nothing`, [LOCAL_USDT]);
+}
+
 /** Random account-level xpub (fresh key every call). */
 export function randomXpub(): string {
   return HDKey.fromMasterSeed(randomBytes(32)).derive("m/44'/60'/0'").publicExtendedKey;
@@ -228,6 +242,7 @@ export async function adminAgent(t: ReturnType<typeof buildTestApp>, owner: pg.P
 /** Standard Anvil/Hardhat test mnemonic: the platform custody seed in every test (never use it for real funds). */
 export const TEST_MNEMONIC = 'test test test test test test test test test test test junk';
 export const CUSTODY_PATHS = { deposits: "m/44'/60'/1'", hot: "m/44'/60'/11'/0/0", gas: "m/44'/60'/21'/0/0" } as const;
+const LIVE_CUSTODY_PATHS = { deposits: "m/44'/60'/0'", hot: "m/44'/60'/10'/0/0", gas: "m/44'/60'/20'/0/0" } as const;
 
 /**
  * Test-mode platform custody from TEST_MNEMONIC: the evm deposit wallet account and the hot and gas wallets. Shared
@@ -237,16 +252,19 @@ export async function ensurePlatformCustody(owner: pg.Pool) {
   const { Keyring } = await import('../../../signer/src/keys.js');
   const k = Keyring.fromMnemonic(TEST_MNEMONIC);
   const xpub = k.xpub(CUSTODY_PATHS.deposits);
-  await owner.query(
-    `insert into wallet_accounts (id, family, livemode, base_path, xpub, key_fingerprint) values (gen_random_uuid(), 'evm', false, $1, $2, $3) on conflict do nothing`,
-    [CUSTODY_PATHS.deposits, xpub, evmDeriver.keyFingerprint(xpub)],
-  );
-  const wallets = { hot: k.address(CUSTODY_PATHS.hot), gas: k.address(CUSTODY_PATHS.gas) };
-  for (const kind of ['hot', 'gas'] as const) {
+  for (const [livemode, paths] of [[false, CUSTODY_PATHS], [true, LIVE_CUSTODY_PATHS]] as const) {
+    const x = k.xpub(paths.deposits);
     await owner.query(
-      `insert into platform_wallets (id, family, livemode, kind, address, derivation_path) values (gen_random_uuid(), 'evm', false, $1, $2, $3) on conflict do nothing`,
-      [kind, wallets[kind], CUSTODY_PATHS[kind]],
+      `insert into wallet_accounts (id, family, livemode, base_path, xpub, key_fingerprint) values (gen_random_uuid(), 'evm', $1, $2, $3, $4) on conflict do nothing`,
+      [livemode, paths.deposits, x, evmDeriver.keyFingerprint(x)],
     );
+    for (const kind of ['hot', 'gas'] as const) {
+      await owner.query(
+        `insert into platform_wallets (id, family, livemode, kind, address, derivation_path) values (gen_random_uuid(), 'evm', $1, $2, $3, $4) on conflict do nothing`,
+        [livemode, kind, k.address(paths[kind]), paths[kind]],
+      );
+    }
   }
+  const wallets = { hot: k.address(CUSTODY_PATHS.hot), gas: k.address(CUSTODY_PATHS.gas), liveHot: k.address(LIVE_CUSTODY_PATHS.hot) };
   return { keyring: k, xpub, ...wallets };
 }

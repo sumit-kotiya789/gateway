@@ -133,20 +133,25 @@ export function createSigner(deps: SignerDeps) {
     );
     if (!s) throw new Refusal('not_found', 'sweep not found');
     if (!statuses.includes(s.status)) throw new Refusal('wrong_status', `sweep is ${s.status}`);
-    if (s.source !== 'platform' || !s.derivation_path.startsWith(`${s.base_path}/`) || keyring.xpub(s.base_path) !== s.xpub) {
-      throw new Refusal('not_our_address', "deposit address is not derived from this signer's seed");
-    }
-    if (!sameAddress(keyring.address(s.derivation_path), s.deposit_address) || !sameAddress(s.deposit_address, s.from_address)) {
-      throw new Refusal('not_our_address', 'deposit address does not match its derivation');
-    }
+    // Platform address, under the wallet account's path, from an account key this seed derives, at exactly the
+    // address the sweep moves (the DB guards say the same; the signer does not rely on them).
+    const ours =
+      s.source === 'platform' &&
+      s.derivation_path.startsWith(`${s.base_path}/`) &&
+      keyring.xpub(s.base_path) === s.xpub &&
+      sameAddress(keyring.address(s.derivation_path), s.deposit_address) &&
+      sameAddress(s.deposit_address, s.from_address);
+    if (!ours) throw new Refusal('not_our_address', "deposit address is not derived from this signer's seed");
     // Never more than the confirmed payments to this address minus what earlier sweeps of it already moved.
-    const b = await one<{ booked: string }>(
+    const b = await one<{ booked: string | null }>(
       `select (coalesce((select sum(p.amount) from payments p join invoices i on i.id = p.invoice_id
                          where i.deposit_address_id = $1 and p.status = 'confirmed'), 0)
              - coalesce((select sum(x.amount) from sweeps x where x.deposit_address_id = $1 and x.status = 'confirmed' and x.id <> $2), 0))::text as booked`,
       [s.deposit_address_id, s.id],
     );
-    if (BigInt(s.amount) > BigInt(b?.booked ?? '0')) throw new Refusal('over_booked', 'sweep amount exceeds what is booked for the address');
+    /* v8 ignore next -- an aggregate without GROUP BY returns exactly one row */
+    if (!b?.booked) throw new Error('booked amount query returned no row');
+    if (BigInt(s.amount) > BigInt(b.booked)) throw new Refusal('over_booked', 'sweep amount exceeds what is booked for the address');
     return s;
   }
 
@@ -174,14 +179,69 @@ export function createSigner(deps: SignerDeps) {
       const data = encodeFunctionData({ abi: erc20Abi, functionName: 'transfer', args: [hot.address as `0x${string}`, amount] });
       return { chain, rpc, fromPath: s.derivation_path, from: s.deposit_address, txTo: s.contract_address, recipient: hot.address, value: 0n, data, gas: tokenGas, gasPrice, tokenId: s.token_id, amount };
     },
+
+    async withdrawal(id) {
+      const w = await one<{
+        status: string;
+        livemode: boolean;
+        merchant_id: string;
+        chain_id: string;
+        token_id: string;
+        amount: string;
+        to_address: string;
+        payout_address_id: string;
+        approvals_required: number;
+        approvals: number;
+        contract_address: string;
+        merchant_status: string;
+        custody_mode: string;
+        frozen: boolean;
+      }>(
+        `select w.status, w.livemode, w.merchant_id, w.chain_id, w.token_id, w.amount::text, w.to_address, w.payout_address_id,
+                w.approvals_required, cardinality(w.approved_by) as approvals, t.contract_address,
+                m.status as merchant_status, m.custody_mode, 'payouts_frozen' = any (m.risk_flags) as frozen
+         from withdrawals w join tokens t on t.id = w.token_id join merchants m on m.id = w.merchant_id where w.id = $1`,
+        [id],
+      );
+      if (!w) throw new Refusal('not_found', 'withdrawal not found');
+      if (w.status !== 'approved') throw new Refusal('wrong_status', `withdrawal is ${w.status}`);
+      /* v8 ignore next -- the withdrawals guard only lets a withdrawal become approved with its approvals */
+      if (w.approvals < w.approvals_required) throw new Refusal('not_approved', 'withdrawal lacks its approvals');
+      if (w.merchant_status !== 'active' || w.custody_mode !== 'custodial') throw new Refusal('merchant_inactive', 'merchant is not an active custodial account');
+      if (w.frozen) throw new Refusal('payouts_frozen', 'payouts are frozen for this merchant');
+      const { chain, rpc, gasPrice } = await chainOf(w.chain_id);
+      // Still the merchant's current payout address (a newer one, or a cancellation, stops older requests).
+      const cur = await one<{ id: string; address: string }>(
+        `select id, address from payout_addresses where merchant_id = $1 and livemode = $2 and family = $3 and cancelled_at is null and activates_at <= now()
+         order by activates_at desc, created_at desc limit 1`,
+        [w.merchant_id, w.livemode, chain.family],
+      );
+      if (cur?.id !== w.payout_address_id || !sameAddress(cur.address, w.to_address)) throw new Refusal('payout_address_changed', 'payout address is no longer current');
+      // The amount is held for exactly this withdrawal, and nothing has released or paid it yet.
+      const j = await one<{ hold: string; other: string }>(
+        `select coalesce(sum(e.amount) filter (where j.kind = 'withdrawal_hold'), 0)::text as hold, count(*) filter (where j.kind <> 'withdrawal_hold')::text as other
+         from ledger_journals j join ledger_entries e on e.journal_id = j.id join ledger_accounts a on a.id = e.account_id and a.kind = 'merchant_withdrawing'
+         where j.withdrawal_id = $1`,
+        [id],
+      );
+      const amount = BigInt(w.amount);
+      /* v8 ignore next -- the hold is posted in the request's own transaction; releases only follow final states */
+      if (BigInt(j?.hold ?? '0') !== -amount || j?.other !== '0') throw new Refusal('hold_mismatch', 'withdrawal hold does not match');
+      const hot = await platformWallet('hot', chain.family, w.livemode);
+      if ((await rpc.tokenBalance(w.contract_address, hot.address)) < amount) throw new Refusal('insufficient_funds', 'hot wallet holds less than the withdrawal');
+      if ((await rpc.nativeBalance(hot.address)) < tokenGas * gasPrice) throw new Refusal('needs_gas', 'hot wallet cannot pay the network fee');
+      const data = encodeFunctionData({ abi: erc20Abi, functionName: 'transfer', args: [w.to_address as `0x${string}`, amount] });
+      return { chain, rpc, fromPath: hot.path, from: hot.address, txTo: w.contract_address, recipient: w.to_address, value: 0n, data, gas: tokenGas, gasPrice, tokenId: w.token_id, amount };
+    },
   };
 
   /** Per-token daily and per-transaction limits for intents that pay out of the hot wallet (withdrawals, treasury). */
   async function checkLimits(kind: IntentKind, plan: Plan): Promise<void> {
     if (kind !== 'withdrawal' && kind !== 'treasury') return;
-    const tokenId = plan.tokenId;
-    const limits = tokenId ? config.SIGNER_LIMITS[tokenId] : undefined;
-    if (!tokenId || !limits) throw new Refusal('no_limits', 'no signer limits configured for this token');
+    // Payouts are token transfers: tokenId is always set here.
+    const tokenId = plan.tokenId ?? '';
+    const limits = config.SIGNER_LIMITS[tokenId];
+    if (!limits) throw new Refusal('no_limits', 'no signer limits configured for this token');
     const t = await one<{ decimals: number }>('select decimals from tokens where id = $1', [tokenId]);
     /* v8 ignore next -- the plan's token came from the database just before */
     if (!t) throw new Refusal('not_found', 'token not found');
@@ -191,7 +251,9 @@ export function createSigner(deps: SignerDeps) {
        where token_id = $1 and intent_kind in ('withdrawal', 'treasury') and created_at > now() - interval '24 hours'`,
       [tokenId],
     );
-    if (BigInt(day?.total ?? '0') + plan.amount > toMinorUnits(limits.per_day, t.decimals)) throw new Refusal('over_limit', 'amount above the 24-hour limit');
+    /* v8 ignore next -- an aggregate without GROUP BY returns exactly one row */
+    if (!day) throw new Error('daily total query returned no row');
+    if (BigInt(day.total) + plan.amount > toMinorUnits(limits.per_day, t.decimals)) throw new Refusal('over_limit', 'amount above the 24-hour limit');
   }
 
   async function priorSignature(intent: Intent): Promise<Signed | undefined> {

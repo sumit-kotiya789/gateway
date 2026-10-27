@@ -52,6 +52,21 @@ export const templates = {
     subject: 'You were removed from a Gateway account',
     text: `You no longer have access to "${p.merchantName}" on Gateway and were signed out.${footer}`,
   }),
+  payoutAddressAdded: (p: { livemode: boolean; address: string; activatesAt: string; dashboardUrl: string }): Rendered => ({
+    subject: 'A new payout address was added',
+    text: `A new ${mode(p.livemode)} payout address was added to your account: ${p.address}\n\nWithdrawals go there from ${p.activatesAt}. Until then nothing changes.\n\nIf you did not do this, cancel it now under Withdrawals and change your password:\n${p.dashboardUrl}/#/withdrawals${footer}`,
+  }),
+  withdrawalRequested: (p: { livemode: boolean; amount: string; symbol: string; address: string }): Rendered => ({
+    subject: 'Withdrawal requested',
+    text: `A ${mode(p.livemode)} withdrawal of ${p.amount} ${p.symbol} to ${p.address} was requested.\n\nIf you did not do this, cancel it in the dashboard (while it awaits approval), change your password and contact support.${footer}`,
+  }),
+  withdrawalDone: (p: { status: 'confirmed' | 'failed' | 'rejected'; amount: string; symbol: string; address: string; txHash: string | null; reason: string | null }): Rendered => ({
+    subject: p.status === 'confirmed' ? 'Withdrawal sent' : 'Withdrawal not sent',
+    text:
+      p.status === 'confirmed'
+        ? `Your withdrawal of ${p.amount} ${p.symbol} to ${p.address} is confirmed on chain (transaction ${p.txHash ?? ''}).${footer}`
+        : `Your withdrawal of ${p.amount} ${p.symbol} to ${p.address} was ${p.status}${p.reason ? `: ${p.reason}` : ''}. The amount is available again.${footer}`,
+  }),
   feeBalance: (p: { status: 'low' | 'blocked'; token: string; prepaid: string; symbol: string }): Rendered => ({
     subject: p.status === 'blocked' ? 'Live invoices paused: prepaid fees used up' : 'Prepaid fee balance is running low',
     text:

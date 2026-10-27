@@ -1,7 +1,8 @@
 // Worker process: BullMQ queues for background jobs. `maintenance`: invoice expiry, retention purges, ledger reconciliation,
 // xpub changes whose cooldown elapsed.
 // `webhooks`: outbound delivery, on its own queue so slow merchant endpoints never delay maintenance. `emails`: the email
-// outbox (M10), likewise separate from a slow SMTP server. `custody`: sweeps (M7c), only with FEATURE_CUSTODIAL.
+// outbox (M10), likewise separate from a slow SMTP server. `custody`: sweeps and withdrawals (M7), only with
+// FEATURE_CUSTODIAL.
 // Every job handler is idempotent and safe to run on several workers at once.
 import { Queue, Worker } from 'bullmq';
 import { Redis } from 'ioredis';
@@ -19,6 +20,7 @@ import { deliverDueEmails } from './modules/email/outbox.js';
 import { createMailer, type Mailer } from './modules/email/mailer.js';
 import { chainTxFor } from './modules/custody/chain-tx.js';
 import { createSignerClient } from './modules/custody/signer-client.js';
+import { advanceWithdrawals } from './modules/custody/payouts.js';
 import { advanceSweeps, planSweeps, type SweeperEnv } from './modules/custody/sweeper.js';
 
 const QUEUE = 'maintenance';
@@ -80,10 +82,10 @@ export async function runEmailJob(deps: Deps, mailer: Mailer): Promise<{ sent: n
   return total;
 }
 
-/** Plans new sweeps, then moves due ones one step forward. */
-export async function runCustodyJob(deps: Deps, env: SweeperEnv): Promise<Record<string, number>> {
+/** Plans new sweeps, then moves due sweeps and withdrawals one step forward. */
+export async function runCustodyJob(deps: Deps, env: SweeperEnv): Promise<Record<string, unknown>> {
   const planned = await planSweeps(deps);
-  return { planned, ...(await advanceSweeps(deps, env)) };
+  return { planned, sweeps: await advanceSweeps(deps, env), withdrawals: await advanceWithdrawals(deps, env) };
 }
 
 async function main(): Promise<void> {

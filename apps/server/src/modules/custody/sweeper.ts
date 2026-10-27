@@ -66,6 +66,8 @@ export async function planSweeps(deps: Deps, scope: SweepScope = {}): Promise<nu
         .select({ address: platformWallets.address })
         .from(platformWallets)
         .where(and(eq(platformWallets.kind, 'hot'), eq(platformWallets.family, r.family), eq(platformWallets.livemode, r.livemode), sql`${platformWallets.retiredAt} is null`));
+      /* v8 ignore next 4 -- operator misconfiguration (no hot wallet registered); retiring the shared test hot wallet
+         would disturb test files running in parallel. The signer refuses the same case (signer.test.ts). */
       if (!hot) {
         deps.log.warn({ family: r.family, livemode: r.livemode }, 'no active hot wallet: custodial funds are not being swept');
         continue;
@@ -146,6 +148,7 @@ async function step(deps: Deps, env: SweeperEnv, s: SweepRow, chain: ChainRow, c
     const rc = await ctx.receipt(s.gasTxHash);
     if (!rc) {
       const raw = await signedRaw(deps, 'gas_topup', s.id);
+      /* v8 ignore next -- gas_sent is only written after the signer recorded the top-up */
       if (raw) await ctx.sendRaw(raw);
       await update(deps, s.id, { nextAttemptAt: later(deps, POLL_MS) });
       return 'gas_sent';
@@ -163,6 +166,7 @@ async function step(deps: Deps, env: SweeperEnv, s: SweepRow, chain: ChainRow, c
   const rc = await ctx.receipt(s.txHash);
   if (!rc) {
     const raw = await signedRaw(deps, 'sweep', s.id);
+    /* v8 ignore next -- sweep_sent is only written after the signer recorded the sweep */
     if (raw) await ctx.sendRaw(raw);
     await update(deps, s.id, { nextAttemptAt: later(deps, POLL_MS) });
     return 'sweep_sent';
@@ -184,7 +188,8 @@ async function step(deps: Deps, env: SweeperEnv, s: SweepRow, chain: ChainRow, c
       .set({ status: 'confirmed', blockNumber: rc.blockNumber, confirmedAt: new Date(deps.clock()), lastError: null })
       .where(and(eq(sweeps.id, s.id), eq(sweeps.status, 'sweep_sent')))
       .returning();
-    if (!done) return; // another worker got there first
+    /* v8 ignore next -- another worker got there first (lease expired mid-step) */
+    if (!done) return;
     await postSweep(tx, done);
     await settleIfSwept(deps, tx, done.invoiceId);
   });
@@ -216,6 +221,7 @@ export async function advanceSweeps(deps: Deps, env: SweeperEnv, scope: SweepSco
     const meta = await withSystem(deps.db, async (tx) => {
       const [c] = await tx.select().from(chains).where(eq(chains.id, s.chainId));
       const [t] = await tx.select({ min: tokens.minConfirmations }).from(tokens).where(eq(tokens.id, s.tokenId));
+      /* v8 ignore next -- FKs guarantee both */
       return c && t ? { chain: c, confirmations: Math.max(c.defaultConfirmations, t.min) } : undefined;
     });
     /* v8 ignore next -- FKs guarantee both */

@@ -506,3 +506,18 @@ that mean data and keys disagree fail the sweep and log an error (incident); ref
 ledger. Unsolicited extra tokens on an address are not swept (they are not booked). Custody keys are registered with
 `pnpm platform:register`, which refuses to replace a different active key.
 
+## D-090 Withdrawals: payout address cooldown, hold at request, admin approval, signer re-checks (M7d) (2026-10-27)
+- **Payout address.** One current address per merchant, mode and family: the newest that has activated and was not
+  cancelled. Live addresses activate 24 h after they are added (owners emailed), like xpub changes (D-075); test
+  ones at once. EIP-55 checksum enforced when mixed case; stored checksummed. Times use the database clock, because
+  the database guards enforce them. Address changes are dashboard-only (TOTP), never through API keys.
+- **Request.** Dashboard (owner/finance, TOTP, verified email for live) or API (`withdrawals:write`, idempotent).
+  The merchant row is locked, the available balance checked and the amount held in the same transaction.
+- **Approval.** Test mode needs none. Live needs one admin (`withdrawals:approve`, TOTP);
+  `WITHDRAWAL_TWO_PERSON_MIN` (default 10,000 token units) and above, two different admins. Rejecting needs no
+  TOTP (it only stops money). A DB guard keeps approvals growing, distinct and only while pending.
+- **Sending.** Worker → signer (D-088), which re-checks everything itself and enforces its own limits. A refusal that
+  says the request is wrong fails it and releases the hold; a refusal of the moment waits. Network fees are paid by
+  the platform in the native coin (no withdrawal fee yet).
+- **Events.** `withdrawal.<status>` through the outbox (DB trigger), so webhooks and `/v1/events` carry them.
+

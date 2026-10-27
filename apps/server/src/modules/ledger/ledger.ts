@@ -11,6 +11,9 @@
 // Custodial postings (M7, D-087): the platform holds the funds.
 //   payment confirmed (A):  Dr custody_deposits A (platform) / Cr merchant_pending A
 //   sweep confirmed  (S):   Dr custody_hot S / Cr custody_deposits S        (platform assets only)
+//   withdrawal (W): requested  Dr merchant_available W  / Cr merchant_withdrawing W   (hold)
+//                   confirmed  Dr merchant_withdrawing W / Cr custody_hot W           (left custody)
+//                   released   Dr merchant_withdrawing W / Cr merchant_available W    (rejected, cancelled, reverted)
 //   invoice settled  (R received, F fee, after the funds were swept):
 //                           Dr merchant_pending R / Cr merchant_available R-F / Cr platform_fee_revenue F
 // The database allows each journal kind only its own account kinds (ledger_entry_guard).
@@ -46,7 +49,7 @@ async function accountId(tx: Tx, kind: AccountKind, merchantId: string | null, l
 }
 
 interface JournalHead {
-  kind: 'payment' | 'fee' | 'fee_topup' | 'settlement' | 'sweep';
+  kind: 'payment' | 'fee' | 'fee_topup' | 'settlement' | 'sweep' | 'withdrawal_hold' | 'withdrawal' | 'withdrawal_release';
   merchantId: string;
   livemode: boolean;
   tokenId: string;
@@ -54,13 +57,14 @@ interface JournalHead {
   paymentId?: string;
   topupId?: string;
   sweepId?: string;
+  withdrawalId?: string;
 }
 
 /** Writes a journal and its lines. Returns false (and writes nothing) if this journal already exists. */
 async function post(tx: Tx, head: JournalHead, lines: [AccountKind, 'merchant' | 'platform', bigint][]): Promise<boolean> {
   const [j] = await tx
     .insert(ledgerJournals)
-    .values({ ...head, invoiceId: head.invoiceId ?? null, paymentId: head.paymentId ?? null, topupId: head.topupId ?? null, sweepId: head.sweepId ?? null })
+    .values({ ...head, invoiceId: head.invoiceId ?? null, paymentId: head.paymentId ?? null, topupId: head.topupId ?? null, sweepId: head.sweepId ?? null, withdrawalId: head.withdrawalId ?? null })
     .onConflictDoNothing()
     .returning({ id: ledgerJournals.id });
   if (!j) return false;
@@ -150,6 +154,39 @@ export async function postSweep(tx: Tx, s: SweepRow): Promise<void> {
   await post(tx, { kind: 'sweep', merchantId: s.merchantId, livemode: s.livemode, tokenId: s.tokenId, invoiceId: s.invoiceId, sweepId: s.id }, [
     ['custody_hot', 'platform', s.amount],
     ['custody_deposits', 'platform', -s.amount],
+  ]);
+}
+
+type WithdrawalRef = { id: string; merchantId: string; livemode: boolean; tokenId: string; amount: bigint };
+const withdrawalHead = (kind: 'withdrawal_hold' | 'withdrawal' | 'withdrawal_release', w: WithdrawalRef) => ({
+  kind,
+  merchantId: w.merchantId,
+  livemode: w.livemode,
+  tokenId: w.tokenId,
+  withdrawalId: w.id,
+});
+
+/** Holds a requested withdrawal's amount. The caller checked the available balance under the merchant's row lock. */
+export async function holdWithdrawal(tx: Tx, w: WithdrawalRef): Promise<void> {
+  await post(tx, withdrawalHead('withdrawal_hold', w), [
+    ['merchant_available', 'merchant', w.amount],
+    ['merchant_withdrawing', 'merchant', -w.amount],
+  ]);
+}
+
+/** The payout confirmed on chain: the held amount leaves custody. */
+export async function completeWithdrawal(tx: Tx, w: WithdrawalRef): Promise<void> {
+  await post(tx, withdrawalHead('withdrawal', w), [
+    ['merchant_withdrawing', 'merchant', w.amount],
+    ['custody_hot', 'platform', -w.amount],
+  ]);
+}
+
+/** Rejected, cancelled or reverted: the held amount is available again. */
+export async function releaseWithdrawal(tx: Tx, w: WithdrawalRef): Promise<void> {
+  await post(tx, withdrawalHead('withdrawal_release', w), [
+    ['merchant_withdrawing', 'merchant', w.amount],
+    ['merchant_available', 'merchant', -w.amount],
   ]);
 }
 

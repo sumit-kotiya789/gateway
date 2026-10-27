@@ -86,7 +86,7 @@ export async function feeTopupsView(tx: Tx, merchantId: string, livemode: boolea
 }
 
 type EventRow = typeof outboxEvents.$inferSelect;
-const AMOUNT_FIELDS = ['amount_expected', 'amount_received', 'fee_amount'] as const;
+const AMOUNT_FIELDS = ['amount_expected', 'amount_received', 'fee_amount', 'amount'] as const;
 
 export async function eventsView(tx: Tx, rows: EventRow[]) {
   const meta = await decimalsOf(tx, [...new Set(rows.map((r) => (r.data as { token?: string }).token).filter((t): t is string => !!t))]);
