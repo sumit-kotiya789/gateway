@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Alert, CopyField, EmptyState, ErrorBox, Field, Icon, Modal, Skeleton, StatusBadge, Submit, TotpInput, fmtDate, short, toast, useAction, useLoad, type IconName } from '../../dashboard/src/ui';
-import { RISK_FLAGS, api, totpHeader, type AdminAccount, type AdminCredentials, type AdminRole, type AuditRow, type FeeTopup, type Invoice, type Merchant, type MerchantDetail as MerchantData, type Page, type Registry as RegistryData } from './api';
+import { Alert, CopyField, EmptyState, ErrorBox, Field, Icon, Modal, Skeleton, Stat, StatusBadge, Submit, TotpInput, fmtDate, short, toast, useAction, useLoad, type IconName } from '../../dashboard/src/ui';
+import { RISK_FLAGS, api, totpHeader, type AdminAccount, type AdminCredentials, type AdminRole, type AdminWithdrawal, type AuditRow, type CustodyOverview, type TreasuryTransfer, type FeeTopup, type Invoice, type Merchant, type MerchantDetail as MerchantData, type Page, type Registry as RegistryData } from './api';
 
 /** First page of a list, plus "load more" via the server cursor. Refetches when `path` changes. */
 interface Paged<T> {
@@ -614,6 +614,242 @@ export function Registry(props: { manage: boolean; superadmin: boolean }) {
           </tbody>
         </table>
       </div>
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------- withdrawals (custodial)
+
+const WITHDRAWAL_FILTERS = ['pending_approval', 'approved', 'sent', 'confirmed', 'failed', 'rejected', 'cancelled'];
+
+export function WithdrawalQueue(props: { selfId: string; canApprove: boolean }) {
+  const [status, setStatus] = useState('pending_approval');
+  const r = useLoad(() => api<{ data: AdminWithdrawal[] }>('GET', `/withdrawals/?status=${status}`), [status]);
+  return (
+    <section>
+      <header className="page-head">
+        <h2>Withdrawals</h2>
+        <select value={status} onChange={(e) => { setStatus(e.target.value); }} aria-label="Status">
+          {WITHDRAWAL_FILTERS.map((s) => <option key={s} value={s}>{label(s)}</option>)}
+        </select>
+      </header>
+      <Alert tone="info">
+        Before approving: check the merchant and the amount against its history, and that the payout address was not changed recently (audit
+        log). Large withdrawals need two different admins.
+      </Alert>
+      <ErrorBox error={r.error} />
+      {!r.data && !r.error && <Skeleton />}
+      {r.data?.data.length === 0 && <EmptyState icon="wallet" title="Nothing here" />}
+      {r.data && r.data.data.length > 0 && (
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Requested</th><th>Merchant</th><th className="num">Amount</th><th>To</th><th>Status</th><th></th></tr>
+            </thead>
+            <tbody>
+              {r.data.data.map((w) => (
+                <tr key={w.id}>
+                  <td>{fmtDate(w.created_at)} {w.livemode ? <span className="badge s-active">live</span> : <span className="badge">test</span>}</td>
+                  <td><a href={`#/merchants/${w.merchant_id}`}>{w.merchant_name}</a></td>
+                  <td className="num">{w.amount} {w.symbol}</td>
+                  <td><code>{short(w.to_address)}</code></td>
+                  <td>
+                    <StatusBadge status={w.status} />
+                    {w.status === 'pending_approval' && <small className="muted"> {w.approvals}/{w.approvals_required}</small>}
+                    {w.last_error && <small className="muted"> {w.last_error}</small>}
+                  </td>
+                  <td>
+                    {props.canApprove && w.status === 'pending_approval' && (
+                      <div className="row">
+                        {!w.approved_by.includes(props.selfId) && (
+                          <ReasonAction label="Approve" totp sm primary message={`Send ${w.amount} ${w.symbol} to ${w.to_address}.`} onSubmit={async (reason, h) => { await api('POST', `/withdrawals/${w.id}/approve`, { reason }, h); r.reload(); }} />
+                        )}
+                        <ReasonAction label="Reject" danger sm message="The amount becomes available to the merchant again." onSubmit={async (reason) => { await api('POST', `/withdrawals/${w.id}/reject`, { reason }); r.reload(); }} />
+                      </div>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------- custody (signer, wallets, treasury)
+
+function NewTreasury(props: { onDone: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [form, setForm] = useState({ livemode: true, token: 'bsc:usdt', direction: 'to_cold' as 'to_cold' | 'to_hot', amount: '', tx_hash: '', reason: '' });
+  const [code, setCode] = useState('');
+  const a = useAction();
+  const close = () => {
+    setOpen(false);
+    setCode('');
+  };
+  return (
+    <>
+      <button type="button" className="sm" onClick={() => { setOpen(true); }}><Icon name="plus" size={16} />Treasury transfer</button>
+      {open && (
+        <Modal title="Treasury transfer" icon="lock" onClose={close}>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              void a.run(async () => {
+                const { tx_hash, ...rest } = form;
+                await api('POST', '/custody/treasury', { ...rest, reason: form.reason.trim(), ...(form.direction === 'to_hot' ? { tx_hash: tx_hash.trim() } : {}) }, totpHeader(code));
+                close();
+                toast.success(form.direction === 'to_cold' ? 'Proposed: a second admin must approve' : 'Recorded: booked once verified on chain');
+                props.onDone();
+              });
+            }}
+          >
+            <Field label="Direction">
+              <select value={form.direction} onChange={(e) => { setForm({ ...form, direction: e.target.value as 'to_cold' | 'to_hot' }); }}>
+                <option value="to_cold">Hot wallet → cold storage</option>
+                <option value="to_hot">Cold storage → hot wallet (record a refill)</option>
+              </select>
+            </Field>
+            <div className="row">
+              <Field label="Mode">
+                <select value={String(form.livemode)} onChange={(e) => { setForm({ ...form, livemode: e.target.value === 'true' }); }}>
+                  <option value="true">live</option>
+                  <option value="false">test</option>
+                </select>
+              </Field>
+              <Field label="Token"><input value={form.token} onChange={(e) => { setForm({ ...form, token: e.target.value }); }} required /></Field>
+              <Field label="Amount"><input value={form.amount} onChange={(e) => { setForm({ ...form, amount: e.target.value }); }} inputMode="decimal" required /></Field>
+            </div>
+            {form.direction === 'to_hot' && (
+              <Field label="Refill transaction hash" hint="The multisig's transaction to the hot wallet. Booked only when the chain shows exactly this transfer.">
+                <input value={form.tx_hash} onChange={(e) => { setForm({ ...form, tx_hash: e.target.value }); }} pattern="^0x[0-9a-fA-F]{64}$" required spellCheck={false} />
+              </Field>
+            )}
+            <Field label="Reason" hint="Recorded in the audit log."><input value={form.reason} onChange={(e) => { setForm({ ...form, reason: e.target.value }); }} minLength={3} maxLength={500} required /></Field>
+            <TotpInput value={code} onChange={setCode} />
+            <ErrorBox error={a.error} />
+            <div className="row end">
+              <button type="button" className="secondary" onClick={close}>Cancel</button>
+              <Submit busy={a.busy}>Submit</Submit>
+            </div>
+          </form>
+        </Modal>
+      )}
+    </>
+  );
+}
+
+export function Custody(props: { selfId: string; manage: boolean; superadmin: boolean }) {
+  const r = useLoad(() => api<CustodyOverview>('GET', '/custody/'), []);
+  const t = useLoad(() => api<{ data: TreasuryTransfer[] }>('GET', '/custody/treasury'), []);
+  if (r.error) return <ErrorBox error={r.error} />;
+  if (!r.data) return <Skeleton />;
+  const d = r.data;
+  const reload = () => {
+    r.reload();
+    t.reload();
+  };
+  return (
+    <section>
+      <header className="page-head">
+        <h2>Custody</h2>
+        {props.manage && <NewTreasury onDone={reload} />}
+      </header>
+      {!d.custodial_enabled && <Alert tone="info">Custodial mode is off on this deployment (FEATURE_CUSTODIAL).</Alert>}
+      <div className={`card stepup${d.signer.paused ? ' paused' : ''}`}>
+        <div>
+          <strong>Signer {d.signer.paused ? 'paused' : 'running'}</strong>
+          {d.signer.reason && <span className="muted"> · {d.signer.reason}</span>}
+          <div className="muted">While paused nothing is swept, paid out or moved; it all waits and continues on resume.</div>
+        </div>
+        {props.manage && !d.signer.paused && (
+          <ReasonAction label="Pause signer" danger message="Every sweep, withdrawal and treasury transfer stops at once." onSubmit={async (reason) => { await api('POST', '/custody/signer/pause', { reason }); reload(); }} />
+        )}
+        {d.signer.paused && props.superadmin && (
+          <ReasonAction label="Resume signer" totp message="Sweeps, withdrawals and treasury transfers continue." onSubmit={async (reason, h) => { await api('POST', '/custody/signer/resume', { reason }, h); reload(); }} />
+        )}
+      </div>
+      <div className="stats">
+        <Stat label="Open sweeps" value={String(d.open_sweeps)} icon="refresh" />
+        <Stat label="Withdrawals to approve" value={String(d.withdrawals.pending_approval ?? 0)} icon="wallet" {...((d.withdrawals.pending_approval ?? 0) > 0 ? { tone: 'warn' as const } : {})} />
+        <Stat label="Withdrawals in flight" value={String((d.withdrawals.approved ?? 0) + (d.withdrawals.sent ?? 0))} icon="activity" />
+      </div>
+
+      <h3 className="section-title">Balances (ledger)</h3>
+      {d.balances.length === 0 && <p className="muted">No custodial funds yet.</p>}
+      <div className={d.balances.length === 0 ? 'hidden' : 'table-wrap'}>
+        <table>
+          <thead>
+            <tr><th>Token</th><th className="num">On deposit addresses</th><th className="num">Hot wallet</th><th className="num">Cold storage</th><th className="num">Owed to merchants</th></tr>
+          </thead>
+          <tbody>
+            {d.balances.map((b) => (
+              <tr key={`${String(b.livemode)}:${String(b.token)}`}>
+                <td><code>{String(b.token)}</code> {b.livemode ? <span className="badge s-active">live</span> : <span className="badge">test</span>}</td>
+                <td className="num">{String(b.platform_deposits ?? '0')}</td>
+                <td className="num">{String(b.platform_hot ?? '0')}</td>
+                <td className="num">{String(b.platform_cold ?? '0')}</td>
+                <td className="num">{String(b.merchant_available ?? '0')} <small className="muted">+ {String(b.merchant_pending ?? '0')} pending, {String(b.merchant_withdrawing ?? '0')} withdrawing</small></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <h3 className="section-title">Platform wallets</h3>
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Role</th><th>Mode</th><th>Address</th><th>Path</th></tr>
+          </thead>
+          <tbody>
+            {d.wallets.map((w) => (
+              <tr key={`${w.kind}:${String(w.livemode)}:${w.family}`}>
+                <td>{w.kind}</td>
+                <td>{w.livemode ? 'live' : 'test'}</td>
+                <td><CopyField value={w.address} /></td>
+                <td>{w.derivation_path ? <code>{w.derivation_path}</code> : <span className="muted">multisig</span>}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <h3 className="section-title">Treasury transfers</h3>
+      <ErrorBox error={t.error} />
+      {t.data?.data.length === 0 && <EmptyState icon="coins" title="No treasury transfers yet" />}
+      {t.data && t.data.data.length > 0 && (
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Created</th><th>Direction</th><th className="num">Amount</th><th>Status</th><th>Reason</th><th></th></tr>
+            </thead>
+            <tbody>
+              {t.data.data.map((x) => (
+                <tr key={x.id}>
+                  <td>{fmtDate(x.created_at)} {x.livemode ? <span className="badge s-active">live</span> : <span className="badge">test</span>}</td>
+                  <td>{x.direction === 'to_cold' ? 'hot → cold' : 'cold → hot'}</td>
+                  <td className="num">{x.amount} <code>{x.token}</code></td>
+                  <td><StatusBadge status={x.status} />{x.last_error && <small className="muted"> {x.last_error}</small>}</td>
+                  <td>{x.reason}</td>
+                  <td>
+                    {props.manage && x.status === 'pending_approval' && (
+                      <div className="row">
+                        {x.requested_by !== props.selfId && (
+                          <ReasonAction label="Approve" totp sm primary message={`Move ${x.amount} ${x.token} to ${x.cold_address}.`} onSubmit={async (reason, h) => { await api('POST', `/custody/treasury/${x.id}/approve`, { reason }, h); reload(); }} />
+                        )}
+                        <ReasonAction label="Reject" danger sm onSubmit={async (reason) => { await api('POST', `/custody/treasury/${x.id}/reject`, { reason }); reload(); }} />
+                      </div>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </section>
   );
 }

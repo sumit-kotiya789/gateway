@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { randomBytes } from 'node:crypto';
+import { createCipheriv, randomBytes } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { loadSignerConfig } from '../../src/config.js';
 import { Keyring, PATHS } from '../../src/keys.js';
@@ -45,6 +45,15 @@ describe('seed file', () => {
     await writeFile(join(dir, 'bad.json'), JSON.stringify(sealed));
     await expect(new LocalFileSeed(join(dir, 'bad.json'), kek).load()).rejects.toThrow(/cannot be opened/);
     await expect(LocalFileSeed.create(path, kek)).rejects.toThrow(/EEXIST/);
+    // Another file version, or a sealed value that is not a mnemonic, is refused.
+    await writeFile(join(dir, 'v2.json'), JSON.stringify({ ...(JSON.parse(file) as object), v: 2 }));
+    await expect(new LocalFileSeed(join(dir, 'v2.json'), kek).load()).rejects.toThrow(/cannot be opened/);
+    const iv = randomBytes(12);
+    const c = createCipheriv('aes-256-gcm', kek, iv);
+    c.setAAD(Buffer.from('gateway-signer-seed:v1'));
+    const ct = Buffer.concat([c.update('not a mnemonic', 'utf8'), c.final()]);
+    await writeFile(join(dir, 'junk.json'), JSON.stringify({ v: 1, iv: iv.toString('base64'), tag: c.getAuthTag().toString('base64'), ct: ct.toString('base64') }));
+    await expect(new LocalFileSeed(join(dir, 'junk.json'), kek).load()).rejects.toThrow(/valid mnemonic/);
   });
 });
 

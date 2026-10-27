@@ -6,7 +6,7 @@ through an audited admin migration (later milestone). Each invoice snapshots `cu
 
 | | custodial | non_custodial_xpub | non_custodial_forwarder |
 |---|---|---|---|
-| Status | M7, behind feature flag, off in production | M8, MVP | M12, experimental, audit required |
+| Status | M7 built, behind `FEATURE_CUSTODIAL` (off by default); production refuses the signer until a KMS seed source exists (D-010) | M8, MVP | M12, experimental, audit required |
 | Deposit address | Platform HD wallet, `m/44'/60'/{account}'/0/{i}` | Merchant account xpub (depth 3), child `0/{i}` | CREATE2 forwarder |
 | Keys on app servers | xpub only | xpub only | none |
 | Who moves funds | Platform (sweep, withdrawal via signer) | Merchant, with their own wallet | Contract auto-forwards |

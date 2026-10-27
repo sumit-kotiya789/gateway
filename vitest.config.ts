@@ -21,6 +21,8 @@ const MONEY_CRITICAL = [
   // Custodial (M7)
   'apps/signer/src/signer.ts',
   'apps/signer/src/keys.ts',
+  'apps/signer/src/seed.ts',
+  'apps/server/src/modules/custody/treasury.ts',
   'apps/server/src/modules/custody/sweeper.ts',
   'apps/server/src/modules/custody/payouts.ts',
   'apps/server/src/modules/withdrawals/withdrawals.ts',

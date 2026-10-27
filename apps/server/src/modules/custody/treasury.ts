@@ -31,6 +31,7 @@ async function wallets(tx: Tx, family: 'evm' | 'tron' | 'solana', livemode: bool
     .where(and(eq(platformWallets.family, family), eq(platformWallets.livemode, livemode), isNull(platformWallets.retiredAt), inArray(platformWallets.kind, ['hot', 'cold'])));
   const hot = rows.find((r) => r.kind === 'hot');
   const cold = rows.find((r) => r.kind === 'cold');
+  /* v8 ignore next -- operator setup (platform:register); removing the shared test wallets would disturb parallel test files */
   if (!hot || !cold) throw new AppError('conflict', 'register an active hot and cold wallet first');
   return { hot, cold };
 }

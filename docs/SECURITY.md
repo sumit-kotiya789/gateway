@@ -30,6 +30,13 @@ Every file with a `// MONEY-CRITICAL` header is listed here and in the coverage 
 | `apps/server/db/migrations/0011_ledger_outbox_security.sql` | balanced append-only ledger, fee immutability, trigger-only outbox | M5 |
 | `apps/server/src/modules/ledger/fee-balance.ts` | prepaid fee balance and the live-invoice block | M8 |
 | `apps/server/db/migrations/0017_fees.sql`, `0018_fees_security.sql` | fixed fee snapshot, top-up journals, append-only top-ups, journal/top-up consistency | M8 |
+| `apps/signer/src/signer.ts` | the only signing code: intent checks, re-derivation, limits, kill switch, one transaction per intent | M7 |
+| `apps/signer/src/keys.ts`, `apps/signer/src/seed.ts` | key derivation by role; sealed seed file (dev/test only) | M7 |
+| `apps/server/src/modules/custody/sweeper.ts` | sweeps: gas top-up, transfer to hot, confirmation, booking, settlement | M7 |
+| `apps/server/src/modules/custody/payouts.ts` | sending approved withdrawals, confirm or release | M7 |
+| `apps/server/src/modules/custody/treasury.ts` | hot ↔ cold transfers, on-chain verification of refills | M7 |
+| `apps/server/src/modules/withdrawals/withdrawals.ts` | payout addresses, requests and holds, approvals, release | M7 |
+| `apps/server/db/migrations/0029_custodial_ledger.sql` … `0038_treasury_security.sql` | custodial account kinds and journals, per-journal account allow-lists, sweep/withdrawal/treasury/platform-wallet guards, signer DB role | M7 |
 
 ## Security-critical files (mandatory human review)
 

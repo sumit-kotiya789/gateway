@@ -36,7 +36,7 @@ export function Invoices(props: { livemode: boolean; canWrite: boolean; canExpor
             >
               <span>Fees {b.fees_charged}</span>
               <span>·</span>
-              <span>Prepaid {b.prepaid_fees}</span>
+              {b.fee_status === 'not_enforced' && b.available !== '0' ? <span>Available {b.available}</span> : <span>Prepaid {b.prepaid_fees}</span>}
               {b.fee_status !== 'not_enforced' && b.fee_status !== 'ok' && <span className={`badge s-${b.fee_status}`}>{b.fee_status === 'blocked' ? 'top up needed' : 'running low'}</span>}
             </Stat>
           ))}

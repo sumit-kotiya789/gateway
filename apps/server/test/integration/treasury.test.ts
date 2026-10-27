@@ -117,6 +117,48 @@ describe('treasury', () => {
     expect((await auditor.agent.req('POST', B, { livemode: false, token: 'evm-local:usdt', direction: 'to_cold', amount: '1', reason: 'auditor tries' }, auditor.stepUp())).statusCode).toBe(403);
   });
 
+  it('hot -> cold waits while the hot wallet is short, rebroadcasts while unmined, survives a broadcast error, fails on a revert', async () => {
+    await fundCustodialMerchant({ app, clock, deps, owner, custody }, 10n * E18);
+    const a1 = await adminAgent(t, owner, 'operator');
+    const a2 = await adminAgent(t, owner, 'operator');
+    const propose = async () => {
+      const x = (await a1.agent.req('POST', B, { livemode: false, token: 'evm-local:usdt', direction: 'to_cold', amount: '2', reason: 'trim hot wallet' }, a1.stepUp())).json<{ id: string }>();
+      await a2.agent.req('POST', `${B}/${x.id}/approve`, { reason: 'agreed' }, a2.stepUp());
+      return x.id;
+    };
+    const status = async (id: string) => (await owner.query<{ status: string; last_error: string | null }>('select status, last_error from treasury_transfers where id = $1', [id])).rows[0];
+
+    const id = await propose();
+    chain.token.set(custody.hot.toLowerCase(), 0n);
+    expect(await tick()).toMatchObject({ approved: 1 });
+    expect(await status(id)).toEqual({ status: 'approved', last_error: 'insufficient_funds' });
+    chain.token.set(custody.hot.toLowerCase(), 1000n * E18);
+    chain.failNextSend = true;
+    expect(await tick()).toMatchObject({ error: 1 });
+    expect(await tick()).toMatchObject({ sent: 1 });
+    const before = chain.broadcasts;
+    expect(await tick()).toMatchObject({ sent: 1 }); // unmined: the same bytes again
+    expect(chain.broadcasts).toBe(before + 1);
+    await chain.mine(3);
+    expect(await tick()).toMatchObject({ confirmed: 1 });
+    expect((await a2.agent.req('POST', `${B}/${id}/reject`, { reason: 'too late' })).statusCode).toBe(409);
+
+    const reverting = await propose();
+    expect(await tick()).toMatchObject({ sent: 1 });
+    chain.revertNextSweep = true; // the next token transfer reverts
+    await chain.mine();
+    expect(await tick()).toMatchObject({ failed: 1 });
+    expect(await status(reverting)).toEqual({ status: 'failed', last_error: 'reverted' });
+    expect(await tick()).toEqual({}); // nothing due
+  });
+
+  it('a recorded refill not on chain yet waits', async () => {
+    const op = await adminAgent(t, owner, 'operator');
+    const x = (await op.agent.req('POST', B, { livemode: false, token: 'evm-local:usdt', direction: 'to_hot', amount: '1', tx_hash: `0x${'3'.repeat(64)}`, reason: 'refill in flight' }, op.stepUp())).json<{ id: string }>();
+    expect(await tick()).toMatchObject({ sent: 1 });
+    expect((await owner.query('select status from treasury_transfers where id = $1', [x.id])).rows[0]).toEqual({ status: 'sent' });
+  });
+
   it('database guard: only between the active hot wallet and the registered cold wallet', async () => {
     const [admin] = (await owner.query<{ id: string }>('select id from admin_users limit 1')).rows;
     await expect(

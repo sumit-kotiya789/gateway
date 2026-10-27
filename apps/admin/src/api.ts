@@ -152,3 +152,48 @@ export interface AdminCredentials extends AdminAccount {
   totp_uri: string;
   qr_svg: string;
 }
+
+export interface CustodyOverview {
+  custodial_enabled: boolean;
+  signer: { paused: boolean; reason: string | null; updated_at: string | null };
+  wallets: { livemode: boolean; family: string; kind: 'hot' | 'gas' | 'cold'; address: string; derivation_path: string | null }[];
+  balances: Record<string, string | boolean | null>[];
+  open_sweeps: number;
+  withdrawals: Partial<Record<'pending_approval' | 'approved' | 'sent', number>>;
+}
+
+export interface TreasuryTransfer {
+  id: string;
+  livemode: boolean;
+  token: string;
+  direction: 'to_cold' | 'to_hot';
+  amount: string;
+  cold_address: string;
+  hot_address: string;
+  status: string;
+  requested_by: string;
+  approved_by: string | null;
+  reason: string;
+  tx_hash: string | null;
+  last_error: string | null;
+  created_at: string;
+}
+
+export interface AdminWithdrawal {
+  id: string;
+  livemode: boolean;
+  status: string;
+  token: string;
+  symbol: string;
+  amount: string;
+  to_address: string;
+  approvals_required: number;
+  approvals: number;
+  approved_by: string[];
+  merchant_id: string;
+  merchant_name: string;
+  requested_by: string;
+  last_error: string | null;
+  tx_hash: string | null;
+  created_at: string;
+}

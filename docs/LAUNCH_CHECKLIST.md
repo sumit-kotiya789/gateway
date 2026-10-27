@@ -28,6 +28,11 @@ Every item needs an owner and a date before launch.
 - [ ] Fee model per merchant agreed and set (rate, fixed, grace); prepaid top-up process (how merchants pay, who records) agreed (D-076)
 
 ## Custodial only (M7)
-- [ ] KMS decision implemented (D-010); key ceremony performed and recorded
-- [ ] Hot wallet cap, signer caps, kill switch tested in production config
-- [ ] Cold wallet multisig set up, signers documented
+- [ ] Legal clearance for holding customer funds (licence where required) documented
+- [ ] KMS decision implemented as a signer `SeedSource` (D-010); key ceremony performed and recorded; mnemonic backup offline
+- [ ] Signer on its own host: own DB login in `gw_signer`, mTLS certificates for signer and worker, `SIGNER_HMAC_SECRET` rotated from dev
+- [ ] `SIGNER_LIMITS` set per live token (per transaction, per 24 h) and reviewed; `SIGNER_MAX_GAS_PRICE_GWEI` / `SIGNER_MAX_GAS_TOPUP` reviewed
+- [ ] Cold wallet multisig set up, signers documented; address registered (`platform:register`) and in `SIGNER_COLD_ADDRESSES`
+- [ ] Gas wallet funded and a low-balance alert agreed; hot wallet cap set in `infra/prometheus/alerts.yml`
+- [ ] `WITHDRAWAL_TWO_PERSON_MIN` agreed; at least two superadmins and two operators for approvals
+- [ ] Drill: pause and resume the signer, a sweep, a withdrawal, a hot → cold transfer and a recorded refill on mainnet with small amounts
