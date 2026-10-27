@@ -11,6 +11,7 @@ import { postPayment } from '../../src/modules/ledger/ledger.js';
 import type { ChainRpc } from '../../../signer/src/chain.js';
 import { loadSignerConfig } from '../../../signer/src/config.js';
 import { Keyring } from '../../../signer/src/keys.js';
+import { createSignerClient } from '../../src/modules/custody/signer-client.js';
 import { authHeader, requestHandler } from '../../../signer/src/server.js';
 import { createSigner, Refusal } from '../../../signer/src/signer.js';
 import { LOCAL_USDT, TEST_MNEMONIC, buildTestApp, ensureLocalRegistry, ensurePlatformCustody, merchantWithKey, ownerPool } from './helpers.js';
@@ -185,6 +186,13 @@ describe('signer', () => {
       expect(refused.status).toBe(409);
       expect(await refused.json()).toMatchObject({ error: 'unsupported' });
       expect((await fetch(`http://127.0.0.1:${String(port)}/healthz`)).status).toBe(200);
+
+      // The worker's client: same answers through its HMAC-signed requests.
+      const client = createSignerClient({ ...deps.config, SIGNER_URL: `http://127.0.0.1:${String(port)}`, SIGNER_HMAC_SECRET: secret });
+      expect(await client.sign('gas_topup', d.sweepId)).toMatchObject({ ok: true, tx: { reused: true } });
+      expect(await client.sign('withdrawal', d.sweepId)).toEqual({ ok: false, code: 'unsupported', message: expect.any(String) as unknown });
+      const wrong = createSignerClient({ ...deps.config, SIGNER_URL: `http://127.0.0.1:${String(port)}`, SIGNER_HMAC_SECRET: 'w'.repeat(32) });
+      await expect(wrong.sign('sweep', d.sweepId)).rejects.toThrow(/HTTP 401/);
     } finally {
       await new Promise((r) => server.close(r));
     }

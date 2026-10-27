@@ -70,6 +70,18 @@ Database guards that hold even if application code is wrong:
   anything but a paid custodial invoice.
 - Reconciliation adds `custodial_received`, `custodial_settlement` and `negative_merchant_balance`.
 
+## Sweeps (M7c, D-089)
+Worker queue `custody` (every 15 s, only with `FEATURE_CUSTODIAL`):
+1. **Plan**: one sweep per custodial deposit address holding confirmed payments not swept yet; amount = confirmed
+   payments − earlier confirmed sweeps; destination = the active hot wallet (DB trigger enforces both).
+2. **Gas**: the signer tops the address up from the gas wallet (enough for one token transfer at today's price +20%,
+   capped by `SIGNER_MAX_GAS_TOPUP`), or answers `not_needed`.
+3. **Sweep**: the signer signs `transfer(hot, amount)` from the deposit address; the worker broadcasts it.
+4. **Confirm**: after `max(chain default, token minimum)` confirmations: sweep `confirmed`, journal
+   Dr `custody_hot` / Cr `custody_deposits`, and the invoice settles if it is paid (`settleIfSwept`).
+Unmined transactions are rebroadcast with the same bytes; only a mined revert fails a sweep. Reconciliation:
+`sweep_journal`, `negative_custody`. Metrics: `gw_sweeps_open`, `gw_sweep_oldest_open_seconds`, `gw_sweeps_failed_24h`.
+
 ## Merchant responsibilities (non-custodial)
 
 Keep their seed safe; supply an account-level xpub (not an xprv or seed, which are refused); set their wallet's address

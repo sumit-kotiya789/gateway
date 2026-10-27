@@ -494,3 +494,15 @@ a merchant's RLS context.
   required in production. Errors return a refusal code, never internals.
 - **Kill switch.** `SIGNER_PAUSED` in the signer's env, or `signer_controls.paused` (admin, M7e).
 
+## D-089 Sweeps: gas top-up, sweep, settle after confirmation (M7c) (2026-10-27)
+A custodial invoice settles only once its funds are in the hot wallet, so merchants can never withdraw money the
+platform does not control. The worker plans one sweep per deposit address (never more than the confirmed payments to
+it minus earlier sweeps, checked again by the signer), funds the address's network fee from a dedicated gas wallet,
+sweeps to the active hot wallet, and books Dr `custody_hot` / Cr `custody_deposits` with the sweep's confirmation, in
+the same transaction that settles the invoice (if it is paid; an underpaid one settles when an admin accepts it).
+Rebroadcasts reuse the signed bytes; only a mined revert fails a sweep, and the next round plans a new one. Refusals
+that mean data and keys disagree fail the sweep and log an error (incident); refusals that depend on the moment
+(paused, gas price) retry with backoff. Gas costs are paid in the native coin by the platform and are not in the token
+ledger. Unsolicited extra tokens on an address are not swept (they are not booked). Custody keys are registered with
+`pnpm platform:register`, which refuses to replace a different active key.
+

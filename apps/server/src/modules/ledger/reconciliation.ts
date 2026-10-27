@@ -35,6 +35,13 @@ const CHECKS = {
           join ledger_accounts a on a.id = e.account_id and a.kind = 'merchant_pending' where j.kind = 'settlement' and j.invoice_id = i.id), 0)
         or i.fee_amount <> -coalesce((select sum(e.amount) from ledger_journals j join ledger_entries e on e.journal_id = j.id
           join ledger_accounts a on a.id = e.account_id and a.kind = 'platform_fee_revenue' where j.kind = 'settlement' and j.invoice_id = i.id), 0))`,
+  /** Every confirmed sweep is booked once, for exactly its amount, out of custody_deposits. */
+  sweep_journal: sql`select s.id from sweeps s where s.status = 'confirmed'
+    and coalesce((select sum(e.amount) from ledger_journals j join ledger_entries e on e.journal_id = j.id
+      join ledger_accounts a on a.id = e.account_id and a.kind = 'custody_deposits' where j.kind = 'sweep' and j.sweep_id = s.id), 0) <> -s.amount`,
+  /** Platform custody accounts never go negative (nothing leaves custody that was not booked into it). */
+  negative_custody: sql`select a.id from ledger_accounts a join ledger_entries e on e.account_id = a.id
+    where a.kind in ('custody_deposits', 'custody_hot', 'custody_cold') group by a.id having sum(e.amount) < 0`,
   /** No merchant balance is ever negative (a withdrawal can never take more than was available). */
   negative_merchant_balance: sql`select a.id from ledger_accounts a join ledger_entries e on e.account_id = a.id
     where a.kind in ('merchant_pending', 'merchant_available', 'merchant_withdrawing') group by a.id having sum(e.amount) > 0`,

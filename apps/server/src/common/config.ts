@@ -57,6 +57,19 @@ const schema = z
     FEATURE_CUSTODIAL: z.stringbool().default(false),
     // Lets webhooks reach private/loopback addresses (local receivers in dev and tests). Refused in production.
     WEBHOOK_ALLOW_PRIVATE_NETWORKS: z.stringbool().default(false),
+    // Custodial (M7): the worker asks the signer to sign sweeps and payouts. Required when FEATURE_CUSTODIAL is on.
+    SIGNER_URL: z
+      .union([z.literal(''), z.url()])
+      .optional()
+      .transform((v) => v || undefined),
+    SIGNER_HMAC_SECRET: z
+      .union([z.literal(''), secret(32)])
+      .optional()
+      .transform((v) => v || undefined),
+    // mTLS to the signer (required in production): the worker's client certificate and the signer's CA.
+    SIGNER_CLIENT_CERT_FILE: z.string().optional(),
+    SIGNER_CLIENT_KEY_FILE: z.string().optional(),
+    SIGNER_CA_FILE: z.string().optional(),
     // Bearer token for GET /metrics (Prometheus). Unset = no metrics route.
     METRICS_TOKEN: z
       .union([z.literal(''), secret(32)])
@@ -73,7 +86,13 @@ const schema = z
         ctx.addIssue({ code: 'custom', path: ['ADMIN_IP_ALLOWLIST'], message: 'must be comma-separated IPs or CIDRs' });
       }
     }
+    if (c.FEATURE_CUSTODIAL && c.NODE_ENV !== 'test' && (!c.SIGNER_URL || !c.SIGNER_HMAC_SECRET)) {
+      ctx.addIssue({ code: 'custom', path: ['SIGNER_URL'], message: 'SIGNER_URL and SIGNER_HMAC_SECRET are required when FEATURE_CUSTODIAL is on' });
+    }
     if (c.NODE_ENV === 'production') {
+      if (c.SIGNER_URL && (!c.SIGNER_URL.startsWith('https://') || !c.SIGNER_CLIENT_CERT_FILE || !c.SIGNER_CLIENT_KEY_FILE || !c.SIGNER_CA_FILE)) {
+        ctx.addIssue({ code: 'custom', path: ['SIGNER_URL'], message: 'must be https with a client certificate (mTLS) in production' });
+      }
       if (!c.PUBLIC_BASE_URL.startsWith('https://')) {
         ctx.addIssue({ code: 'custom', path: ['PUBLIC_BASE_URL'], message: 'must be https in production' });
       }

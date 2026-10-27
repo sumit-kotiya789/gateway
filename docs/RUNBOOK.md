@@ -136,7 +136,26 @@ kept: `select started_at, ok, issues from reconciliation_runs order by started_a
   `update webhook_deliveries set status = 'pending', attempts = 0, next_attempt_at = now() where endpoint_id = '…' and status = 'failed';`
 - `... resolves to a non-public address` = the URL points at a private network (SSRF guard). Expected; the merchant
   must use a public URL.
+## Custody setup (M7)
+Custodial mode is off unless `FEATURE_CUSTODIAL=true`, which also needs `SIGNER_URL` + `SIGNER_HMAC_SECRET`.
+1. Signer (its own host, its own DB login in `gw_signer`: `CREATE ROLE gateway_signer LOGIN PASSWORD '…' IN ROLE gw_signer;`).
+   Dev/test: `pnpm --filter @gw/signer init-seed > custody.json` (add `--show-mnemonic` once, for the offline backup).
+   Production: refused until a KMS seed source exists (D-010).
+2. `pnpm platform:register custody.json`: deposit xpubs and hot/gas wallets. It refuses to replace different keys.
+3. Fund each gas wallet with a little native coin (BNB): it pays the network fee of every sweep.
+4. Set `SIGNER_LIMITS` per token before any payout (tokens without limits cannot be paid out).
+
 ## Stuck transaction (M7)
+- Sweeps: `select id, status, attempts, last_error, gas_tx_hash, tx_hash, next_attempt_at from sweeps where status in ('pending','gas_sent','sweep_sent') order by created_at;`
+  - `last_error = paused`: the signer is paused (env `SIGNER_PAUSED` or admin kill switch). Expected during a drill.
+  - `gas_price_too_high`: network fees are above `SIGNER_MAX_GAS_PRICE_GWEI`; it resumes when they drop.
+  - `needs_gas` after a top-up was mined: fees rose since; wait, or raise `SIGNER_MAX_GAS_TOPUP` carefully.
+  - Gas wallet empty: top-ups fail at broadcast (`insufficient funds` in the worker log). Fund the gas wallet.
+  - `gas_sent`/`sweep_sent` for long: the worker rebroadcasts the same signed bytes every 15 s. If the RPC dropped
+    it for a too-low fee, it stays stuck: a replacement at the same nonce is a manual, two-person operation.
+- `status = failed`, `last_error = sweep_reverted`: the next round plans a new sweep automatically. Any other failed
+  sweep (`over_booked`, `not_our_address`, `wrong_destination`, `wallet_mismatch`) is an incident: data and keys
+  disagree. Pause the signer and investigate before anything else moves.
 ## Hot wallet compromise (M7)
 ## Emergency kill switch (M7)
 ## Key rotation

@@ -79,6 +79,15 @@ describe('loadConfig', () => {
 
   it('custodial feature flag is off unless explicitly enabled', () => {
     expect(loadConfig(base).FEATURE_CUSTODIAL).toBe(false);
-    expect(loadConfig({ ...base, FEATURE_CUSTODIAL: 'true' }).FEATURE_CUSTODIAL).toBe(true);
+    // Turning it on needs the signer: the worker cannot sweep or pay out without it.
+    expect(issues({ ...base, FEATURE_CUSTODIAL: 'true' })).toMatch(/SIGNER_URL/);
+    const signer = { SIGNER_URL: 'http://signer.internal:3100', SIGNER_HMAC_SECRET: 's'.repeat(32) };
+    expect(loadConfig({ ...base, FEATURE_CUSTODIAL: 'true', ...signer }).FEATURE_CUSTODIAL).toBe(true);
+  });
+
+  it('production signer link must be mTLS', () => {
+    const prod = { ...base, NODE_ENV: 'production', FEATURE_CUSTODIAL: 'true', SIGNER_URL: 'http://signer.internal:3100', SIGNER_HMAC_SECRET: 's'.repeat(32) };
+    expect(issues(prod)).toMatch(/SIGNER_URL: must be https with a client certificate/);
+    expect(issues({ ...prod, SIGNER_URL: 'https://signer.internal:3100', SIGNER_CLIENT_CERT_FILE: '/c', SIGNER_CLIENT_KEY_FILE: '/k', SIGNER_CA_FILE: '/ca' })).not.toMatch(/SIGNER_URL/);
   });
 });

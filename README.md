@@ -24,6 +24,7 @@ Emails (verification, password reset, notices) land in Mailpit: http://localhost
 | `pnpm dev` | api with reload (reads `.env`) |
 | `pnpm migrate` | apply migrations as the schema owner (`DATABASE_MIGRATION_URL`) |
 | `pnpm admin:create <email> <role>` | bootstrap an admin |
+| `pnpm platform:register <file>` | register custody keys printed by the signer's `init-seed` (custodial, M7) |
 | `pnpm test` / `pnpm test:coverage` | unit + integration (integration needs Docker); coverage gate on money-critical files |
 | `pnpm test:unit` / `pnpm test:integration` | one project only |
 | `pnpm lint` | eslint (type-aware, bans float money helpers) |

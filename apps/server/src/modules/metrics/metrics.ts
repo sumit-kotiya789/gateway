@@ -3,10 +3,10 @@
 // written by hand: a handful of series does not justify a client library.
 import { timingSafeEqual } from 'node:crypto';
 import { AppError } from '@gw/core';
-import { and, count, desc, eq, gt, lt, lte, min } from 'drizzle-orm';
+import { and, count, desc, eq, gt, inArray, lt, lte, min } from 'drizzle-orm';
 import type { FastifyPluginAsync } from 'fastify';
 import { withSystem } from '../../common/db.js';
-import { chainCursors, chains, emailOutbox, invoices, reconciliationRuns, webhookDeliveries } from '../../db/schema.js';
+import { chainCursors, chains, emailOutbox, invoices, reconciliationRuns, sweeps, webhookDeliveries } from '../../db/schema.js';
 import type { Deps } from '../../deps.js';
 
 /** A pending invoice this long past its deadline means the expiry job is not running. */
@@ -101,6 +101,15 @@ export async function collectHealth(deps: Deps): Promise<Metric[]> {
       .from(invoices)
       .where(and(eq(invoices.status, 'pending'), lt(invoices.expiresAt, new Date(now - OVERDUE_GRACE_MS))));
 
+    const [sweepsOpen] = await tx
+      .select({ n: count(), oldest: min(sweeps.createdAt) })
+      .from(sweeps)
+      .where(inArray(sweeps.status, ['pending', 'gas_sent', 'sweep_sent']));
+    const [sweepsFailed] = await tx
+      .select({ n: count() })
+      .from(sweeps)
+      .where(and(eq(sweeps.status, 'failed'), gt(sweeps.createdAt, new Date(now - DAY_MS))));
+
     const issues = Array.isArray(recon?.issues) ? (recon.issues as { check?: unknown; count?: unknown }[]) : [];
     const perChain = (f: (c: (typeof cursors)[number]) => number) => cursors.map((c) => ({ labels: { chain: c.chain }, value: f(c) }));
     return [
@@ -121,6 +130,9 @@ export async function collectHealth(deps: Deps): Promise<Metric[]> {
       { name: 'gw_emails_due', help: 'Emails due now and not yet sent.', type: 'gauge', samples: [{ value: mailDue?.n ?? 0 }] },
       { name: 'gw_email_oldest_due_seconds', help: 'How long the oldest due email has waited (0: none).', type: 'gauge', samples: [{ value: mailDue?.oldest ? seconds(now, mailDue.oldest) : 0 }] },
       { name: 'gw_emails_failed_24h', help: 'Emails given up on, created in the last 24 h.', type: 'gauge', samples: [{ value: mailFailed?.n ?? 0 }] },
+      { name: 'gw_sweeps_open', help: 'Custodial sweeps not finished yet.', type: 'gauge', samples: [{ value: sweepsOpen?.n ?? 0 }] },
+      { name: 'gw_sweep_oldest_open_seconds', help: 'Age of the oldest unfinished sweep (0: none).', type: 'gauge', samples: [{ value: sweepsOpen?.oldest ? seconds(now, sweepsOpen.oldest) : 0 }] },
+      { name: 'gw_sweeps_failed_24h', help: 'Sweeps that failed (reverted or refused as inconsistent) in the last 24 h.', type: 'gauge', samples: [{ value: sweepsFailed?.n ?? 0 }] },
       { name: 'gw_invoices_overdue_pending', help: 'Pending invoices more than 2 minutes past their deadline (expiry job not running).', type: 'gauge', samples: [{ value: overdue?.n ?? 0 }] },
     ] satisfies Metric[];
   });

@@ -90,6 +90,21 @@ groups:
           summary: "{{ $value }} emails given up on in 24 h"
           runbook: "docs/RUNBOOK.md#email"
 
+      - alert: GatewaySweepsStuck
+        expr: gw_sweep_oldest_open_seconds > 3600
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "A custodial sweep has been open for {{ $value | humanizeDuration }} (signer paused, gas, RPC?)"
+          runbook: "docs/RUNBOOK.md#stuck-transaction-m7"
+
+      - alert: GatewaySweepFailed
+        expr: gw_sweeps_failed_24h > 0
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ $value }} custodial sweeps failed in 24 h"
+          runbook: "docs/RUNBOOK.md#stuck-transaction-m7"
+
       - alert: GatewayApiErrors
         expr: sum(rate(gw_http_requests_total{status="5xx"}[5m])) > 0.2
         for: 5m

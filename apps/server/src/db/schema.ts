@@ -3,6 +3,7 @@
 import { uuidv7 } from '@gw/core';
 import { sql } from 'drizzle-orm';
 import {
+  type AnyPgColumn,
   bigint,
   boolean,
   check,
@@ -786,7 +787,7 @@ export const ledgerAccountKind = pgEnum('ledger_account_kind', [
   'merchant_available',
   'merchant_withdrawing',
 ]);
-export const ledgerJournalKind = pgEnum('ledger_journal_kind', ['payment', 'fee', 'fee_topup', 'settlement']);
+export const ledgerJournalKind = pgEnum('ledger_journal_kind', ['payment', 'fee', 'fee_topup', 'settlement', 'sweep']);
 /** Account kinds owned by the platform (merchant_id null); every other kind belongs to one merchant. */
 export const PLATFORM_ACCOUNT_KINDS = ['platform_fee_revenue', 'platform_topups', 'custody_deposits', 'custody_hot', 'custody_cold'] as const;
 
@@ -831,6 +832,7 @@ export const ledgerJournals = pgTable(
     invoiceId: uuid('invoice_id').references(() => invoices.id),
     paymentId: uuid('payment_id').references(() => payments.id),
     topupId: uuid('topup_id').references(() => feeTopups.id),
+    sweepId: uuid('sweep_id').references((): AnyPgColumn => sweeps.id),
     createdAt: createdAt(),
   },
   (t) => [
@@ -838,6 +840,8 @@ export const ledgerJournals = pgTable(
     uniqueIndex('ledger_journals_fee_uq').on(t.invoiceId).where(sql`${t.kind} = 'fee'`),
     uniqueIndex('ledger_journals_topup_uq').on(t.topupId).where(sql`${t.kind} = 'fee_topup'`),
     uniqueIndex('ledger_journals_settlement_uq').on(t.invoiceId).where(sql`${t.kind} = 'settlement'`),
+    uniqueIndex('ledger_journals_sweep_uq').on(t.sweepId).where(sql`${t.kind} = 'sweep'`),
+    check('ledger_journals_sweep_ref', sql`(${t.kind} = 'sweep') = (${t.sweepId} is not null)`),
     index('ledger_journals_merchant_idx').on(t.merchantId, t.livemode),
     check('ledger_journals_payment_ref', sql`(${t.kind} = 'payment') = (${t.paymentId} is not null)`),
     check('ledger_journals_invoice_ref', sql`(${t.kind} = 'fee_topup') = (${t.invoiceId} is null)`),

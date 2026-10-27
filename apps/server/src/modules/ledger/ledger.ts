@@ -10,13 +10,14 @@
 //
 // Custodial postings (M7, D-087): the platform holds the funds.
 //   payment confirmed (A):  Dr custody_deposits A (platform) / Cr merchant_pending A
+//   sweep confirmed  (S):   Dr custody_hot S / Cr custody_deposits S        (platform assets only)
 //   invoice settled  (R received, F fee, after the funds were swept):
 //                           Dr merchant_pending R / Cr merchant_available R-F / Cr platform_fee_revenue F
 // The database allows each journal kind only its own account kinds (ledger_entry_guard).
 import { AppError, computeFee, feeBase } from '@gw/core';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import type { Tx } from '../../common/db.js';
-import { feeTopups, ledgerAccounts, ledgerEntries, ledgerJournals, invoices, payments } from '../../db/schema.js';
+import { feeTopups, ledgerAccounts, ledgerEntries, ledgerJournals, invoices, payments, sweeps } from '../../db/schema.js';
 import type { Deps } from '../../deps.js';
 import { transitionInvoice } from '../invoices/invoices.js';
 import { noticeFeeBalance } from './fee-balance.js';
@@ -24,6 +25,7 @@ import { noticeFeeBalance } from './fee-balance.js';
 type AccountKind = (typeof ledgerAccounts.$inferSelect)['kind'];
 type PaymentRow = typeof payments.$inferSelect;
 type FeeTopupRow = typeof feeTopups.$inferSelect;
+type SweepRow = typeof sweeps.$inferSelect;
 
 async function accountId(tx: Tx, kind: AccountKind, merchantId: string | null, livemode: boolean, tokenId: string): Promise<string> {
   await tx.insert(ledgerAccounts).values({ kind, merchantId, livemode, tokenId }).onConflictDoNothing();
@@ -44,20 +46,21 @@ async function accountId(tx: Tx, kind: AccountKind, merchantId: string | null, l
 }
 
 interface JournalHead {
-  kind: 'payment' | 'fee' | 'fee_topup' | 'settlement';
+  kind: 'payment' | 'fee' | 'fee_topup' | 'settlement' | 'sweep';
   merchantId: string;
   livemode: boolean;
   tokenId: string;
   invoiceId?: string;
   paymentId?: string;
   topupId?: string;
+  sweepId?: string;
 }
 
 /** Writes a journal and its lines. Returns false (and writes nothing) if this journal already exists. */
 async function post(tx: Tx, head: JournalHead, lines: [AccountKind, 'merchant' | 'platform', bigint][]): Promise<boolean> {
   const [j] = await tx
     .insert(ledgerJournals)
-    .values({ ...head, invoiceId: head.invoiceId ?? null, paymentId: head.paymentId ?? null, topupId: head.topupId ?? null })
+    .values({ ...head, invoiceId: head.invoiceId ?? null, paymentId: head.paymentId ?? null, topupId: head.topupId ?? null, sweepId: head.sweepId ?? null })
     .onConflictDoNothing()
     .returning({ id: ledgerJournals.id });
   if (!j) return false;
@@ -120,10 +123,14 @@ export async function settleCustodialInvoice(deps: Deps, tx: Tx, invoiceId: stri
  * Non-custodial settlement: charges the platform fee on min(received, expected) at the invoice's snapshotted rate (plus
  * its snapshotted fixed fee, never more than the base) and
  * moves paid/overpaid -> settled, all in the caller's transaction. No-op for any other invoice. Also the path for
- * manual resolutions that end in `paid` (resolveInvoice).
+ * manual resolutions that end in `paid` (resolveInvoice). Custodial invoices go to settleIfSwept instead.
  */
 export async function settleInvoice(deps: Deps, tx: Tx, invoiceId: string): Promise<void> {
   const [inv] = await tx.select().from(invoices).where(eq(invoices.id, invoiceId)).for('update');
+  if (inv?.custodyMode === 'custodial') {
+    await settleIfSwept(deps, tx, invoiceId);
+    return;
+  }
   if (!inv || inv.custodyMode !== 'non_custodial_xpub' || (inv.status !== 'paid' && inv.status !== 'overpaid')) return;
   const fee = computeFee(feeBase(inv.amountExpected, inv.amountReceived), inv.feeBps, inv.feeFixed);
   if (fee > 0n) {
@@ -136,6 +143,26 @@ export async function settleInvoice(deps: Deps, tx: Tx, invoiceId: string): Prom
   }
   await tx.update(invoices).set({ feeAmount: fee }).where(eq(invoices.id, inv.id));
   await transitionInvoice(deps, tx, inv.id, 'settled', 'platform fee charged');
+}
+
+/** Books a just-confirmed sweep (platform assets move from the deposit address to the hot wallet). Idempotent. */
+export async function postSweep(tx: Tx, s: SweepRow): Promise<void> {
+  await post(tx, { kind: 'sweep', merchantId: s.merchantId, livemode: s.livemode, tokenId: s.tokenId, invoiceId: s.invoiceId, sweepId: s.id }, [
+    ['custody_hot', 'platform', s.amount],
+    ['custody_deposits', 'platform', -s.amount],
+  ]);
+}
+
+/**
+ * Settles a paid/overpaid custodial invoice once every confirmed payment to its address has been swept (whichever
+ * comes last: the payment, the sweep or an admin's acceptance). No-op otherwise.
+ */
+export async function settleIfSwept(deps: Deps, tx: Tx, invoiceId: string): Promise<boolean> {
+  const [r] = await tx.execute<{ booked: string; swept: string }>(sql`
+    select coalesce((select sum(amount) from ${payments} where invoice_id = ${invoiceId} and status = 'confirmed'), 0)::text as booked,
+           coalesce((select sum(amount) from ${sweeps} where invoice_id = ${invoiceId} and status = 'confirmed'), 0)::text as swept`).then((x) => x.rows);
+  if (!r || BigInt(r.booked) === 0n || BigInt(r.swept) < BigInt(r.booked)) return false;
+  return settleCustodialInvoice(deps, tx, invoiceId);
 }
 
 /**
