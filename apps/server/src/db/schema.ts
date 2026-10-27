@@ -787,11 +787,7 @@ export const ledgerAccountKind = pgEnum('ledger_account_kind', [
   'merchant_available',
   'merchant_withdrawing',
 ]);
-export const ledgerJournalKind = pgEnum('ledger_journal_kind', ['payment', 'fee', 'fee_topup', 'settlement', 'sweep', 'withdrawal_hold', 'withdrawal', 'withdrawal_release']);
-/** Journal kinds that book no invoice. */
-export const NON_INVOICE_JOURNAL_KINDS = ['fee_topup', 'withdrawal_hold', 'withdrawal', 'withdrawal_release'] as const;
-/** Account kinds owned by the platform (merchant_id null); every other kind belongs to one merchant. */
-export const PLATFORM_ACCOUNT_KINDS = ['platform_fee_revenue', 'platform_topups', 'custody_deposits', 'custody_hot', 'custody_cold'] as const;
+export const ledgerJournalKind = pgEnum('ledger_journal_kind', ['payment', 'fee', 'fee_topup', 'settlement', 'sweep', 'withdrawal_hold', 'withdrawal', 'withdrawal_release', 'treasury']);
 
 /** One account per (kind, merchant, mode, token). Platform accounts have merchant_id null. */
 export const ledgerAccounts = pgTable(
@@ -824,9 +820,8 @@ export const ledgerJournals = pgTable(
   {
     id: id(),
     kind: ledgerJournalKind('kind').notNull(),
-    merchantId: uuid('merchant_id')
-      .notNull()
-      .references(() => merchants.id),
+    // Null only for treasury journals (platform hot <-> cold, no merchant).
+    merchantId: uuid('merchant_id').references(() => merchants.id),
     livemode: boolean('livemode').notNull(),
     tokenId: text('token_id')
       .notNull()
@@ -836,6 +831,7 @@ export const ledgerJournals = pgTable(
     topupId: uuid('topup_id').references(() => feeTopups.id),
     sweepId: uuid('sweep_id').references((): AnyPgColumn => sweeps.id),
     withdrawalId: uuid('withdrawal_id').references((): AnyPgColumn => withdrawals.id),
+    treasuryId: uuid('treasury_id').references((): AnyPgColumn => treasuryTransfers.id),
     createdAt: createdAt(),
   },
   (t) => [
@@ -847,7 +843,9 @@ export const ledgerJournals = pgTable(
     check('ledger_journals_sweep_ref', sql`(${t.kind} = 'sweep') = (${t.sweepId} is not null)`),
     index('ledger_journals_merchant_idx').on(t.merchantId, t.livemode),
     check('ledger_journals_payment_ref', sql`(${t.kind} = 'payment') = (${t.paymentId} is not null)`),
-    check('ledger_journals_invoice_ref', sql`(${t.kind} in ('fee_topup', 'withdrawal_hold', 'withdrawal', 'withdrawal_release')) = (${t.invoiceId} is null)`),
+    check('ledger_journals_invoice_ref', sql`(${t.kind} in ('fee_topup', 'withdrawal_hold', 'withdrawal', 'withdrawal_release', 'treasury')) = (${t.invoiceId} is null)`),
+    check('ledger_journals_treasury_ref', sql`(${t.kind} = 'treasury') = (${t.treasuryId} is not null) and (${t.kind} = 'treasury') = (${t.merchantId} is null)`),
+    uniqueIndex('ledger_journals_treasury_uq').on(t.treasuryId).where(sql`${t.kind} = 'treasury'`),
     check('ledger_journals_withdrawal_ref', sql`(${t.kind} in ('withdrawal_hold', 'withdrawal', 'withdrawal_release')) = (${t.withdrawalId} is not null)`),
     uniqueIndex('ledger_journals_withdrawal_uq').on(t.withdrawalId, t.kind).where(sql`${t.withdrawalId} is not null`),
     check('ledger_journals_topup_ref', sql`(${t.kind} = 'fee_topup') = (${t.topupId} is not null)`),
@@ -1135,5 +1133,54 @@ export const withdrawals = pgTable(
     index('withdrawals_status_idx').on(t.status),
     check('withdrawals_amount', sql`${t.amount} > 0`),
     check('withdrawals_approvals', sql`${t.approvalsRequired} between 0 and 2 and cardinality(${t.approvedBy}) <= ${t.approvalsRequired}`),
+  ],
+);
+
+// ---------------------------------------------------------------- M7e: treasury (hot <-> cold)
+
+export const treasuryDirection = pgEnum('treasury_direction', ['to_cold', 'to_hot']);
+export const treasuryStatus = pgEnum('treasury_status', ['pending_approval', 'approved', 'sent', 'confirmed', 'failed', 'rejected']);
+
+/**
+ * Platform funds between the hot wallet and the cold multisig (M7e, D-091). `to_cold`: proposed by one admin,
+ * approved by a different one, signed (hot -> allowlisted cold address) and sent by the worker. `to_hot`: the cold
+ * multisig refilled the hot wallet outside the system; an admin records the transaction and the worker books it
+ * only once it is verified on chain.
+ */
+export const treasuryTransfers = pgTable(
+  'treasury_transfers',
+  {
+    id: id(),
+    livemode: boolean('livemode').notNull(),
+    chainId: text('chain_id')
+      .notNull()
+      .references(() => chains.id),
+    tokenId: text('token_id')
+      .notNull()
+      .references(() => tokens.id),
+    direction: treasuryDirection('direction').notNull(),
+    amount: money('amount').notNull(),
+    coldAddress: text('cold_address').notNull(),
+    hotAddress: text('hot_address').notNull(),
+    status: treasuryStatus('status').notNull(),
+    requestedBy: uuid('requested_by')
+      .notNull()
+      .references(() => adminUsers.id),
+    approvedBy: uuid('approved_by').references(() => adminUsers.id),
+    reason: text('reason').notNull(),
+    txHash: text('tx_hash'),
+    blockNumber: bigint('block_number', { mode: 'bigint' }),
+    attempts: integer('attempts').notNull().default(0),
+    nextAttemptAt: tstz('next_attempt_at').notNull().defaultNow(),
+    lastError: text('last_error'),
+    confirmedAt: tstz('confirmed_at'),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index('treasury_transfers_due_idx').on(t.nextAttemptAt).where(sql`${t.status} in ('approved', 'sent')`),
+    uniqueIndex('treasury_transfers_tx_uq').on(t.chainId, sql`lower(${t.txHash})`).where(sql`${t.txHash} is not null`),
+    check('treasury_transfers_amount', sql`${t.amount} > 0`),
+    check('treasury_transfers_two_people', sql`${t.approvedBy} is null or ${t.approvedBy} <> ${t.requestedBy}`),
+    check('treasury_transfers_to_hot_tx', sql`${t.direction} <> 'to_hot' or ${t.txHash} is not null`),
   ],
 );

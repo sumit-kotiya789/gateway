@@ -242,6 +242,8 @@ export async function adminAgent(t: ReturnType<typeof buildTestApp>, owner: pg.P
 /** Standard Anvil/Hardhat test mnemonic: the platform custody seed in every test (never use it for real funds). */
 export const TEST_MNEMONIC = 'test test test test test test test test test test test junk';
 export const CUSTODY_PATHS = { deposits: "m/44'/60'/1'", hot: "m/44'/60'/11'/0/0", gas: "m/44'/60'/21'/0/0" } as const;
+/** The test cold "multisig" (an external address; signers in tests allowlist it). */
+export const TEST_COLD = '0x000000000000000000000000000000000000c01d';
 const LIVE_CUSTODY_PATHS = { deposits: "m/44'/60'/0'", hot: "m/44'/60'/10'/0/0", gas: "m/44'/60'/20'/0/0" } as const;
 
 /**
@@ -264,6 +266,10 @@ export async function ensurePlatformCustody(owner: pg.Pool) {
         [livemode, kind, k.address(paths[kind]), paths[kind]],
       );
     }
+    await owner.query(
+      `insert into platform_wallets (id, family, livemode, kind, address) values (gen_random_uuid(), 'evm', $1, 'cold', $2) on conflict do nothing`,
+      [livemode, TEST_COLD],
+    );
   }
   const wallets = { hot: k.address(CUSTODY_PATHS.hot), gas: k.address(CUSTODY_PATHS.gas), liveHot: k.address(LIVE_CUSTODY_PATHS.hot) };
   return { keyring: k, xpub, ...wallets };

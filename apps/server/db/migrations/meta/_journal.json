@@ -260,6 +260,20 @@
       "when": 1793093616061,
       "tag": "0036_withdrawals_security",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1793096299153,
+      "tag": "0037_treasury",
+      "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1793096317481,
+      "tag": "0038_treasury_security",
+      "breakpoints": true
     }
   ]
 }

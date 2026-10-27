@@ -1,8 +1,9 @@
 // Independent re-check of the ledger against payments and invoices (worker job, hourly). Postings and the DB guards
 // should make every check return nothing; a hit means a bug or tampering. Results are kept in reconciliation_runs.
-import { sql } from 'drizzle-orm';
-import { withSystem } from '../../common/db.js';
-import { reconciliationRuns } from '../../db/schema.js';
+import { eq, sql } from 'drizzle-orm';
+import { withSystem, type Tx } from '../../common/db.js';
+import { chains, reconciliationRuns } from '../../db/schema.js';
+import type { ChainTx } from '../custody/chain-tx.js';
 import type { Deps } from '../../deps.js';
 
 const NC = sql.raw(`'non_custodial_xpub'`);
@@ -91,9 +92,38 @@ const CHECKS = {
     group by a.token_id having sum(e.amount) <> 0`,
 };
 
-export type ReconciliationIssue = { check: keyof typeof CHECKS; count: number; sample: string[] };
+export type ReconciliationIssue = { check: keyof typeof CHECKS | 'hot_wallet_shortfall' | 'hot_wallet_unchecked'; count: number; sample: string[] };
 
-export async function reconcileLedger(deps: Deps): Promise<ReconciliationIssue[]> {
+/**
+ * Custodial (M7e): the hot wallet must hold on chain at least what the ledger says it holds, per mode and token. Less
+ * means funds left it without a booking (key compromise, a bug, or a refill not recorded): an incident.
+ */
+async function checkHotWallets(tx: Tx, chainTx: (chain: typeof chains.$inferSelect) => ChainTx, issues: ReconciliationIssue[], log: Deps['log']): Promise<void> {
+  const rows = await tx.execute<{ livemode: boolean; token_id: string; booked: string; chain_id: string; contract: string; hot: string | null }>(sql`
+    select a.livemode, a.token_id, sum(e.amount)::text as booked, t.chain_id, t.contract_address as contract,
+           (select w.address from platform_wallets w join chains c on c.family = w.family
+            where c.id = t.chain_id and w.kind = 'hot' and w.livemode = a.livemode and w.retired_at is null) as hot
+    from ledger_accounts a join ledger_entries e on e.account_id = a.id join tokens t on t.id = a.token_id
+    where a.kind = 'custody_hot' group by a.livemode, a.token_id, t.chain_id, t.contract_address having sum(e.amount) > 0`);
+  const short: string[] = [];
+  const unchecked: string[] = [];
+  for (const r of rows.rows) {
+    const [chain] = await tx.select().from(chains).where(eq(chains.id, r.chain_id));
+    try {
+      /* v8 ignore next -- FK; and a booked hot balance implies a hot wallet once existed */
+      if (!chain || !r.hot) throw new Error('no chain or hot wallet');
+      const onchain = await chainTx(chain).tokenBalance(r.contract, r.hot);
+      if (onchain < BigInt(r.booked)) short.push(`${String(r.livemode)}:${r.token_id}`);
+    } catch (err) {
+      log.warn({ token: r.token_id, err: (err as Error).message }, 'hot wallet balance could not be checked');
+      unchecked.push(`${String(r.livemode)}:${r.token_id}`);
+    }
+  }
+  if (short.length) issues.push({ check: 'hot_wallet_shortfall', count: short.length, sample: short });
+  if (unchecked.length) issues.push({ check: 'hot_wallet_unchecked', count: unchecked.length, sample: unchecked });
+}
+
+export async function reconcileLedger(deps: Deps, opts: { chainTx?: (chain: typeof chains.$inferSelect) => ChainTx } = {}): Promise<ReconciliationIssue[]> {
   const startedAt = new Date(deps.clock());
   return withSystem(deps.db, async (tx) => {
     const issues: ReconciliationIssue[] = [];
@@ -101,6 +131,7 @@ export async function reconcileLedger(deps: Deps): Promise<ReconciliationIssue[]
       const r = await tx.execute<{ id: string }>(query);
       if (r.rows.length > 0) issues.push({ check, count: r.rows.length, sample: r.rows.slice(0, 20).map((x) => x.id) });
     }
+    if (opts.chainTx) await checkHotWallets(tx, opts.chainTx, issues, deps.log);
     await tx.insert(reconciliationRuns).values({ startedAt, finishedAt: new Date(deps.clock()), ok: issues.length === 0, issues });
     if (issues.length > 0) deps.log.error({ issues }, 'RECONCILIATION MISMATCH');
     return issues;

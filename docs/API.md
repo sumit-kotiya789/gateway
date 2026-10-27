@@ -181,6 +181,13 @@ Statuses: `pending → detected → confirming → paid | underpaid | overpaid �
 | GET | `/admin/v1/withdrawals/` | admin session | `admin:read` (`status`, default `pending_approval`; `merchant_id`) | M7 |
 | POST | `/admin/v1/withdrawals/:id/approve` | admin session + **2FA** | `withdrawals:approve` (`reason`; two different admins at or above `WITHDRAWAL_TWO_PERSON_MIN`) | M7 |
 | POST | `/admin/v1/withdrawals/:id/reject` | admin session | `withdrawals:approve` (`reason`; releases the hold) | M7 |
+| GET | `/admin/v1/custody/` | admin session | `admin:read` (signer state, platform wallets, custody totals, open sweeps, withdrawal queue) | M7 |
+| POST | `/admin/v1/custody/signer/pause` | admin session | `kill_switch:manage` (`reason`; the signer refuses everything) | M7 |
+| POST | `/admin/v1/custody/signer/resume` | admin session + **2FA** | `registry:enable` (`reason`) | M7 |
+| GET | `/admin/v1/custody/treasury` | admin session | `admin:read` | M7 |
+| POST | `/admin/v1/custody/treasury` | admin session + **2FA** | `treasury:manage` (`livemode`, `token`, `direction` to_cold / to_hot, `amount`, `tx_hash` for to_hot, `reason`) | M7 |
+| POST | `/admin/v1/custody/treasury/:id/approve` | admin session + **2FA** | `treasury:manage` (a different admin than the proposer) | M7 |
+| POST | `/admin/v1/custody/treasury/:id/reject` | admin session | `treasury:manage` | M7 |
 | GET | `/admin/v1/audit-logs` | admin session | `audit:read` (`merchant_id`, `actor_id`, `action` prefix, `limit`, `starting_after` seq) | M5b |
 | GET | `/admin/v1/audit-logs/verify` | admin session | `audit:read` (`{ intact, first_bad_seq }`) | M5b |
 

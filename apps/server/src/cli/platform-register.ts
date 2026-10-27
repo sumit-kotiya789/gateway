@@ -15,6 +15,8 @@ const Path = z.string().regex(/^m(\/\d+'?)+$/);
 const Input = z.strictObject({
   wallet_accounts: z.array(z.strictObject({ livemode: z.boolean(), base_path: Path, xpub: z.string().min(100).max(120) })),
   platform_wallets: z.array(z.strictObject({ kind: z.enum(['hot', 'gas']), livemode: z.boolean(), derivation_path: Path, address: Address })),
+  // The cold multisig (not derived from the signer's seed). Also list it in the signer's SIGNER_COLD_ADDRESSES.
+  cold_wallets: z.array(z.strictObject({ livemode: z.boolean(), address: Address })).default([]),
 });
 
 async function main(): Promise<void> {
@@ -38,7 +40,8 @@ async function main(): Promise<void> {
         if (!row) throw new Error('wallet account insert failed');
         await audit(tx, { actorType: 'system', action: 'custody.wallet_account_registered', targetType: 'wallet_account', targetId: row.id, after: { livemode: w.livemode, base_path: w.base_path } });
       }
-      for (const p of input.platform_wallets) {
+      const all = [...input.platform_wallets, ...input.cold_wallets.map((c) => ({ ...c, kind: 'cold' as const, derivation_path: null }))];
+      for (const p of all) {
         const [cur] = await tx
           .select()
           .from(platformWallets)

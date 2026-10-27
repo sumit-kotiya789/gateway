@@ -105,6 +105,15 @@ groups:
           summary: "{{ $value }} custodial sweeps failed in 24 h"
           runbook: "docs/RUNBOOK.md#stuck-transaction-m7"
 
+      - alert: GatewayHotWalletAboveCap
+        # The cap is a treasury policy: set it per token (here 50,000 units) and move the excess to cold storage.
+        expr: gw_custody_balance{account="hot", livemode="true"} > 50000
+        for: 30m
+        labels: { severity: warning }
+        annotations:
+          summary: "Hot wallet holds {{ $value }} {{ $labels.token }}: above the cap, move the excess to cold storage"
+          runbook: "docs/RUNBOOK.md#treasury-m7"
+
       - alert: GatewayApiErrors
         expr: sum(rate(gw_http_requests_total{status="5xx"}[5m])) > 0.2
         for: 5m

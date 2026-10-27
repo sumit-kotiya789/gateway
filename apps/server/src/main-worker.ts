@@ -21,6 +21,7 @@ import { createMailer, type Mailer } from './modules/email/mailer.js';
 import { chainTxFor } from './modules/custody/chain-tx.js';
 import { createSignerClient } from './modules/custody/signer-client.js';
 import { advanceWithdrawals } from './modules/custody/payouts.js';
+import { advanceTreasury } from './modules/custody/treasury.js';
 import { advanceSweeps, planSweeps, type SweeperEnv } from './modules/custody/sweeper.js';
 
 const QUEUE = 'maintenance';
@@ -40,7 +41,8 @@ export async function runMaintenanceJob(deps: Deps, name: string): Promise<unkno
       return { expired: expired.length };
     }
     case 'reconcile-ledger': {
-      const issues = await reconcileLedger(deps);
+      // Custodial: also compare the hot wallets' on-chain balances with the ledger.
+      const issues = await reconcileLedger(deps, deps.config.FEATURE_CUSTODIAL ? { chainTx: (c) => chainTxFor(c.rpcUrls) } : {});
       return { ok: issues.length === 0, issues: issues.length };
     }
     case 'purge-idempotency-keys': {
@@ -82,10 +84,10 @@ export async function runEmailJob(deps: Deps, mailer: Mailer): Promise<{ sent: n
   return total;
 }
 
-/** Plans new sweeps, then moves due sweeps and withdrawals one step forward. */
+/** Plans new sweeps, then moves due sweeps, withdrawals and treasury transfers one step forward. */
 export async function runCustodyJob(deps: Deps, env: SweeperEnv): Promise<Record<string, unknown>> {
   const planned = await planSweeps(deps);
-  return { planned, sweeps: await advanceSweeps(deps, env), withdrawals: await advanceWithdrawals(deps, env) };
+  return { planned, sweeps: await advanceSweeps(deps, env), withdrawals: await advanceWithdrawals(deps, env), treasury: await advanceTreasury(deps, env) };
 }
 
 async function main(): Promise<void> {

@@ -155,7 +155,7 @@ export function createSigner(deps: SignerDeps) {
     return s;
   }
 
-  const handlers: Partial<Record<IntentKind, (id: string) => Promise<Plan>>> = {
+  const handlers: Record<IntentKind, (id: string) => Promise<Plan>> = {
     async gas_topup(id) {
       const s = await verifiedSweep(id, ['pending']);
       const { chain, rpc, gasPrice } = await chainOf(s.chain_id);
@@ -233,11 +233,48 @@ export function createSigner(deps: SignerDeps) {
       const data = encodeFunctionData({ abi: erc20Abi, functionName: 'transfer', args: [w.to_address as `0x${string}`, amount] });
       return { chain, rpc, fromPath: hot.path, from: hot.address, txTo: w.contract_address, recipient: w.to_address, value: 0n, data, gas: tokenGas, gasPrice, tokenId: w.token_id, amount };
     },
+
+    async treasury(id) {
+      const t = await one<{
+        status: string;
+        direction: string;
+        livemode: boolean;
+        chain_id: string;
+        token_id: string;
+        amount: string;
+        cold_address: string;
+        hot_address: string;
+        requested_by: string;
+        approved_by: string | null;
+        contract_address: string;
+      }>(
+        `select x.status, x.direction, x.livemode, x.chain_id, x.token_id, x.amount::text, x.cold_address, x.hot_address, x.requested_by, x.approved_by, t.contract_address
+         from treasury_transfers x join tokens t on t.id = x.token_id where x.id = $1`,
+        [id],
+      );
+      if (!t) throw new Refusal('not_found', 'treasury transfer not found');
+      if (t.direction !== 'to_cold' || t.status !== 'approved') throw new Refusal('wrong_status', `transfer is ${t.direction} ${t.status}`);
+      /* v8 ignore next -- the treasury guard only approves with a second, different admin */
+      if (!t.approved_by || t.approved_by === t.requested_by) throw new Refusal('not_approved', 'two different admins must agree');
+      // The signer's own allowlist decides where cold is, not the database.
+      if (!config.SIGNER_COLD_ADDRESSES.includes(t.cold_address.toLowerCase())) throw new Refusal('cold_not_allowlisted', 'cold address is not in SIGNER_COLD_ADDRESSES');
+      const { chain, rpc, gasPrice } = await chainOf(t.chain_id);
+      const hot = await platformWallet('hot', chain.family, t.livemode);
+      if (!sameAddress(hot.address, t.hot_address)) throw new Refusal('wrong_source', 'transfer does not leave the active hot wallet');
+      const amount = BigInt(t.amount);
+      if ((await rpc.tokenBalance(t.contract_address, hot.address)) < amount) throw new Refusal('insufficient_funds', 'hot wallet holds less than the transfer');
+      if ((await rpc.nativeBalance(hot.address)) < tokenGas * gasPrice) throw new Refusal('needs_gas', 'hot wallet cannot pay the network fee');
+      const data = encodeFunctionData({ abi: erc20Abi, functionName: 'transfer', args: [t.cold_address as `0x${string}`, amount] });
+      return { chain, rpc, fromPath: hot.path, from: hot.address, txTo: t.contract_address, recipient: t.cold_address, value: 0n, data, gas: tokenGas, gasPrice, tokenId: t.token_id, amount };
+    },
   };
 
-  /** Per-token daily and per-transaction limits for intents that pay out of the hot wallet (withdrawals, treasury). */
+  /**
+   * Per-token daily and per-transaction limits for merchant withdrawals. Treasury transfers are not limited: they can
+   * only reach an address on the signer's own cold allowlist.
+   */
   async function checkLimits(kind: IntentKind, plan: Plan): Promise<void> {
-    if (kind !== 'withdrawal' && kind !== 'treasury') return;
+    if (kind !== 'withdrawal') return;
     // Payouts are token transfers: tokenId is always set here.
     const tokenId = plan.tokenId ?? '';
     const limits = config.SIGNER_LIMITS[tokenId];
@@ -248,7 +285,7 @@ export function createSigner(deps: SignerDeps) {
     if (plan.amount > toMinorUnits(limits.per_tx, t.decimals)) throw new Refusal('over_limit', 'amount above the per-transaction limit');
     const day = await one<{ total: string }>(
       `select coalesce(sum(amount), 0)::text as total from signer_signatures
-       where token_id = $1 and intent_kind in ('withdrawal', 'treasury') and created_at > now() - interval '24 hours'`,
+       where token_id = $1 and intent_kind = 'withdrawal' and created_at > now() - interval '24 hours'`,
       [tokenId],
     );
     /* v8 ignore next -- an aggregate without GROUP BY returns exactly one row */
@@ -282,9 +319,7 @@ export function createSigner(deps: SignerDeps) {
     if (paused) throw new Refusal('paused', 'signer is paused');
     const prior = await priorSignature(intent);
     if (prior) return prior;
-    const handler = handlers[intent.kind];
-    if (!handler) throw new Refusal('unsupported', `intent ${intent.kind} is not supported yet`);
-    const plan = await handler(intent.id);
+    const plan = await handlers[intent.kind](intent.id);
     await checkLimits(intent.kind, plan);
 
     const c = await pool.connect();

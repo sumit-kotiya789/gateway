@@ -150,7 +150,7 @@ describe('signer', () => {
     expect(row.rows[0]).toEqual({ intent_kind: 'sweep', amount: (7n * E18).toString(), token_id: 'evm-local:usdt', f: d.address });
   });
 
-  it('refuses: more than booked, paused (DB or env), gas price above the cap, wrong chain, unsupported intents', async () => {
+  it('refuses: more than booked, paused (DB or env), gas price above the cap, wrong chain, wrong records', async () => {
     const signer = makeSigner();
     const over = await paidDeposit(2n * E18, 3n * E18);
     chain.token.set(over.address, 3n * E18);
@@ -185,7 +185,7 @@ describe('signer', () => {
     );
     await owner.query("update sweeps set status = 'failed' where id = $1", [d.sweepId]);
     await expect(signer.sign({ kind: 'gas_topup', id: d.sweepId })).rejects.toEqual(refusal('wrong_status'));
-    await expect(signer.sign({ kind: 'treasury', id: d.sweepId })).rejects.toEqual(refusal('unsupported'));
+    await expect(signer.sign({ kind: 'treasury', id: d.sweepId })).rejects.toEqual(refusal('not_found')); // a sweep id is no treasury transfer
     await expect(signer.sign({ kind: 'sweep', id: '00000000-0000-7000-8000-000000000000' })).rejects.toBeInstanceOf(Refusal);
   });
 
@@ -269,13 +269,13 @@ describe('signer', () => {
       const w = JSON.stringify({ kind: 'treasury', id: d.sweepId });
       const refused = await call(w, authHeader(secret, w, now));
       expect(refused.status).toBe(409);
-      expect(await refused.json()).toMatchObject({ error: 'unsupported' });
+      expect(await refused.json()).toMatchObject({ error: 'not_found' });
       expect((await fetch(`http://127.0.0.1:${String(port)}/healthz`)).status).toBe(200);
 
       // The worker's client: same answers through its HMAC-signed requests.
       const client = createSignerClient({ ...deps.config, SIGNER_URL: `http://127.0.0.1:${String(port)}`, SIGNER_HMAC_SECRET: secret });
       expect(await client.sign('gas_topup', d.sweepId)).toMatchObject({ ok: true, tx: { reused: true } });
-      expect(await client.sign('treasury', d.sweepId)).toEqual({ ok: false, code: 'unsupported', message: expect.any(String) as unknown });
+      expect(await client.sign('treasury', d.sweepId)).toEqual({ ok: false, code: 'not_found', message: expect.any(String) as unknown });
       const wrong = createSignerClient({ ...deps.config, SIGNER_URL: `http://127.0.0.1:${String(port)}`, SIGNER_HMAC_SECRET: 'w'.repeat(32) });
       await expect(wrong.sign('sweep', d.sweepId)).rejects.toThrow(/HTTP 401/);
     } finally {

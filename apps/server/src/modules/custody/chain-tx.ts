@@ -1,11 +1,13 @@
 // Broadcasting and tracking custody transactions (M7c). The worker sends the bytes the signer returned and polls their
 // receipts; it never builds or signs a transaction itself.
-import { resolveRpcUrls } from '@gw/chains';
-import { createPublicClient, fallback, http, type Hex, type PublicClient } from 'viem';
+import { resolveRpcUrls, type RawLog } from '@gw/chains';
+import { createPublicClient, erc20Abi, fallback, http, type Hex, type PublicClient } from 'viem';
 
 export interface Receipt {
   status: 'success' | 'reverted';
   blockNumber: bigint;
+  /** For verifying transfers the platform did not sign (cold -> hot refills). */
+  logs: RawLog[];
 }
 
 export interface ChainTx {
@@ -14,6 +16,7 @@ export interface ChainTx {
   receipt(txHash: string): Promise<Receipt | null>;
   blockNumber(): Promise<bigint>;
   nativeBalance(address: string): Promise<bigint>;
+  tokenBalance(token: string, address: string): Promise<bigint>;
 }
 
 const BENIGN = /already known|known transaction|nonce too low|already imported/i;
@@ -31,7 +34,7 @@ export function viemChainTx(urls: string[]): ChainTx {
     async receipt(txHash) {
       try {
         const r = await client.getTransactionReceipt({ hash: txHash as Hex });
-        return { status: r.status, blockNumber: r.blockNumber };
+        return { status: r.status, blockNumber: r.blockNumber, logs: r.logs };
       } catch (err) {
         if ((err as Error).name === 'TransactionReceiptNotFoundError') return null;
         throw err;
@@ -39,6 +42,7 @@ export function viemChainTx(urls: string[]): ChainTx {
     },
     blockNumber: () => client.getBlockNumber(),
     nativeBalance: (address) => client.getBalance({ address: address as Hex }),
+    tokenBalance: (token, address) => client.readContract({ address: token as Hex, abi: erc20Abi, functionName: 'balanceOf', args: [address as Hex] }),
   };
 }
 

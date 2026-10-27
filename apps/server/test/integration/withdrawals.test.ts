@@ -1,14 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type pg from 'pg';
-import { eq } from 'drizzle-orm';
-import { withSystem } from '../../src/common/db.js';
-import { payments, sweeps } from '../../src/db/schema.js';
 import { advanceWithdrawals } from '../../src/modules/custody/payouts.js';
 import type { SweeperEnv } from '../../src/modules/custody/sweeper.js';
-import { transitionInvoice } from '../../src/modules/invoices/invoices.js';
-import { postPayment, postSweep, settleIfSwept } from '../../src/modules/ledger/ledger.js';
 import { reconcileLedger } from '../../src/modules/ledger/reconciliation.js';
-import { FakeChain, custodyEnv, signerPool } from './custody-sim.js';
+import { FakeChain, custodyEnv, fundCustodialMerchant, signerPool } from './custody-sim.js';
 import { adminAgent, buildTestApp, ensureLiveSimRegistry, ensureLocalRegistry, ensurePlatformCustody, merchantWithKey, ownerPool, totpNow } from './helpers.js';
 
 const t = buildTestApp({ FEATURE_CUSTODIAL: 'true', WITHDRAWAL_TWO_PERSON_MIN: '100' });
@@ -39,40 +34,8 @@ afterAll(async () => {
 
 type M = Awaited<ReturnType<typeof merchantWithKey>>;
 const tokenOf = (livemode: boolean) => (livemode ? 'evm-mainsim:usdt' : 'evm-local:usdt');
-const chainOf = (livemode: boolean) => (livemode ? 'evm-mainsim' : 'evm-local');
 
-let logIndex = 0;
-/** Custodial merchant (no fee) whose mode-balance holds `amount` available (test shortcut: settled without a sweep). */
-async function funded(amount: bigint, livemode = false): Promise<M> {
-  const m = await merchantWithKey(app, clock, owner, { livemode, scopes: ['read', 'invoices:write', 'withdrawals:write'] });
-  await owner.query("update merchants set custody_mode = 'custodial', fee_bps = 0 where id = $1", [m.merchantId]);
-  const inv = (await m.api('POST', '/v1/invoices', { amount: '1', token: tokenOf(livemode) })).json<{ id: string; deposit_address: string }>();
-  const r = await owner.query<{ id: string }>(
-    `insert into payments (id, merchant_id, livemode, invoice_id, chain_id, token_id, tx_hash, log_index, from_address, to_address, amount, block_number, block_hash, block_time, required_confirmations)
-     values (gen_random_uuid(), $1, $2, $3, $4, $5, '0xabcd', $8, '0x0000000000000000000000000000000000000001', $6, $7, 7, '0x01', now(), 2) returning id`,
-    [m.merchantId, livemode, inv.id, chainOf(livemode), tokenOf(livemode), inv.deposit_address, amount.toString(), 3000 + logIndex++],
-  );
-  await withSystem(deps.db, async (tx) => {
-    const [p] = await tx.update(payments).set({ status: 'confirmed', confirmedAt: new Date(clock()) }).where(eq(payments.id, r.rows[0]?.id ?? '')).returning();
-    if (!p) throw new Error('payment missing');
-    await postPayment(tx, p);
-    await tx.execute(`update invoices set amount_received = ${amount.toString()} where id = '${inv.id}'`);
-    for (const s of ['detected', 'confirming', amount >= E18 ? 'overpaid' : 'underpaid'] as const) await transitionInvoice(deps, tx, inv.id, s, 'test');
-    if (amount < E18) await transitionInvoice(deps, tx, inv.id, 'paid', 'test');
-    // Swept into the hot wallet the way the worker does it (the sweep path itself is covered in sweeps.test.ts).
-    const [d] = (await tx.execute<{ id: string }>(`select deposit_address_id as id from invoices where id = '${inv.id}'`)).rows;
-    const [s] = await tx
-      .insert(sweeps)
-      .values({ merchantId: m.merchantId, livemode, chainId: chainOf(livemode), tokenId: tokenOf(livemode), depositAddressId: d?.id ?? '', invoiceId: inv.id, fromAddress: inv.deposit_address, toAddress: livemode ? custody.liveHot : custody.hot, amount })
-      .returning();
-    await tx.update(sweeps).set({ status: 'sweep_sent', txHash: '0x01' }).where(eq(sweeps.id, s?.id ?? ''));
-    const [done] = await tx.update(sweeps).set({ status: 'confirmed', confirmedAt: new Date(clock()) }).where(eq(sweeps.id, s?.id ?? '')).returning();
-    if (!done) throw new Error('sweep missing');
-    await postSweep(tx, done);
-    expect(await settleIfSwept(deps, tx, inv.id)).toBe(true);
-  });
-  return m;
-}
+const funded = (amount: bigint, livemode = false) => fundCustodialMerchant({ app, clock, deps, owner, custody }, amount, livemode);
 
 const step = () => {
   clock.advance(30_000);

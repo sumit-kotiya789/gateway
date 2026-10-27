@@ -44,6 +44,7 @@ describe('metrics', () => {
     expect(r.headers['content-type']).toMatch(/^text\/plain; version=0\.0\.4/);
     expect(r.headers['cache-control']).toBe('no-store');
     expect(r.body).toContain('# TYPE gw_scanner_cursor_age_seconds gauge');
+    expect(r.body).toContain('# TYPE gw_custody_balance gauge');
     // An enabled chain without a cursor reads NaN (alert: never ran).
     expect(r.body).toContain('gw_scanner_cursor_age_seconds{chain="evm-metrics"} NaN');
     expect(value(r.body, 'gw_http_requests_total{method="GET",route="/healthz",status="2xx"}')).toBeGreaterThanOrEqual(1);

@@ -1,17 +1,25 @@
 // Admin console: custody overview and the signer kill switch (M7e, D-091). Pausing is always allowed
 // (`kill_switch:manage`); resuming lowers a control, so it needs a superadmin and step-up, like re-enabling a chain.
-import { AppError, fromSignedMinorUnits } from '@gw/core';
-import { asc, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { AppError, fromMinorUnits, fromSignedMinorUnits } from '@gw/core';
+import type { FastifyRequest } from 'fastify';
+import { asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { audit } from '../../common/audit.js';
 import { withSystem } from '../../common/db.js';
-import { ledgerAccounts, ledgerEntries, platformWallets, signerControls, sweeps, tokens, withdrawals } from '../../db/schema.js';
+import { ledgerAccounts, ledgerEntries, platformWallets, signerControls, sweeps, tokens, treasuryTransfers, withdrawals } from '../../db/schema.js';
+import { approveTreasuryTransfer, createTreasuryTransfer, rejectTreasuryTransfer, treasuryView } from './treasury.js';
 import type { Deps } from '../../deps.js';
 import { requireAdmin, requireAdminTotp } from '../auth/guards.js';
 
 const ReasonBody = z.strictObject({ reason: z.string().trim().min(3).max(500) });
 const CUSTODY_KINDS = ['custody_deposits', 'custody_hot', 'custody_cold', 'merchant_pending', 'merchant_available', 'merchant_withdrawing'] as const;
+
+function adminOf(req: FastifyRequest) {
+  /* v8 ignore next -- requireAdmin runs first */
+  if (!req.admin) throw new AppError('unauthorized', 'authentication required');
+  return req.admin;
+}
 
 export function custodyAdminRoutes(deps: Deps): FastifyPluginAsyncZod {
   return async (app) => {
@@ -54,14 +62,65 @@ export function custodyAdminRoutes(deps: Deps): FastifyPluginAsyncZod {
       }),
     );
 
+    // ---------------------------------------------------------------- treasury (hot <-> cold)
+
+    app.get('/treasury', { preHandler: requireAdmin(deps, 'admin:read') }, async () =>
+      withSystem(deps.db, async (tx) => {
+        const rows = await tx.select({ t: treasuryTransfers, decimals: tokens.decimals }).from(treasuryTransfers).innerJoin(tokens, eq(tokens.id, treasuryTransfers.tokenId)).orderBy(desc(treasuryTransfers.createdAt)).limit(100);
+        return { data: rows.map((r) => treasuryView(r.t, r.decimals, fromMinorUnits)) };
+      }),
+    );
+
+    app.post(
+      '/treasury',
+      {
+        preHandler: [requireAdmin(deps, 'treasury:manage'), requireAdminTotp(deps)],
+        schema: {
+          body: z.strictObject({
+            livemode: z.boolean(),
+            token: z.string().regex(/^[a-z0-9-]+:[a-z0-9-]+$/),
+            direction: z.enum(['to_cold', 'to_hot']),
+            amount: z.string().max(100),
+            tx_hash: z.string().regex(/^0x[0-9a-fA-F]{64}$/).optional(),
+            reason: z.string().trim().min(3).max(500),
+          }),
+        },
+      },
+      async (req, reply) => {
+        const admin = adminOf(req);
+        const out = await withSystem(deps.db, async (tx) => {
+          const t = await createTreasuryTransfer(deps, tx, { livemode: req.body.livemode, tokenId: req.body.token, direction: req.body.direction, amount: req.body.amount, ...(req.body.tx_hash ? { txHash: req.body.tx_hash } : {}), adminId: admin.id, reason: req.body.reason });
+          await audit(tx, { actorType: 'admin', actorId: admin.id, action: `custody.treasury_${t.direction}_${t.direction === 'to_cold' ? 'proposed' : 'recorded'}`, targetType: 'treasury_transfer', targetId: t.id, after: { amount: req.body.amount, token: t.tokenId, livemode: t.livemode, tx_hash: t.txHash, reason: req.body.reason } }, req);
+          const [k] = await tx.select({ decimals: tokens.decimals }).from(tokens).where(eq(tokens.id, t.tokenId));
+          return treasuryView(t, k?.decimals ?? 0, fromMinorUnits);
+        });
+        return reply.status(201).send(out);
+      },
+    );
+
+    for (const [action, guards] of [
+      ['approve', [requireAdmin(deps, 'treasury:manage'), requireAdminTotp(deps)]],
+      ['reject', [requireAdmin(deps, 'treasury:manage')]],
+    ] as const) {
+      app.post(`/treasury/:id/${action}`, { preHandler: [...guards], schema: { params: z.strictObject({ id: z.uuid() }), body: ReasonBody } }, async (req) =>
+        withSystem(deps.db, async (tx) => {
+          const admin = adminOf(req);
+          const t = action === 'approve' ? await approveTreasuryTransfer(deps, tx, req.params.id, admin.id) : await rejectTreasuryTransfer(tx, req.params.id);
+          await audit(tx, { actorType: 'admin', actorId: admin.id, action: `custody.treasury_${action === 'approve' ? 'approved' : 'rejected'}`, targetType: 'treasury_transfer', targetId: t.id, after: { reason: req.body.reason } }, req);
+          const [k] = await tx.select({ decimals: tokens.decimals }).from(tokens).where(eq(tokens.id, t.tokenId));
+          return treasuryView(t, k?.decimals ?? 0, fromMinorUnits);
+        }),
+      );
+    }
+
+    // ---------------------------------------------------------------- signer kill switch
+
     for (const [action, paused, guards] of [
       ['pause', true, [requireAdmin(deps, 'kill_switch:manage')]],
       ['resume', false, [requireAdmin(deps, 'registry:enable'), requireAdminTotp(deps)]],
     ] as const) {
       app.post(`/signer/${action}`, { preHandler: [...guards], schema: { body: ReasonBody } }, async (req, reply) => {
-        const admin = req.admin;
-        /* v8 ignore next -- requireAdmin runs first */
-        if (!admin) throw new AppError('unauthorized', 'authentication required');
+        const admin = adminOf(req);
         await withSystem(deps.db, async (tx) => {
           const [ctl] = await tx.select().from(signerControls).where(eq(signerControls.id, 1)).for('update');
           if (ctl?.paused === paused) throw new AppError('conflict', `signer is already ${paused ? 'paused' : 'running'}`);

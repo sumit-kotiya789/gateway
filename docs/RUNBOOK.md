@@ -166,11 +166,33 @@ Custodial mode is off unless `FEATURE_CUSTODIAL=true`, which also needs `SIGNER_
 - Failed with `payout_address_changed`, `merchant_inactive`, `payouts_frozen`: released automatically; the merchant
   requests again if appropriate.
 
+## Treasury (M7)
+- Policy: keep only what payouts need in the hot wallet. Alert `GatewayHotWalletAboveCap` (set the cap per token in
+  `infra/prometheus/alerts.yml`) means: move the excess to cold.
+- Hot → cold: admin console → Custody → Treasury, "Move to cold" (TOTP); a second admin approves (TOTP). The signer
+  only sends to addresses in its own `SIGNER_COLD_ADDRESSES`, which must match the registered cold wallet.
+- Cold → hot: the multisig signers send the tokens to the hot wallet themselves, then an admin records the transaction
+  hash and amount. It is booked only when the chain shows exactly that transfer (`not_a_matching_transfer` otherwise:
+  check the hash and amount, record again). A refill can bring back at most what the ledger holds in cold.
+- Hourly reconciliation compares each hot wallet's token balance on chain with the ledger: `hot_wallet_shortfall`
+  (less on chain) is an incident: pause the signer first. `hot_wallet_unchecked`: the RPC did not answer.
+
 ## Hot wallet compromise (M7)
+1. Pause the signer (admin console → Custody → Pause; or `SIGNER_PAUSED=true` and restart it). Every sweep, payout and
+   treasury transfer stops.
+2. `select audit_verify();` and preserve a DB snapshot. Compare the hot wallet on chain with the ledger
+   (`hot_wallet_shortfall` in the latest reconciliation run).
+3. Move what is left: a new seed (key ceremony), new hot and gas wallets registered, old ones retired. Never resume
+   with the old seed.
+
 ## Emergency kill switch (M7)
+Admin console → Custody → Pause (any operator, immediate, audited). Resume needs a superadmin and TOTP. Independent
+of the database: `SIGNER_PAUSED=true` in the signer's environment. While paused, sweeps and withdrawals wait (never
+fail) and continue on resume.
+
 ## Key rotation
 - Webhook secrets: the merchant rotates in the dashboard (TOTP). The old secret keeps signing for 0-72 h. A leaked secret:
   rotate with "expire it now". Secrets are envelope-encrypted with `DATA_KEK`; KEK rotation re-wraps data keys (M11).
-- Signer keys: M7.
+- Signer keys: a new seed is a key ceremony (D-010): new deposit, hot and gas keys registered with `platform:register` after the old ones are retired; open sweeps finish on the old keys first. Rotate `SIGNER_HMAC_SECRET` on both sides together.
 ## Mass refund (M7)
 ## DB restore (M11)

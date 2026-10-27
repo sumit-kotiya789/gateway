@@ -521,3 +521,18 @@ ledger. Unsolicited extra tokens on an address are not swept (they are not booke
   the platform in the native coin (no withdrawal fee yet).
 - **Events.** `withdrawal.<status>` through the outbox (DB trigger), so webhooks and `/v1/events` carry them.
 
+## D-091 Custody operations: kill switch, treasury, on-chain hot wallet check (M7e) (2026-10-27)
+- **Kill switch.** `signer_controls.paused`, set from the admin console: any operator pauses at once (audited);
+  resuming needs a superadmin and TOTP. The signer also honours `SIGNER_PAUSED` from its own environment.
+- **Treasury.** Hot → cold is proposed by one admin and approved by a different one (both TOTP, DB check), signed only
+  to an address in the signer's own `SIGNER_COLD_ADDRESSES` that also matches the registered cold wallet, and not
+  subject to payout limits (it can only reach cold). Cold → hot happens outside the system (multisig); an admin
+  records the transaction and the worker books it only when the receipt holds exactly that token transfer from cold
+  to hot for that amount, with confirmations; at most the ledger's cold balance. Treasury journals are platform-only
+  (`merchant_id` null, the only such journals), between `custody_hot` and `custody_cold`.
+- **Hot wallet check.** The hourly reconciliation (custodial deployments) reads each hot wallet's token balance on
+  chain: less than the ledger's `custody_hot` is `hot_wallet_shortfall` (incident); no answer is
+  `hot_wallet_unchecked`. Deposit addresses are not checked on chain: each is swept as soon as it is confirmed.
+- **Cap.** No hard cap in code: `gw_custody_balance` and the `GatewayHotWalletAboveCap` alert carry the treasury
+  policy, and moving the excess is a two-person decision.
+
