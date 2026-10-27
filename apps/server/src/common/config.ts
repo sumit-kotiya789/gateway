@@ -57,6 +57,11 @@ const schema = z
     FEATURE_CUSTODIAL: z.stringbool().default(false),
     // Lets webhooks reach private/loopback addresses (local receivers in dev and tests). Refused in production.
     WEBHOOK_ALLOW_PRIVATE_NETWORKS: z.stringbool().default(false),
+    // Bearer token for GET /metrics (Prometheus). Unset = no metrics route.
+    METRICS_TOKEN: z
+      .union([z.literal(''), secret(32)])
+      .optional()
+      .transform((v) => v || undefined),
   })
   .superRefine((c, ctx) => {
     if (c.JWT_SECRET === c.ADMIN_JWT_SECRET) {

@@ -438,3 +438,16 @@ route); the audit entry names the key as actor. Exports are rate limited to 10 a
 IP) because each one may scan a year of rows. No new scope: `read` already returns every invoice field via the list
 API. Scheduled (emailed) reports stay out: an email with a year of payments is a bigger leak than a link to sign in.
 
+## D-085 Metrics and alert rules (M9) (2026-10-27)
+`GET /metrics` on the api in Prometheus text format, behind `Authorization: Bearer <METRICS_TOKEN>`; without the token
+configured the route does not exist. No client library: a few gauges and counters are written by hand.
+- **Health gauges come from the database at scrape time** (cached 5 s): scanner cursor age, newest scanned block and its
+  age per enabled chain; last reconciliation run (age, ok, issues per check); due and recently failed webhook deliveries
+  and emails, with the oldest wait; pending invoices more than 2 minutes past their deadline (expiry job down). The
+  worker and watchers need no HTTP listener, and one scrape of any api process sees the whole system.
+- **HTTP counters** per api process: requests and total seconds by method, route template and status class (never the
+  raw URL, so label cardinality stays bounded).
+- Partial indexes keep the "failed in the last 24 h" counts cheap.
+- Alert rules in `infra/prometheus/alerts.yml` link to runbook headings. An RPC-disagreement alert waits for the quorum
+  check (SECURITY.md "Lying RPC", still planned).
+

@@ -169,6 +169,8 @@ export const emailOutbox = pgTable(
   },
   (t) => [
     index('email_outbox_due_idx').on(t.nextAttemptAt).where(sql`${t.status} = 'pending'`),
+    // Metrics: emails given up on recently (M9).
+    index('email_outbox_failed_idx').on(t.createdAt).where(sql`${t.status} = 'failed'`),
     check('email_outbox_status', sql`${t.status} in ('pending', 'sent', 'failed')`),
     check('email_outbox_payload', sql`(${t.status} = 'pending') = (${t.payloadEnc} is not null)`),
   ],
@@ -906,6 +908,8 @@ export const webhookDeliveries = pgTable(
     uniqueIndex('webhook_deliveries_id_uq').on(t.id),
     uniqueIndex('webhook_deliveries_endpoint_event_uq').on(t.endpointId, t.eventId),
     index('webhook_deliveries_due_idx').on(t.nextAttemptAt).where(sql`${t.status} = 'pending'`),
+    // Metrics: deliveries given up on recently (M9).
+    index('webhook_deliveries_failed_idx').on(t.lastAttemptAt).where(sql`${t.status} = 'failed'`),
     index('webhook_deliveries_endpoint_idx').on(t.endpointId, t.seq),
   ],
 );

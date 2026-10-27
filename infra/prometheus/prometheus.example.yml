@@ -1,0 +1,13 @@
+# Example scrape config. The token file holds METRICS_TOKEN (keep it out of this file and out of git).
+rule_files:
+  - alerts.yml
+scrape_configs:
+  - job_name: gateway
+    scrape_interval: 30s
+    scheme: http   # the api's internal listener; keep /metrics off the public edge
+    metrics_path: /metrics
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/gateway-metrics-token
+    static_configs:
+      - targets: ['api.internal:3000']

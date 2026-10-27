@@ -183,6 +183,13 @@
       "when": 1793082919829,
       "tag": "0025_devices_security",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1793083783254,
+      "tag": "0026_metrics",
+      "breakpoints": true
     }
   ]
 }

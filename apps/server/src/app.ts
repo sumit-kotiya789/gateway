@@ -23,6 +23,7 @@ import { registryDashboardRoutes, registryRoutes } from './modules/registry/regi
 import { checkoutRoutes } from './modules/checkout/checkout.routes.js';
 import { invoiceDashboardRoutes, invoiceRoutes } from './modules/invoices/invoices.routes.js';
 import { feeTopupDashboardRoutes, ledgerDashboardRoutes, ledgerRoutes } from './modules/ledger/ledger.routes.js';
+import { HttpMetrics, metricsRoutes } from './modules/metrics/metrics.js';
 import { webhookDashboardRoutes } from './modules/webhooks/webhooks.routes.js';
 import { xpubDashboardRoutes } from './modules/xpubs/xpubs.routes.js';
 import { inviteAuthRoutes, teamDashboardRoutes } from './modules/team/team.routes.js';
@@ -96,6 +97,12 @@ export function buildApp(logger: FastifyBaseLogger, deps?: Deps) {
   app.get('/healthz', { schema: { hide: true } }, () => ({ status: 'ok' }));
 
   if (!deps) return app;
+
+  const http = new HttpMetrics();
+  app.addHook('onResponse', async (req, reply) => {
+    http.observe(req.method, req.routeOptions.url, reply.statusCode, reply.elapsedTime / 1000);
+  });
+  void app.register(metricsRoutes(deps, http));
 
   void app.register(rateLimit, {
     global: true,

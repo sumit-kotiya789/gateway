@@ -7,6 +7,15 @@ Each procedure is written when the component it covers ships. Headings are fixed
 - Processes exit non-zero on invalid configuration; the error names the bad keys (never values).
 - On SIGTERM/SIGINT the api stops accepting connections, drains, and exits; forced exit after 10 s.
 
+## Metrics and alerts
+- Set `METRICS_TOKEN` (32+ random characters) and scrape `GET /metrics` on the api's internal listener with
+  `Authorization: Bearer <token>` (`infra/prometheus/prometheus.example.yml`). Never route `/metrics` through the public edge.
+- Alert rules: `infra/prometheus/alerts.yml`; each links to a heading in this runbook. Health gauges (scanner, worker,
+  reconciliation, webhooks, email) are read from the database, so scraping one api process covers every process.
+- `NaN` for `gw_scanner_cursor_age_seconds` = an enabled chain no watcher has scanned yet.
+- Not covered yet: RPC provider disagreement (needs the quorum check, D-085), audit-chain verification (run
+  `select audit_verify();` on a schedule).
+
 ## Database roles and migrations
 - Migrations run as the schema owner: `DATABASE_MIGRATION_URL=… pnpm migrate` (compose: the one-shot `migrate` service runs before `api`).
 - The app connects as a LOGIN user that is a member of `gw_app` (never the owner). New environment:
