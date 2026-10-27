@@ -48,7 +48,7 @@ flowchart LR
 ```
 packages/core     pure domain: money, errors, state machine, fee math, interfaces, zod schemas. No IO.
 apps/server       api / worker / watcher entrypoints, modules, migrations, tests
-apps/signer       isolated signing service (M7)
+apps/signer       isolated signing service (M7b, D-088): own process, own DB role, intents only
 apps/dashboard    merchant dashboard, Vite + React SPA (M3b)
 apps/admin        admin console, Vite + React SPA, separate origin + auth domain (M5b)
 docs/             this folder

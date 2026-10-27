@@ -472,3 +472,25 @@ recreated as in D-076. A DB guard restricts each journal kind to its account kin
 merchant are derived from the merchant's own settlement lines (R − (R−F)), because platform accounts are invisible in
 a merchant's RLS context.
 
+## D-088 Signer service (M7b) (2026-10-27)
+`apps/signer` is its own process and deployment; it is the only code that holds keys. Extends D-019.
+- **Seed.** `SeedSource` interface. `local-file` (24-word mnemonic sealed with AES-256-GCM under `SIGNER_SEED_KEK`) is
+  for development and tests; the signer refuses it in production until a KMS-backed source exists (D-010 still open).
+  `init-seed` creates the file and prints only public values (deposit xpubs, hot and gas addresses); the mnemonic is
+  printed only with `--show-mnemonic`, for an offline backup.
+- **Paths.** Deposits `m/44'/60'/0'` (live) and `1'` (test) via `wallet_accounts`; hot `10'/0/0` and `11'/0/0`; gas
+  `20'/0/0` and `21'/0/0`. Cold is an external multisig, allowlisted in `SIGNER_COLD_ADDRESSES`.
+- **Intents only.** `POST /v1/sign {kind, id}`: `gas_topup` and `sweep` now, `withdrawal` and `treasury` later. The
+  signer re-reads the record, re-derives the sender and the hot/gas wallet from its own seed and refuses any mismatch,
+  never sweeps more than the confirmed payments to an address minus earlier confirmed sweeps, checks the token balance
+  on chain, refuses above `SIGNER_MAX_GAS_PRICE_GWEI` and `SIGNER_MAX_GAS_TOPUP`, and builds the transaction itself.
+  Payout intents need per-token `SIGNER_LIMITS` (per transaction and per 24 h); a token without limits is refused.
+- **One transaction per intent.** `signer_signatures` (unique per intent, and per sender nonce) stores the signed
+  bytes; asking again returns them, so the worker rebroadcasts the same transaction instead of creating a second one.
+  Nonce = max(chain pending nonce, last signed + 1) under a per-sender advisory lock. The signer never broadcasts.
+- **Database.** Own role `gw_signer`: SELECT on the tables it checks, INSERT on `signer_signatures` only. The app role
+  can read signatures but not write them; nobody can change them (trigger).
+- **Transport.** HMAC-SHA256 of each body (`x-signer-auth`, 60 s window) always; mTLS (TLS 1.3, client certificate)
+  required in production. Errors return a refusal code, never internals.
+- **Kill switch.** `SIGNER_PAUSED` in the signer's env, or `signer_controls.paused` (admin, M7e).
+

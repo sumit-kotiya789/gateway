@@ -929,3 +929,122 @@ export const webhookDeliveries = pgTable(
     index('webhook_deliveries_endpoint_idx').on(t.endpointId, t.seq),
   ],
 );
+
+// ---------------------------------------------------------------- M7: custodial operations (signer, sweeps)
+
+export const platformWalletKind = pgEnum('platform_wallet_kind', ['hot', 'gas', 'cold']);
+
+/**
+ * Platform-controlled wallets per family and mode (M7b, D-088). Hot (receives sweeps, pays withdrawals) and gas (pays
+ * network fees for sweeps) are derived from the signer's seed at `derivation_path`; the signer re-derives and refuses
+ * an address that does not match. Cold is an external multisig: no path here, allowlisted in the signer's own config.
+ * Rows are never changed; a replacement retires the old row.
+ */
+export const platformWallets = pgTable(
+  'platform_wallets',
+  {
+    id: id(),
+    family: chainFamily('family').notNull(),
+    livemode: boolean('livemode').notNull(),
+    kind: platformWalletKind('kind').notNull(),
+    address: text('address').notNull(),
+    derivationPath: text('derivation_path'),
+    retiredAt: tstz('retired_at'),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('platform_wallets_active_uq').on(t.family, t.livemode, t.kind).where(sql`${t.retiredAt} is null`),
+    check('platform_wallets_path', sql`(${t.kind} = 'cold') = (${t.derivationPath} is null)`),
+    check('platform_wallets_address', sql`${t.address} ~ '^0x[0-9a-fA-F]{40}$'`),
+  ],
+);
+
+/** Single row: the signer refuses every request while paused (admin kill switch, M7e). */
+export const signerControls = pgTable(
+  'signer_controls',
+  {
+    id: integer('id').primaryKey().default(1),
+    paused: boolean('paused').notNull().default(false),
+    reason: text('reason'),
+    updatedAt: tstz('updated_at').notNull().defaultNow(),
+  },
+  (t) => [check('signer_controls_single', sql`${t.id} = 1`)],
+);
+
+export const sweepStatus = pgEnum('sweep_status', ['pending', 'gas_sent', 'sweep_sent', 'confirmed', 'failed']);
+
+/**
+ * Moves one custodial deposit address's booked funds into the hot wallet (M7c). `amount` is what the ledger holds for
+ * the address (confirmed payments), never more. One open sweep per address.
+ */
+export const sweeps = pgTable(
+  'sweeps',
+  {
+    id: id(),
+    merchantId: uuid('merchant_id')
+      .notNull()
+      .references(() => merchants.id),
+    livemode: boolean('livemode').notNull(),
+    chainId: text('chain_id')
+      .notNull()
+      .references(() => chains.id),
+    tokenId: text('token_id')
+      .notNull()
+      .references(() => tokens.id),
+    depositAddressId: uuid('deposit_address_id')
+      .notNull()
+      .references(() => depositAddresses.id),
+    invoiceId: uuid('invoice_id')
+      .notNull()
+      .references(() => invoices.id),
+    fromAddress: text('from_address').notNull(),
+    toAddress: text('to_address').notNull(),
+    amount: money('amount').notNull(),
+    status: sweepStatus('status').notNull().default('pending'),
+    gasTxHash: text('gas_tx_hash'),
+    txHash: text('tx_hash'),
+    blockNumber: bigint('block_number', { mode: 'bigint' }),
+    attempts: integer('attempts').notNull().default(0),
+    nextAttemptAt: tstz('next_attempt_at').notNull().defaultNow(),
+    lastError: text('last_error'),
+    confirmedAt: tstz('confirmed_at'),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('sweeps_open_uq').on(t.depositAddressId).where(sql`${t.status} <> 'failed'`),
+    index('sweeps_due_idx').on(t.nextAttemptAt).where(sql`${t.status} in ('pending', 'gas_sent', 'sweep_sent')`),
+    check('sweeps_amount', sql`${t.amount} > 0`),
+  ],
+);
+
+export const signerIntentKind = pgEnum('signer_intent_kind', ['gas_topup', 'sweep', 'withdrawal', 'treasury']);
+
+/**
+ * Every transaction the signer signed (M7b). Written only by the signer's own DB role; the app can read it (to
+ * rebroadcast the same raw transaction) but never write it. One transaction per intent: asking again returns it.
+ */
+export const signerSignatures = pgTable(
+  'signer_signatures',
+  {
+    id: id(),
+    intentKind: signerIntentKind('intent_kind').notNull(),
+    intentId: uuid('intent_id').notNull(),
+    chainId: text('chain_id')
+      .notNull()
+      .references(() => chains.id),
+    fromAddress: text('from_address').notNull(),
+    toAddress: text('to_address').notNull(),
+    // Null = native coin (gas top-ups).
+    tokenId: text('token_id').references(() => tokens.id),
+    amount: money('amount').notNull(),
+    nonce: bigint('nonce', { mode: 'bigint' }).notNull(),
+    txHash: text('tx_hash').notNull(),
+    rawTx: text('raw_tx').notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('signer_signatures_intent_uq').on(t.intentKind, t.intentId),
+    uniqueIndex('signer_signatures_nonce_uq').on(t.chainId, sql`lower(${t.fromAddress})`, t.nonce),
+    index('signer_signatures_day_idx').on(t.tokenId, t.createdAt),
+  ],
+);

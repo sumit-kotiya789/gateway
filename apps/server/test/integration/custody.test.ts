@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import type { ChainConfig } from '@gw/core';
 import { evmDeriver } from '@gw/chains';
-import { and, eq } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { HDKey } from 'viem/accounts';
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 import { withSystem, withTenant } from '../../src/common/db.js';
@@ -9,7 +9,7 @@ import { seedRegistry } from '../../src/db/seed-registry.js';
 import { chains, depositAddresses, merchants, merchantXpubs, tokens, walletAccounts } from '../../src/db/schema.js';
 import { allocateDepositAddress, strategyFor } from '../../src/modules/custody/custody.js';
 import { loadRegistry, verifyRegistry } from '../../src/modules/registry/registry.js';
-import { buildTestApp, enable2fa, ownerPool, signup, totpNow } from './helpers.js';
+import { CUSTODY_PATHS, buildTestApp, enable2fa, ensurePlatformCustody, ownerPool, signup, totpNow } from './helpers.js';
 
 const t = buildTestApp();
 const { app, db, clock } = t;
@@ -184,15 +184,10 @@ describe('custody mode selection', () => {
 
   it('custodial with flag on uses the platform wallet and full path', async () => {
     const mid = await merchant('custodial');
-    const fresh = newAccount().xpub;
-    // One test-mode platform wallet per family; another test file may have registered it already.
-    const xpub = await withSystem(db, async (tx) => {
-      await tx.insert(walletAccounts).values({ family: 'evm', livemode: false, basePath: "m/44'/60'/0'", xpub: fresh, keyFingerprint: evmDeriver.keyFingerprint(fresh) }).onConflictDoNothing();
-      const [w] = await tx.select({ xpub: walletAccounts.xpub }).from(walletAccounts).where(and(eq(walletAccounts.family, 'evm'), eq(walletAccounts.livemode, false)));
-      return w?.xpub ?? '';
-    });
+    // One test-mode platform wallet per family, shared by every test file (deterministic test seed).
+    const { xpub } = await ensurePlatformCustody(owner);
     const a = await alloc(mid, local, false, true);
-    expect(a).toMatchObject({ source: 'platform', custodyMode: 'custodial', derivationPath: `m/44'/60'/0'/0/${String(a.derivationIndex)}` });
+    expect(a).toMatchObject({ source: 'platform', custodyMode: 'custodial', derivationPath: `${CUSTODY_PATHS.deposits}/0/${String(a.derivationIndex)}` });
     expect(a.address).toBe(evmDeriver.deriveFromXpub(xpub, a.derivationIndex).address);
   });
 

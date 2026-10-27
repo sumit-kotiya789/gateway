@@ -1,12 +1,11 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
-import { evmDeriver } from '@gw/chains';
 import { withSystem } from '../../src/common/db.js';
 import { payments } from '../../src/db/schema.js';
 import { transitionInvoice } from '../../src/modules/invoices/invoices.js';
 import { postPayment, resolveInvoice, settleCustodialInvoice } from '../../src/modules/ledger/ledger.js';
 import { reconcileLedger } from '../../src/modules/ledger/reconciliation.js';
-import { buildTestApp, ensureLocalRegistry, merchantWithKey, ownerPool, randomXpub } from './helpers.js';
+import { buildTestApp, ensureLocalRegistry, ensurePlatformCustody, merchantWithKey, ownerPool } from './helpers.js';
 
 const t = buildTestApp({ FEATURE_CUSTODIAL: 'true' });
 const { app, clock, deps } = t;
@@ -15,12 +14,7 @@ const E18 = 10n ** 18n;
 beforeAll(async () => {
   await app.ready();
   await ensureLocalRegistry(owner);
-  // One platform test wallet per family+mode exists for the whole suite; any test file may have created it.
-  const xpub = randomXpub();
-  await owner.query(
-    `insert into wallet_accounts (id, family, livemode, base_path, xpub, key_fingerprint) values (gen_random_uuid(), 'evm', false, 'm/44''/60''/0''', $1, $2) on conflict do nothing`,
-    [xpub, evmDeriver.keyFingerprint(xpub)],
-  );
+  await ensurePlatformCustody(owner);
 });
 afterAll(async () => {
   await t.close();

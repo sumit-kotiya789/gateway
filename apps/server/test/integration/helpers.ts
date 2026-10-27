@@ -224,3 +224,29 @@ export async function adminAgent(t: ReturnType<typeof buildTestApp>, owner: pg.P
   if (r.statusCode !== 200) throw new Error(`admin login failed: ${r.body}`);
   return { ...a, agent, stepUp };
 }
+
+/** Standard Anvil/Hardhat test mnemonic: the platform custody seed in every test (never use it for real funds). */
+export const TEST_MNEMONIC = 'test test test test test test test test test test test junk';
+export const CUSTODY_PATHS = { deposits: "m/44'/60'/1'", hot: "m/44'/60'/11'/0/0", gas: "m/44'/60'/21'/0/0" } as const;
+
+/**
+ * Test-mode platform custody from TEST_MNEMONIC: the evm deposit wallet account and the hot and gas wallets. Shared
+ * by every test file (one per family and mode), so it is always the same keys whoever registers them first.
+ */
+export async function ensurePlatformCustody(owner: pg.Pool) {
+  const { Keyring } = await import('../../../signer/src/keys.js');
+  const k = Keyring.fromMnemonic(TEST_MNEMONIC);
+  const xpub = k.xpub(CUSTODY_PATHS.deposits);
+  await owner.query(
+    `insert into wallet_accounts (id, family, livemode, base_path, xpub, key_fingerprint) values (gen_random_uuid(), 'evm', false, $1, $2, $3) on conflict do nothing`,
+    [CUSTODY_PATHS.deposits, xpub, evmDeriver.keyFingerprint(xpub)],
+  );
+  const wallets = { hot: k.address(CUSTODY_PATHS.hot), gas: k.address(CUSTODY_PATHS.gas) };
+  for (const kind of ['hot', 'gas'] as const) {
+    await owner.query(
+      `insert into platform_wallets (id, family, livemode, kind, address, derivation_path) values (gen_random_uuid(), 'evm', false, $1, $2, $3) on conflict do nothing`,
+      [kind, wallets[kind], CUSTODY_PATHS[kind]],
+    );
+  }
+  return { keyring: k, xpub, ...wallets };
+}
