@@ -35,13 +35,16 @@ export async function balancesView(tx: Tx, merchantId: string, livemode: boolean
   const b = await merchantBalances(tx, merchantId, livemode);
   const ids = [...new Set([...b.keys(), ...(livemode ? await liveTokenIds(tx) : [])])].sort();
   const meta = await decimalsOf(tx, ids);
-  const [m] = await tx.select({ grace: merchants.feeGrace }).from(merchants).where(eq(merchants.id, merchantId));
+  const [m] = await tx.select({ grace: merchants.feeGrace, mode: merchants.custodyMode }).from(merchants).where(eq(merchants.id, merchantId));
+  // Custodial merchants pay fees out of each settlement, not from a prepaid balance (D-087).
+  const custodial = m?.mode === 'custodial';
   return {
     livemode,
+    custody_mode: m?.mode ?? null,
     data: ids.map((token) => {
-      const v = b.get(token) ?? { received: 0n, feesOwed: 0n, feesCharged: 0n };
+      const v = b.get(token) ?? { received: 0n, feesOwed: 0n, feesCharged: 0n, pending: 0n, available: 0n, withdrawing: 0n };
       const d = meta.get(token)?.decimals ?? 0;
-      const fb = feeBalanceOf(livemode, v.feesOwed, m?.grace ?? '0', d);
+      const fb = feeBalanceOf(livemode && !custodial, v.feesOwed, m?.grace ?? '0', d);
       return {
         token,
         symbol: meta.get(token)?.symbol ?? null,
@@ -51,6 +54,10 @@ export async function balancesView(tx: Tx, merchantId: string, livemode: boolean
         fees_charged: fromMinorUnits(v.feesCharged, d),
         prepaid_fees: fromSignedMinorUnits(fb.prepaid, d),
         fee_status: fb.status,
+        // Custodial only (always 0 otherwise): not swept yet / withdrawable / held for withdrawals in flight.
+        pending: fromMinorUnits(v.pending, d),
+        available: fromMinorUnits(v.available, d),
+        withdrawing: fromMinorUnits(v.withdrawing, d),
       };
     }),
   };

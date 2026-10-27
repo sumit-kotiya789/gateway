@@ -777,8 +777,18 @@ export const ledgerAccountKind = pgEnum('ledger_account_kind', [
   'platform_fee_revenue',
   // Prepaid fee top-ups the platform received (asset). merchant_id is null.
   'platform_topups',
+  // Custodial (M7). Platform assets (merchant_id null): tokens on deposit addresses not yet swept, in the hot wallet,
+  // in the cold wallet. Merchant liabilities: received but not swept yet, withdrawable, held for a withdrawal in flight.
+  'custody_deposits',
+  'custody_hot',
+  'custody_cold',
+  'merchant_pending',
+  'merchant_available',
+  'merchant_withdrawing',
 ]);
-export const ledgerJournalKind = pgEnum('ledger_journal_kind', ['payment', 'fee', 'fee_topup']);
+export const ledgerJournalKind = pgEnum('ledger_journal_kind', ['payment', 'fee', 'fee_topup', 'settlement']);
+/** Account kinds owned by the platform (merchant_id null); every other kind belongs to one merchant. */
+export const PLATFORM_ACCOUNT_KINDS = ['platform_fee_revenue', 'platform_topups', 'custody_deposits', 'custody_hot', 'custody_cold'] as const;
 
 /** One account per (kind, merchant, mode, token). Platform accounts have merchant_id null. */
 export const ledgerAccounts = pgTable(
@@ -795,7 +805,10 @@ export const ledgerAccounts = pgTable(
   },
   (t) => [
     unique('ledger_accounts_uq').on(t.kind, t.merchantId, t.livemode, t.tokenId).nullsNotDistinct(),
-    check('ledger_accounts_owner', sql`(${t.kind} in ('platform_fee_revenue', 'platform_topups')) = (${t.merchantId} is null)`),
+    check(
+      'ledger_accounts_owner',
+      sql`(${t.kind} in ('platform_fee_revenue', 'platform_topups', 'custody_deposits', 'custody_hot', 'custody_cold')) = (${t.merchantId} is null)`,
+    ),
   ],
 );
 
@@ -824,6 +837,7 @@ export const ledgerJournals = pgTable(
     uniqueIndex('ledger_journals_payment_uq').on(t.paymentId).where(sql`${t.kind} = 'payment'`),
     uniqueIndex('ledger_journals_fee_uq').on(t.invoiceId).where(sql`${t.kind} = 'fee'`),
     uniqueIndex('ledger_journals_topup_uq').on(t.topupId).where(sql`${t.kind} = 'fee_topup'`),
+    uniqueIndex('ledger_journals_settlement_uq').on(t.invoiceId).where(sql`${t.kind} = 'settlement'`),
     index('ledger_journals_merchant_idx').on(t.merchantId, t.livemode),
     check('ledger_journals_payment_ref', sql`(${t.kind} = 'payment') = (${t.paymentId} is not null)`),
     check('ledger_journals_invoice_ref', sql`(${t.kind} = 'fee_topup') = (${t.invoiceId} is null)`),

@@ -6,16 +6,38 @@ import { reconciliationRuns } from '../../db/schema.js';
 import type { Deps } from '../../deps.js';
 
 const NC = sql.raw(`'non_custodial_xpub'`);
+const C = sql.raw(`'custodial'`);
 
 const CHECKS = {
-  /** Every confirmed non-custodial payment has its payment journal. */
+  /** Every confirmed payment (non-custodial and custodial) has its payment journal. */
   payment_without_journal: sql`select p.id from payments p join invoices i on i.id = p.invoice_id
-    where p.status = 'confirmed' and i.custody_mode = ${NC}
+    where p.status = 'confirmed' and i.custody_mode in (${NC}, ${C})
       and not exists (select 1 from ledger_journals j where j.kind = 'payment' and j.payment_id = p.id)`,
   /** The journal books exactly the payment's amount. */
   payment_journal_amount: sql`select j.id from ledger_journals j join payments p on p.id = j.payment_id
-    join ledger_entries e on e.journal_id = j.id join ledger_accounts a on a.id = e.account_id and a.kind = 'merchant_received'
+    join ledger_entries e on e.journal_id = j.id join ledger_accounts a on a.id = e.account_id and a.kind in ('merchant_received', 'custody_deposits')
     where e.amount <> p.amount`,
+  /** Custodial: what merchants were credited as pending = sum of their confirmed custodial payments. */
+  custodial_received: sql`select concat_ws(':', x.merchant_id, x.livemode, x.token_id) as id from (
+      select i.merchant_id, i.livemode, i.token_id, sum(p.amount) as paid from payments p join invoices i on i.id = p.invoice_id
+      where p.status = 'confirmed' and i.custody_mode = ${C} group by 1, 2, 3) x
+    full join (
+      select a.merchant_id, a.livemode, a.token_id, -sum(e.amount) as booked from ledger_entries e
+      join ledger_accounts a on a.id = e.account_id join ledger_journals j on j.id = e.journal_id
+      where a.kind = 'merchant_pending' and j.kind = 'payment' group by 1, 2, 3) y
+    using (merchant_id, livemode, token_id)
+    where coalesce(x.paid, 0) <> coalesce(y.booked, 0)`,
+  /** Settled custodial invoices: one settlement moving exactly what was received out of pending, net of the invoice's fee. */
+  custodial_settlement: sql`select i.id from invoices i
+    where i.status = 'settled' and i.custody_mode = ${C}
+      and (i.fee_amount is null
+        or i.amount_received <> coalesce((select sum(e.amount) from ledger_journals j join ledger_entries e on e.journal_id = j.id
+          join ledger_accounts a on a.id = e.account_id and a.kind = 'merchant_pending' where j.kind = 'settlement' and j.invoice_id = i.id), 0)
+        or i.fee_amount <> -coalesce((select sum(e.amount) from ledger_journals j join ledger_entries e on e.journal_id = j.id
+          join ledger_accounts a on a.id = e.account_id and a.kind = 'platform_fee_revenue' where j.kind = 'settlement' and j.invoice_id = i.id), 0))`,
+  /** No merchant balance is ever negative (a withdrawal can never take more than was available). */
+  negative_merchant_balance: sql`select a.id from ledger_accounts a join ledger_entries e on e.account_id = a.id
+    where a.kind in ('merchant_pending', 'merchant_available', 'merchant_withdrawing') group by a.id having sum(e.amount) > 0`,
   /** invoices.amount_received = sum of confirmed payments. */
   invoice_received: sql`select i.id from invoices i left join payments p on p.invoice_id = i.id and p.status = 'confirmed'
     group by i.id having i.amount_received <> coalesce(sum(p.amount), 0)`,

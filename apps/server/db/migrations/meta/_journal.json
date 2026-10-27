@@ -204,6 +204,20 @@
       "when": 1793085081152,
       "tag": "0028_admin_users_security",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1793091090881,
+      "tag": "0029_custodial_ledger",
+      "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1793091115289,
+      "tag": "0030_custodial_ledger_security",
+      "breakpoints": true
     }
   ]
 }

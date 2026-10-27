@@ -7,9 +7,14 @@
 //   payment confirmed (A):  Dr merchant_received A   / Cr merchant_sales A      (memo: funds in the merchant's wallet)
 //   invoice settled  (fee): Dr merchant_fees_owed F  / Cr platform_fee_revenue F
 //   fee top-up       (T):   Dr platform_topups T     / Cr merchant_fees_owed T   (prepaid fees, D-076)
-// Custodial postings (pending/available balances, sweeps) arrive with M7; custodial invoices stay `paid` until then.
+//
+// Custodial postings (M7, D-087): the platform holds the funds.
+//   payment confirmed (A):  Dr custody_deposits A (platform) / Cr merchant_pending A
+//   invoice settled  (R received, F fee, after the funds were swept):
+//                           Dr merchant_pending R / Cr merchant_available R-F / Cr platform_fee_revenue F
+// The database allows each journal kind only its own account kinds (ledger_entry_guard).
 import { AppError, computeFee, feeBase } from '@gw/core';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import type { Tx } from '../../common/db.js';
 import { feeTopups, ledgerAccounts, ledgerEntries, ledgerJournals, invoices, payments } from '../../db/schema.js';
 import type { Deps } from '../../deps.js';
@@ -39,7 +44,7 @@ async function accountId(tx: Tx, kind: AccountKind, merchantId: string | null, l
 }
 
 interface JournalHead {
-  kind: 'payment' | 'fee' | 'fee_topup';
+  kind: 'payment' | 'fee' | 'fee_topup' | 'settlement';
   merchantId: string;
   livemode: boolean;
   tokenId: string;
@@ -57,6 +62,7 @@ async function post(tx: Tx, head: JournalHead, lines: [AccountKind, 'merchant' |
     .returning({ id: ledgerJournals.id });
   if (!j) return false;
   for (const [kind, owner, amount] of lines) {
+    if (amount === 0n) continue; // e.g. a fee that takes the whole amount: no zero lines
     const merchantId = owner === 'merchant' ? head.merchantId : null;
     await tx.insert(ledgerEntries).values({
       journalId: j.id,
@@ -71,12 +77,43 @@ async function post(tx: Tx, head: JournalHead, lines: [AccountKind, 'merchant' |
 /** Posts a just-confirmed payment. Idempotent per payment. */
 export async function postPayment(tx: Tx, p: PaymentRow): Promise<void> {
   const [inv] = await tx.select({ mode: invoices.custodyMode }).from(invoices).where(eq(invoices.id, p.invoiceId));
-  if (inv?.mode !== 'non_custodial_xpub') return; // custodial postings: M7
   const head = { kind: 'payment' as const, merchantId: p.merchantId, livemode: p.livemode, tokenId: p.tokenId, invoiceId: p.invoiceId, paymentId: p.id };
-  await post(tx, head, [
-    ['merchant_received', 'merchant', p.amount],
-    ['merchant_sales', 'merchant', -p.amount],
+  if (inv?.mode === 'non_custodial_xpub') {
+    await post(tx, head, [
+      ['merchant_received', 'merchant', p.amount],
+      ['merchant_sales', 'merchant', -p.amount],
+    ]);
+  } else if (inv?.mode === 'custodial') {
+    // On a platform deposit address now; the merchant can withdraw it once swept and the invoice settled.
+    await post(tx, head, [
+      ['custody_deposits', 'platform', p.amount],
+      ['merchant_pending', 'merchant', -p.amount],
+    ]);
+  }
+}
+
+/**
+ * Custodial settlement: the invoice's funds reached the hot wallet, so what it received moves from pending to
+ * available, minus the platform fee (on min(received, expected), snapshotted rate and fixed fee, never more than the
+ * base), and paid/overpaid -> settled. Call only once the deposit address was swept (M7c). No-op for any other
+ * invoice; idempotent (one settlement journal per invoice).
+ */
+export async function settleCustodialInvoice(deps: Deps, tx: Tx, invoiceId: string): Promise<boolean> {
+  const [inv] = await tx.select().from(invoices).where(eq(invoices.id, invoiceId)).for('update');
+  if (!inv || inv.custodyMode !== 'custodial' || (inv.status !== 'paid' && inv.status !== 'overpaid')) return false;
+  const received = inv.amountReceived;
+  const fee = computeFee(feeBase(inv.amountExpected, received), inv.feeBps, inv.feeFixed);
+  const head = { kind: 'settlement' as const, merchantId: inv.merchantId, livemode: inv.livemode, tokenId: inv.tokenId, invoiceId: inv.id };
+  const posted = await post(tx, head, [
+    ['merchant_pending', 'merchant', received],
+    ['merchant_available', 'merchant', -(received - fee)],
+    ['platform_fee_revenue', 'platform', -fee],
   ]);
+  /* v8 ignore next -- invariant: the status check above means no settlement journal exists yet */
+  if (!posted) return false;
+  await tx.update(invoices).set({ feeAmount: fee }).where(eq(invoices.id, inv.id));
+  await transitionInvoice(deps, tx, inv.id, 'settled', 'funds swept; platform fee deducted');
+  return true;
 }
 
 /**
@@ -151,20 +188,63 @@ export async function merchantBalances(tx: Tx, merchantId: string, livemode: boo
       tokenId: ledgerAccounts.tokenId,
       total: sql<string>`coalesce(sum(${ledgerEntries.amount}), 0)::text`,
       debits: sql<string>`coalesce(sum(${ledgerEntries.amount}) filter (where ${ledgerEntries.amount} > 0), 0)::text`,
+      credits: sql<string>`coalesce(sum(${ledgerEntries.amount}) filter (where ${ledgerEntries.amount} < 0), 0)::text`,
     })
     .from(ledgerAccounts)
     .leftJoin(ledgerEntries, eq(ledgerEntries.accountId, ledgerAccounts.id))
     .where(and(eq(ledgerAccounts.merchantId, merchantId), eq(ledgerAccounts.livemode, livemode)))
     .groupBy(ledgerAccounts.kind, ledgerAccounts.tokenId);
-  const out = new Map<string, { received: bigint; feesOwed: bigint; feesCharged: bigint }>();
+  const out = new Map<string, MerchantBalance>();
+  const get = (token: string) => {
+    const b = out.get(token) ?? { received: 0n, feesOwed: 0n, feesCharged: 0n, pending: 0n, available: 0n, withdrawing: 0n };
+    out.set(token, b);
+    return b;
+  };
   for (const r of rows) {
-    const b = out.get(r.tokenId) ?? { received: 0n, feesOwed: 0n, feesCharged: 0n };
+    const b = get(r.tokenId);
+    // Liabilities are credit balances: negate them so the merchant sees positive amounts.
     if (r.kind === 'merchant_received') b.received = BigInt(r.total);
     if (r.kind === 'merchant_fees_owed') {
       b.feesOwed = BigInt(r.total);
       b.feesCharged = BigInt(r.debits);
     }
-    out.set(r.tokenId, b);
+    if (r.kind === 'merchant_pending') {
+      b.pending = -BigInt(r.total);
+      b.received = -BigInt(r.credits); // every credit to pending is a confirmed payment
+    }
+    if (r.kind === 'merchant_available') b.available = -BigInt(r.total);
+    if (r.kind === 'merchant_withdrawing') b.withdrawing = -BigInt(r.total);
   }
+  // Custodial fees: per settlement journal, pending debit R + available credit -(R-F) = F. Read from the merchant's own
+  // lines: platform account rows are invisible in the merchant's tenant context (RLS).
+  const fees = await tx
+    .select({ tokenId: ledgerJournals.tokenId, total: sql<string>`coalesce(sum(${ledgerEntries.amount}), 0)::text` })
+    .from(ledgerJournals)
+    .innerJoin(ledgerEntries, eq(ledgerEntries.journalId, ledgerJournals.id))
+    .innerJoin(ledgerAccounts, eq(ledgerAccounts.id, ledgerEntries.accountId))
+    .where(
+      and(
+        eq(ledgerJournals.kind, 'settlement'),
+        eq(ledgerJournals.merchantId, merchantId),
+        eq(ledgerJournals.livemode, livemode),
+        inArray(ledgerAccounts.kind, ['merchant_pending', 'merchant_available']),
+      ),
+    )
+    .groupBy(ledgerJournals.tokenId);
+  for (const f of fees) get(f.tokenId).feesCharged += BigInt(f.total);
   return out;
+}
+
+export interface MerchantBalance {
+  /** Confirmed payments received (non-custodial: into the merchant's wallet; custodial: into platform custody). */
+  received: bigint;
+  /** Net merchant_fees_owed (non-custodial prepaid model, D-076). */
+  feesOwed: bigint;
+  feesCharged: bigint;
+  /** Custodial: received, not swept and settled yet. */
+  pending: bigint;
+  /** Custodial: withdrawable. */
+  available: bigint;
+  /** Custodial: held for withdrawals in flight. */
+  withdrawing: bigint;
 }

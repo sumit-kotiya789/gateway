@@ -54,6 +54,22 @@ Database guards that hold even if application code is wrong:
 2. Database: inserts into `settlement_sweeps` / `withdrawals` are rejected by trigger for non-custodial merchants.
 3. Tests: end-to-end flow asserts zero signer calls and zero sweep/withdrawal jobs.
 
+## Custodial ledger (M7a, D-087)
+
+| Event | Journal | Lines |
+|---|---|---|
+| Payment confirmed (A) | `payment` | Dr `custody_deposits` A (platform) / Cr `merchant_pending` A |
+| Invoice settled after its deposit address was swept (R received, F fee) | `settlement` | Dr `merchant_pending` R / Cr `merchant_available` R−F / Cr `platform_fee_revenue` F |
+
+- Fee = floor(min(R, expected) × bps / 10000) + fixed, never above that base; deducted at settlement. Custodial merchants
+  have no prepaid fee balance (`fee_status` = `not_enforced`, live invoices never get 402).
+- Underpaid and late payments stay in `merchant_pending` until an admin accepts them (they then settle like any paid
+  invoice) or they are refunded (M7d).
+- The database lets each journal kind touch only its own account kinds (`ledger_entry_guard`): a custodial payment can
+  never book into `merchant_received`, a `fee` journal is refused on a custodial invoice, a `settlement` journal on
+  anything but a paid custodial invoice.
+- Reconciliation adds `custodial_received`, `custodial_settlement` and `negative_merchant_balance`.
+
 ## Merchant responsibilities (non-custodial)
 
 Keep their seed safe; supply an account-level xpub (not an xprv or seed, which are refused); set their wallet's address

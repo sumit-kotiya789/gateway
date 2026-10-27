@@ -68,12 +68,13 @@ export async function createInvoice(deps: Deps, tx: Tx, merchantId: string, live
     throw new AppError('validation_error', `expires_in must be between ${EXPIRY_S.min} and ${EXPIRY_S.max} seconds`);
   }
   const [m] = await tx
-    .select({ tolerance: merchants.underpayToleranceBps, feeBps: merchants.feeBps, feeFixed: merchants.feeFixed, feeGrace: merchants.feeGrace })
+    .select({ tolerance: merchants.underpayToleranceBps, feeBps: merchants.feeBps, feeFixed: merchants.feeFixed, feeGrace: merchants.feeGrace, mode: merchants.custodyMode })
     .from(merchants)
     .where(eq(merchants.id, merchantId));
   if (!m) throw new AppError('not_found', 'merchant not found');
   // Before an address is allocated: a refused invoice must not burn a derivation index (wallet gap).
-  await assertFeeBalance(tx, merchantId, livemode, token, m.feeGrace);
+  // Custodial merchants pay fees out of each settlement instead (D-087).
+  if (m.mode !== 'custodial') await assertFeeBalance(tx, merchantId, livemode, token, m.feeGrace);
 
   const addr = await allocateDepositAddress(tx, { merchantId, livemode, chain: rowToChain(chain) }, { custodialEnabled: deps.config.FEATURE_CUSTODIAL });
   const expiresAt = new Date(deps.clock() + expiresIn * 1000);

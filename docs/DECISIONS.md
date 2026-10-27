@@ -460,3 +460,15 @@ remains: API check under row locks, plus a deferred constraint trigger. Admin to
 `session_epoch`; a credential reset increments it, so every open session of that admin ends at once (role and disabled
 state were already re-read per request). The epoch only goes up (trigger). Console page: Admins (superadmin only).
 
+## D-087 Custodial ledger: pending until swept, fee deducted at settlement (M7a) (2026-10-27)
+Custodial payments credit `merchant_pending` against the platform asset `custody_deposits`. Only when the deposit
+address has been swept into the hot wallet (M7c) does the invoice settle: what it received moves to
+`merchant_available`, minus the fee, which goes to `platform_fee_revenue`. Settling only after the sweep means a
+merchant can never withdraw funds the platform does not yet control. Overpayments are credited in full (fee on the
+expected amount); underpaid and late payments stay pending until an admin decision. No prepaid fee balance for
+custodial merchants. New account kinds `custody_deposits`, `custody_hot`, `custody_cold` (platform) and
+`merchant_pending`, `merchant_available`, `merchant_withdrawing` (merchant); journal kind `settlement`. Enum types
+recreated as in D-076. A DB guard restricts each journal kind to its account kinds. Fees charged to a custodial
+merchant are derived from the merchant's own settlement lines (R − (R−F)), because platform accounts are invisible in
+a merchant's RLS context.
+

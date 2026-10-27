@@ -486,7 +486,7 @@ describe('ledger, fees, outbox', () => {
 
     const bal = (await m.api('GET', '/v1/balances')).json<{ data: { token: string; received: string; fees_owed: string }[] }>();
     expect(bal.data).toEqual([
-      { token: 'evm-fake:usdt', symbol: 'USDT', received: '10', fees_owed: '0.1', fees_charged: '0.1', prepaid_fees: '-0.1', fee_status: 'not_enforced' },
+      { token: 'evm-fake:usdt', symbol: 'USDT', received: '10', fees_owed: '0.1', fees_charged: '0.1', prepaid_fees: '-0.1', fee_status: 'not_enforced', pending: '0', available: '0', withdrawing: '0' },
     ]);
     const dash = (await m.agent.req('GET', '/v1/dashboard/balances/?livemode=false')).json<{ data: unknown[] }>();
     expect(dash.data).toEqual(bal.data);
@@ -659,7 +659,7 @@ describe('ledger, fees, outbox', () => {
     await settle();
     expect((await m.agent.req('GET', `/v1/dashboard/invoices/${inv.id}`)).json()).toMatchObject({ status: 'settled', fee_amount: '0.6' }); // 1% of 10 + 0.5
     expect((await m.api('GET', '/v1/balances')).json<{ data: unknown[] }>().data).toEqual([
-      { token: 'evm-fake:usdt', symbol: 'USDT', received: '10', fees_owed: '0', fees_charged: '0.6', prepaid_fees: '0.4', fee_status: 'not_enforced' },
+      { token: 'evm-fake:usdt', symbol: 'USDT', received: '10', fees_owed: '0', fees_charged: '0.6', prepaid_fees: '0.4', fee_status: 'not_enforced', pending: '0', available: '0', withdrawing: '0' },
     ]);
     const j = await owner.query(
       `select a.kind::text account, e.amount::text amount from ledger_journals j join ledger_entries e on e.journal_id = j.id
