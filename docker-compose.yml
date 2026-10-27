@@ -1,5 +1,5 @@
 # Local development stack. Ports bind to 127.0.0.1 only.
-# signer service is added with M7.
+# Custodial mode (M7) is opt-in: `docker compose --profile custodial up` adds the signer (RUNBOOK "Custody setup").
 x-hardened: &hardened
   read_only: true
   security_opt: ["no-new-privileges:true"]
@@ -22,6 +22,13 @@ x-app-env: &app-env
   SMTP_URL: smtp://mailpit:1025
   EMAIL_FROM: ${EMAIL_FROM:-Gateway <no-reply@localhost>}
   DASHBOARD_URL: ${DASHBOARD_URL:-http://localhost:8080}
+  FEATURE_CUSTODIAL: ${FEATURE_CUSTODIAL:-false}
+
+# Registry rpc_urls reference these as ${NAME}; unset = that URL is skipped.
+x-rpc-env: &rpc-env
+  EVM_LOCAL_RPC_URL: http://anvil:8545
+  BSC_RPC_URL: ${BSC_RPC_URL:-}
+  BSC_TESTNET_RPC_URL: ${BSC_TESTNET_RPC_URL:-}
 
 services:
   migrate:
@@ -50,7 +57,10 @@ services:
     build: { context: ., dockerfile: apps/server/Dockerfile }
     command: ["node", "--enable-source-maps", "main-worker.cjs"]
     environment:
-      <<: *app-env
+      <<: [*app-env, *rpc-env]
+      # Custodial only. The worker is the one process that talks to the signer (the api never gets this secret).
+      SIGNER_URL: ${SIGNER_URL:-http://signer:3100}
+      SIGNER_HMAC_SECRET: ${SIGNER_HMAC_SECRET:-}
     healthcheck: { disable: true }
     depends_on:
       migrate: { condition: service_completed_successfully }
@@ -61,11 +71,7 @@ services:
     build: { context: ., dockerfile: apps/server/Dockerfile }
     command: ["node", "--enable-source-maps", "main-watcher.cjs"]
     environment:
-      <<: *app-env
-      # Registry rpc_urls reference these as ${NAME}; unset = that URL is skipped.
-      EVM_LOCAL_RPC_URL: http://anvil:8545
-      BSC_RPC_URL: ${BSC_RPC_URL:-}
-      BSC_TESTNET_RPC_URL: ${BSC_TESTNET_RPC_URL:-}
+      <<: [*app-env, *rpc-env]
     healthcheck: { disable: true }
     depends_on:
       migrate: { condition: service_completed_successfully }
@@ -86,6 +92,32 @@ services:
     depends_on:
       api: { condition: service_started }
 
+  # Custodial only (profile `custodial`). Production runs it on its own host with mTLS and a KMS seed (D-088, D-010);
+  # here: plain HTTP on the compose network, no host port, the dev seed sealed in the signerdata volume.
+  # First run: `docker compose --profile custodial run --rm -T signer node cli/init-seed.cjs` (prints what to register).
+  # Needs SIGNER_DB_PASSWORD, SIGNER_HMAC_SECRET and SIGNER_SEED_KEK in .env; the signer refuses to start without them.
+  signer:
+    <<: *hardened
+    profiles: [custodial]
+    build: { context: ., dockerfile: apps/signer/Dockerfile }
+    environment:
+      <<: *rpc-env
+      NODE_ENV: development
+      SIGNER_HOST: 0.0.0.0
+      SIGNER_PORT: "3100"
+      SIGNER_DATABASE_URL: postgres://gateway_signer:${SIGNER_DB_PASSWORD:-}@postgres:5432/gateway
+      SIGNER_HMAC_SECRET: ${SIGNER_HMAC_SECRET:-}
+      SIGNER_SEED_FILE: /data/signer-seed.json
+      SIGNER_SEED_KEK: ${SIGNER_SEED_KEK:-}
+      SIGNER_LIMITS: ${SIGNER_LIMITS:-{}}
+      SIGNER_COLD_ADDRESSES: ${SIGNER_COLD_ADDRESSES:-}
+      SIGNER_MAX_GAS_PRICE_GWEI: ${SIGNER_MAX_GAS_PRICE_GWEI:-20}
+      SIGNER_MAX_GAS_TOPUP: ${SIGNER_MAX_GAS_TOPUP:-0.005}
+      SIGNER_PAUSED: ${SIGNER_PAUSED:-false}
+    volumes: [signerdata:/data]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+
   postgres:
     image: postgres:17-alpine
     environment:
@@ -93,6 +125,8 @@ services:
       POSTGRES_DB: gateway
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       APP_DB_PASSWORD: ${APP_DB_PASSWORD:?set APP_DB_PASSWORD in .env}
+      # Optional: creates the signer's login (custodial) on a fresh data dir.
+      SIGNER_DB_PASSWORD: ${SIGNER_DB_PASSWORD:-}
     ports: ["127.0.0.1:${PG_HOST_PORT:-5432}:5432"]
     volumes:
       - pgdata:/var/lib/postgresql/data
@@ -121,3 +155,4 @@ services:
 volumes:
   pgdata:
   redisdata:
+  signerdata:

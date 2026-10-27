@@ -59,7 +59,8 @@ const schema = z
     WEBHOOK_ALLOW_PRIVATE_NETWORKS: z.stringbool().default(false),
     // Live withdrawals at or above this amount (token units) need two different admins; below, one (D-090).
     WITHDRAWAL_TWO_PERSON_MIN: z.string().regex(/^\d+(\.\d+)?$/).default('10000'),
-    // Custodial (M7): the worker asks the signer to sign sweeps and payouts. Required when FEATURE_CUSTODIAL is on.
+    // Custodial (M7): the worker asks the signer to sign sweeps and payouts. Worker only: it refuses to start without
+    // them when FEATURE_CUSTODIAL is on; the api and watcher never get the HMAC secret.
     SIGNER_URL: z
       .union([z.literal(''), z.url()])
       .optional()
@@ -87,9 +88,6 @@ const schema = z
       if (!ip || !isIP(ip) || (bits !== undefined && !/^\d{1,3}$/.test(bits))) {
         ctx.addIssue({ code: 'custom', path: ['ADMIN_IP_ALLOWLIST'], message: 'must be comma-separated IPs or CIDRs' });
       }
-    }
-    if (c.FEATURE_CUSTODIAL && c.NODE_ENV !== 'test' && (!c.SIGNER_URL || !c.SIGNER_HMAC_SECRET)) {
-      ctx.addIssue({ code: 'custom', path: ['SIGNER_URL'], message: 'SIGNER_URL and SIGNER_HMAC_SECRET are required when FEATURE_CUSTODIAL is on' });
     }
     if (c.NODE_ENV === 'production') {
       if (c.SIGNER_URL && (!c.SIGNER_URL.startsWith('https://') || !c.SIGNER_CLIENT_CERT_FILE || !c.SIGNER_CLIENT_KEY_FILE || !c.SIGNER_CA_FILE)) {

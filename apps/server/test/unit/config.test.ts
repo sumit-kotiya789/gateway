@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { loadConfig } from '../../src/common/config.js';
+import { createSignerClient } from '../../src/modules/custody/signer-client.js';
 
 const base = {
   DATABASE_URL: 'postgres://u:p@localhost:5432/db',
@@ -79,10 +80,11 @@ describe('loadConfig', () => {
 
   it('custodial feature flag is off unless explicitly enabled', () => {
     expect(loadConfig(base).FEATURE_CUSTODIAL).toBe(false);
-    // Turning it on needs the signer: the worker cannot sweep or pay out without it.
-    expect(issues({ ...base, FEATURE_CUSTODIAL: 'true' })).toMatch(/SIGNER_URL/);
+    // Only the worker needs the signer (it refuses to start without it); the api and watcher run without the secret.
+    expect(loadConfig({ ...base, FEATURE_CUSTODIAL: 'true' }).FEATURE_CUSTODIAL).toBe(true);
+    expect(() => createSignerClient(loadConfig({ ...base, FEATURE_CUSTODIAL: 'true' }))).toThrow(/SIGNER_URL and SIGNER_HMAC_SECRET are required/);
     const signer = { SIGNER_URL: 'http://signer.internal:3100', SIGNER_HMAC_SECRET: 's'.repeat(32) };
-    expect(loadConfig({ ...base, FEATURE_CUSTODIAL: 'true', ...signer }).FEATURE_CUSTODIAL).toBe(true);
+    expect(() => createSignerClient(loadConfig({ ...base, FEATURE_CUSTODIAL: 'true', ...signer }))).not.toThrow();
   });
 
   it('production signer link must be mTLS', () => {

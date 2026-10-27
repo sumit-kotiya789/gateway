@@ -17,6 +17,7 @@ docker compose up --build   # postgres, redis, anvil, mailpit, migrate (one-shot
 pnpm admin:create you@example.com superadmin   # first admin (prints password + TOTP URI once)
 ```
 Emails (verification, password reset, notices) land in Mailpit: http://localhost:8025.
+Custodial mode (M7) adds the signer: `docker compose --profile custodial up` (setup: `docs/RUNBOOK.md`, "Custody setup").
 
 ## Scripts
 | Script | Does |

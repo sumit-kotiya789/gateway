@@ -137,13 +137,25 @@ kept: `select started_at, ok, issues from reconciliation_runs order by started_a
 - `... resolves to a non-public address` = the URL points at a private network (SSRF guard). Expected; the merchant
   must use a public URL.
 ## Custody setup (M7)
-Custodial mode is off unless `FEATURE_CUSTODIAL=true`, which also needs `SIGNER_URL` + `SIGNER_HMAC_SECRET`.
+Custodial mode is off unless `FEATURE_CUSTODIAL=true`. The worker then also needs `SIGNER_URL` + `SIGNER_HMAC_SECRET`
+and refuses to start without them; the api and watcher never get the secret.
 1. Signer (its own host, its own DB login in `gw_signer`: `CREATE ROLE gateway_signer LOGIN PASSWORD '…' IN ROLE gw_signer;`).
-   Dev/test: `pnpm --filter @gw/signer init-seed > custody.json` (add `--show-mnemonic` once, for the offline backup).
-   Production: refused until a KMS seed source exists (D-010).
-2. `pnpm platform:register custody.json`: deposit xpubs and hot/gas wallets. It refuses to replace different keys.
+   Dev/test: `pnpm -s --filter @gw/signer init-seed > custody.json` (add `--show-mnemonic` once, for the offline
+   backup: the words go to the terminal, never into the file). Production: refused until a KMS seed source exists (D-010).
+2. Add the cold multisig to `custody.json` as `"cold_wallets": [{"livemode": true, "address": "0x…"}]` (and in the
+   signer's `SIGNER_COLD_ADDRESSES`), then `pnpm platform:register custody.json`: deposit xpubs, hot/gas/cold wallets.
+   It refuses to replace different keys.
 3. Fund each gas wallet with a little native coin (BNB): it pays the network fee of every sweep.
 4. Set `SIGNER_LIMITS` per token before any payout (tokens without limits cannot be paid out).
+
+Local stack (`docker compose`, profile `custodial`; the signer has no host port and plain HTTP, dev only):
+1. In `.env`: `FEATURE_CUSTODIAL=true`, `SIGNER_DB_PASSWORD`, `SIGNER_HMAC_SECRET` (`openssl rand -base64 32`) and
+   `SIGNER_SEED_KEK` (`openssl rand -base64 32`). The signer's DB login is created on a fresh postgres volume only;
+   on an existing one run the `CREATE ROLE gateway_signer …` above as `gateway`.
+2. `docker compose --profile custodial run --rm -T signer node cli/init-seed.cjs > custody.json` (seed sealed in the
+   `signerdata` volume), then register it as in step 2 (`pnpm platform:register` with `DATABASE_URL` pointing at
+   `localhost:${PG_HOST_PORT:-5432}`).
+3. `docker compose --profile custodial up --build`.
 
 ## Stuck transaction (M7)
 - Sweeps: `select id, status, attempts, last_error, gas_tx_hash, tx_hash, next_attempt_at from sweeps where status in ('pending','gas_sent','sweep_sent') order by created_at;`
