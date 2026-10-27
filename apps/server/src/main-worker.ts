@@ -1,7 +1,8 @@
 // Worker process: BullMQ queues for background jobs. `maintenance`: invoice expiry, retention purges, ledger reconciliation,
 // xpub changes whose cooldown elapsed.
 // `webhooks`: outbound delivery, on its own queue so slow merchant endpoints never delay maintenance. `emails`: the email
-// outbox (M10), likewise separate from a slow SMTP server. Later: sweeps (M7).
+// outbox (M10), likewise separate from a slow SMTP server. `custody`: sweeps and withdrawals (M7), only with
+// FEATURE_CUSTODIAL.
 // Every job handler is idempotent and safe to run on several workers at once.
 import { Queue, Worker } from 'bullmq';
 import { Redis } from 'ioredis';
@@ -17,10 +18,16 @@ import { BATCH, deliverDueWebhooks, purgeWebhookDeliveries } from './modules/web
 import { applyDueXpubChanges } from './modules/xpubs/xpubs.js';
 import { deliverDueEmails } from './modules/email/outbox.js';
 import { createMailer, type Mailer } from './modules/email/mailer.js';
+import { chainTxFor } from './modules/custody/chain-tx.js';
+import { createSignerClient } from './modules/custody/signer-client.js';
+import { advanceWithdrawals } from './modules/custody/payouts.js';
+import { advanceTreasury } from './modules/custody/treasury.js';
+import { advanceSweeps, planSweeps, type SweeperEnv } from './modules/custody/sweeper.js';
 
 const QUEUE = 'maintenance';
 const WEBHOOK_QUEUE = 'webhooks';
 const EMAIL_QUEUE = 'emails';
+const CUSTODY_QUEUE = 'custody';
 const EMAIL_BATCHES_PER_JOB = 5;
 /** Batches per delivery job: drains a backlog faster than one batch per tick, still yields between jobs. */
 const WEBHOOK_BATCHES_PER_JOB = 10;
@@ -34,7 +41,8 @@ export async function runMaintenanceJob(deps: Deps, name: string): Promise<unkno
       return { expired: expired.length };
     }
     case 'reconcile-ledger': {
-      const issues = await reconcileLedger(deps);
+      // Custodial: also compare the hot wallets' on-chain balances with the ledger.
+      const issues = await reconcileLedger(deps, deps.config.FEATURE_CUSTODIAL ? { chainTx: (c) => chainTxFor(c.rpcUrls) } : {});
       return { ok: issues.length === 0, issues: issues.length };
     }
     case 'purge-idempotency-keys': {
@@ -76,6 +84,12 @@ export async function runEmailJob(deps: Deps, mailer: Mailer): Promise<{ sent: n
   return total;
 }
 
+/** Plans new sweeps, then moves due sweeps, withdrawals and treasury transfers one step forward. */
+export async function runCustodyJob(deps: Deps, env: SweeperEnv): Promise<Record<string, unknown>> {
+  const planned = await planSweeps(deps);
+  return { planned, sweeps: await advanceSweeps(deps, env), withdrawals: await advanceWithdrawals(deps, env), treasury: await advanceTreasury(deps, env) };
+}
+
 async function main(): Promise<void> {
   const config = loadConfig();
   const log = createLogger(config.LOG_LEVEL);
@@ -111,13 +125,24 @@ async function main(): Promise<void> {
   emailWorker.on('failed', (_job, err) => {
     log.error({ err }, 'email delivery job failed');
   });
+  const closers: { close: () => Promise<void> }[] = [];
+  if (config.FEATURE_CUSTODIAL) {
+    const custodyQueue = new Queue(CUSTODY_QUEUE, { connection });
+    await custodyQueue.upsertJobScheduler('sweeps', { every: 15_000 }, { name: 'sweeps', opts: jobOpts });
+    const env: SweeperEnv = { signer: createSignerClient(config), chainTx: (c) => chainTxFor(c.rpcUrls) };
+    const custodyWorker = new Worker(CUSTODY_QUEUE, () => runCustodyJob(deps, env), { connection, concurrency: 1 });
+    custodyWorker.on('failed', (_job, err) => {
+      log.error({ err }, 'custody job failed');
+    });
+    closers.push(custodyWorker, custodyQueue);
+  }
   log.info('worker started');
 
   const shutdown = (signal: string): void => {
     log.info({ signal }, 'worker shutting down');
     setTimeout(() => process.exit(1), SHUTDOWN_TIMEOUT_MS).unref();
     // Let the in-flight job finish, then release connections.
-    Promise.all([worker.close(), webhookWorker.close(), emailWorker.close()])
+    Promise.all([worker.close(), webhookWorker.close(), emailWorker.close(), ...closers.map((c) => c.close())])
       .then(() => Promise.all([queue.close(), webhookQueue.close(), emailQueue.close()]))
       .then(() => Promise.allSettled([pool.end(), connection.quit()]))
       .then(

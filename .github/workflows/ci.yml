@@ -50,6 +50,7 @@ jobs:
       - run: docker build -f apps/server/Dockerfile -t gateway-server:ci .
       - run: docker build -f apps/dashboard/Dockerfile -t gateway-dashboard:ci .
       - run: docker build -f apps/admin/Dockerfile -t gateway-admin:ci .
+      - run: docker build -f apps/signer/Dockerfile -t gateway-signer:ci .
       - run: >
           docker run --rm -v "$PWD:/src" -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.67.2
           fs --scanners vuln,secret,misconfig --skip-dirs "**/node_modules" --severity HIGH,CRITICAL --exit-code 1 /src
@@ -62,3 +63,6 @@ jobs:
       - run: >
           docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.67.2
           image --severity HIGH,CRITICAL --exit-code 1 gateway-admin:ci
+      - run: >
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.67.2
+          image --severity HIGH,CRITICAL --exit-code 1 gateway-signer:ci

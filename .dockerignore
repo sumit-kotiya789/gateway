@@ -4,6 +4,8 @@
 .git
 .env
 .env.*
+# Dev signer seeds never enter a build context (apps/signer is copied whole).
+**/signer-seed*.json
 docs
 
 # test-only Solidity sources/artifacts

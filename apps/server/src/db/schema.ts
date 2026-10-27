@@ -3,6 +3,7 @@
 import { uuidv7 } from '@gw/core';
 import { sql } from 'drizzle-orm';
 import {
+  type AnyPgColumn,
   bigint,
   boolean,
   check,
@@ -169,6 +170,8 @@ export const emailOutbox = pgTable(
   },
   (t) => [
     index('email_outbox_due_idx').on(t.nextAttemptAt).where(sql`${t.status} = 'pending'`),
+    // Metrics: emails given up on recently (M9).
+    index('email_outbox_failed_idx').on(t.createdAt).where(sql`${t.status} = 'failed'`),
     check('email_outbox_status', sql`${t.status} in ('pending', 'sent', 'failed')`),
     check('email_outbox_payload', sql`(${t.status} = 'pending') = (${t.payloadEnc} is not null)`),
   ],
@@ -215,6 +218,29 @@ export const sessions = pgTable(
   (t) => [uniqueIndex('sessions_token_hash_uq').on(t.tokenHash), index('sessions_family_idx').on(t.familyId)],
 );
 
+/**
+ * Browsers a dashboard user has signed in from (M10). The browser keeps a random token in a long-lived cookie; only
+ * its hash is stored. A sign-in without a known token registers a new device and emails the user (D-083).
+ */
+export const userDevices = pgTable(
+  'user_devices',
+  {
+    id: id(),
+    merchantId: uuid('merchant_id')
+      .notNull()
+      .references(() => merchants.id),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => merchantUsers.id),
+    tokenHash: text('token_hash').notNull(),
+    ip: inet('ip'),
+    userAgent: text('user_agent'),
+    lastSeenAt: tstz('last_seen_at').notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex('user_devices_token_uq').on(t.tokenHash), index('user_devices_user_idx').on(t.userId)],
+);
+
 export const apiKeys = pgTable(
   'api_keys',
   {
@@ -258,6 +284,8 @@ export const adminUsers = pgTable(
     failedLogins: integer('failed_logins').notNull().default(0),
     lockedUntil: tstz('locked_until'),
     disabledAt: tstz('disabled_at'),
+    // Carried in admin tokens (`sv`); bumping it signs every session of this admin out (credential reset, M9).
+    sessionEpoch: integer('session_epoch').notNull().default(0),
     createdAt: createdAt(),
   },
   (t) => [uniqueIndex('admin_users_email_uq').on(sql`lower(${t.email})`)],
@@ -750,8 +778,16 @@ export const ledgerAccountKind = pgEnum('ledger_account_kind', [
   'platform_fee_revenue',
   // Prepaid fee top-ups the platform received (asset). merchant_id is null.
   'platform_topups',
+  // Custodial (M7). Platform assets (merchant_id null): tokens on deposit addresses not yet swept, in the hot wallet,
+  // in the cold wallet. Merchant liabilities: received but not swept yet, withdrawable, held for a withdrawal in flight.
+  'custody_deposits',
+  'custody_hot',
+  'custody_cold',
+  'merchant_pending',
+  'merchant_available',
+  'merchant_withdrawing',
 ]);
-export const ledgerJournalKind = pgEnum('ledger_journal_kind', ['payment', 'fee', 'fee_topup']);
+export const ledgerJournalKind = pgEnum('ledger_journal_kind', ['payment', 'fee', 'fee_topup', 'settlement', 'sweep', 'withdrawal_hold', 'withdrawal', 'withdrawal_release', 'treasury']);
 
 /** One account per (kind, merchant, mode, token). Platform accounts have merchant_id null. */
 export const ledgerAccounts = pgTable(
@@ -768,7 +804,10 @@ export const ledgerAccounts = pgTable(
   },
   (t) => [
     unique('ledger_accounts_uq').on(t.kind, t.merchantId, t.livemode, t.tokenId).nullsNotDistinct(),
-    check('ledger_accounts_owner', sql`(${t.kind} in ('platform_fee_revenue', 'platform_topups')) = (${t.merchantId} is null)`),
+    check(
+      'ledger_accounts_owner',
+      sql`(${t.kind} in ('platform_fee_revenue', 'platform_topups', 'custody_deposits', 'custody_hot', 'custody_cold')) = (${t.merchantId} is null)`,
+    ),
   ],
 );
 
@@ -781,9 +820,8 @@ export const ledgerJournals = pgTable(
   {
     id: id(),
     kind: ledgerJournalKind('kind').notNull(),
-    merchantId: uuid('merchant_id')
-      .notNull()
-      .references(() => merchants.id),
+    // Null only for treasury journals (platform hot <-> cold, no merchant).
+    merchantId: uuid('merchant_id').references(() => merchants.id),
     livemode: boolean('livemode').notNull(),
     tokenId: text('token_id')
       .notNull()
@@ -791,15 +829,25 @@ export const ledgerJournals = pgTable(
     invoiceId: uuid('invoice_id').references(() => invoices.id),
     paymentId: uuid('payment_id').references(() => payments.id),
     topupId: uuid('topup_id').references(() => feeTopups.id),
+    sweepId: uuid('sweep_id').references((): AnyPgColumn => sweeps.id),
+    withdrawalId: uuid('withdrawal_id').references((): AnyPgColumn => withdrawals.id),
+    treasuryId: uuid('treasury_id').references((): AnyPgColumn => treasuryTransfers.id),
     createdAt: createdAt(),
   },
   (t) => [
     uniqueIndex('ledger_journals_payment_uq').on(t.paymentId).where(sql`${t.kind} = 'payment'`),
     uniqueIndex('ledger_journals_fee_uq').on(t.invoiceId).where(sql`${t.kind} = 'fee'`),
     uniqueIndex('ledger_journals_topup_uq').on(t.topupId).where(sql`${t.kind} = 'fee_topup'`),
+    uniqueIndex('ledger_journals_settlement_uq').on(t.invoiceId).where(sql`${t.kind} = 'settlement'`),
+    uniqueIndex('ledger_journals_sweep_uq').on(t.sweepId).where(sql`${t.kind} = 'sweep'`),
+    check('ledger_journals_sweep_ref', sql`(${t.kind} = 'sweep') = (${t.sweepId} is not null)`),
     index('ledger_journals_merchant_idx').on(t.merchantId, t.livemode),
     check('ledger_journals_payment_ref', sql`(${t.kind} = 'payment') = (${t.paymentId} is not null)`),
-    check('ledger_journals_invoice_ref', sql`(${t.kind} = 'fee_topup') = (${t.invoiceId} is null)`),
+    check('ledger_journals_invoice_ref', sql`(${t.kind} in ('fee_topup', 'withdrawal_hold', 'withdrawal', 'withdrawal_release', 'treasury')) = (${t.invoiceId} is null)`),
+    check('ledger_journals_treasury_ref', sql`(${t.kind} = 'treasury') = (${t.treasuryId} is not null) and (${t.kind} = 'treasury') = (${t.merchantId} is null)`),
+    uniqueIndex('ledger_journals_treasury_uq').on(t.treasuryId).where(sql`${t.kind} = 'treasury'`),
+    check('ledger_journals_withdrawal_ref', sql`(${t.kind} in ('withdrawal_hold', 'withdrawal', 'withdrawal_release')) = (${t.withdrawalId} is not null)`),
+    uniqueIndex('ledger_journals_withdrawal_uq').on(t.withdrawalId, t.kind).where(sql`${t.withdrawalId} is not null`),
     check('ledger_journals_topup_ref', sql`(${t.kind} = 'fee_topup') = (${t.topupId} is not null)`),
   ],
 );
@@ -883,6 +931,256 @@ export const webhookDeliveries = pgTable(
     uniqueIndex('webhook_deliveries_id_uq').on(t.id),
     uniqueIndex('webhook_deliveries_endpoint_event_uq').on(t.endpointId, t.eventId),
     index('webhook_deliveries_due_idx').on(t.nextAttemptAt).where(sql`${t.status} = 'pending'`),
+    // Metrics: deliveries given up on recently (M9).
+    index('webhook_deliveries_failed_idx').on(t.lastAttemptAt).where(sql`${t.status} = 'failed'`),
     index('webhook_deliveries_endpoint_idx').on(t.endpointId, t.seq),
+  ],
+);
+
+// ---------------------------------------------------------------- M7: custodial operations (signer, sweeps)
+
+export const platformWalletKind = pgEnum('platform_wallet_kind', ['hot', 'gas', 'cold']);
+
+/**
+ * Platform-controlled wallets per family and mode (M7b, D-088). Hot (receives sweeps, pays withdrawals) and gas (pays
+ * network fees for sweeps) are derived from the signer's seed at `derivation_path`; the signer re-derives and refuses
+ * an address that does not match. Cold is an external multisig: no path here, allowlisted in the signer's own config.
+ * Rows are never changed; a replacement retires the old row.
+ */
+export const platformWallets = pgTable(
+  'platform_wallets',
+  {
+    id: id(),
+    family: chainFamily('family').notNull(),
+    livemode: boolean('livemode').notNull(),
+    kind: platformWalletKind('kind').notNull(),
+    address: text('address').notNull(),
+    derivationPath: text('derivation_path'),
+    retiredAt: tstz('retired_at'),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('platform_wallets_active_uq').on(t.family, t.livemode, t.kind).where(sql`${t.retiredAt} is null`),
+    check('platform_wallets_path', sql`(${t.kind} = 'cold') = (${t.derivationPath} is null)`),
+    check('platform_wallets_address', sql`${t.address} ~ '^0x[0-9a-fA-F]{40}$'`),
+  ],
+);
+
+/** Single row: the signer refuses every request while paused (admin kill switch, M7e). */
+export const signerControls = pgTable(
+  'signer_controls',
+  {
+    id: integer('id').primaryKey().default(1),
+    paused: boolean('paused').notNull().default(false),
+    reason: text('reason'),
+    updatedAt: tstz('updated_at').notNull().defaultNow(),
+  },
+  (t) => [check('signer_controls_single', sql`${t.id} = 1`)],
+);
+
+export const sweepStatus = pgEnum('sweep_status', ['pending', 'gas_sent', 'sweep_sent', 'confirmed', 'failed']);
+
+/**
+ * Moves one custodial deposit address's booked funds into the hot wallet (M7c). `amount` is what the ledger holds for
+ * the address (confirmed payments), never more. One open sweep per address.
+ */
+export const sweeps = pgTable(
+  'sweeps',
+  {
+    id: id(),
+    merchantId: uuid('merchant_id')
+      .notNull()
+      .references(() => merchants.id),
+    livemode: boolean('livemode').notNull(),
+    chainId: text('chain_id')
+      .notNull()
+      .references(() => chains.id),
+    tokenId: text('token_id')
+      .notNull()
+      .references(() => tokens.id),
+    depositAddressId: uuid('deposit_address_id')
+      .notNull()
+      .references(() => depositAddresses.id),
+    invoiceId: uuid('invoice_id')
+      .notNull()
+      .references(() => invoices.id),
+    fromAddress: text('from_address').notNull(),
+    toAddress: text('to_address').notNull(),
+    amount: money('amount').notNull(),
+    status: sweepStatus('status').notNull().default('pending'),
+    gasTxHash: text('gas_tx_hash'),
+    txHash: text('tx_hash'),
+    blockNumber: bigint('block_number', { mode: 'bigint' }),
+    attempts: integer('attempts').notNull().default(0),
+    nextAttemptAt: tstz('next_attempt_at').notNull().defaultNow(),
+    lastError: text('last_error'),
+    confirmedAt: tstz('confirmed_at'),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('sweeps_open_uq').on(t.depositAddressId).where(sql`${t.status} <> 'failed'`),
+    index('sweeps_due_idx').on(t.nextAttemptAt).where(sql`${t.status} in ('pending', 'gas_sent', 'sweep_sent')`),
+    check('sweeps_amount', sql`${t.amount} > 0`),
+  ],
+);
+
+export const signerIntentKind = pgEnum('signer_intent_kind', ['gas_topup', 'sweep', 'withdrawal', 'treasury']);
+
+/**
+ * Every transaction the signer signed (M7b). Written only by the signer's own DB role; the app can read it (to
+ * rebroadcast the same raw transaction) but never write it. One transaction per intent: asking again returns it.
+ */
+export const signerSignatures = pgTable(
+  'signer_signatures',
+  {
+    id: id(),
+    intentKind: signerIntentKind('intent_kind').notNull(),
+    intentId: uuid('intent_id').notNull(),
+    chainId: text('chain_id')
+      .notNull()
+      .references(() => chains.id),
+    fromAddress: text('from_address').notNull(),
+    toAddress: text('to_address').notNull(),
+    // Null = native coin (gas top-ups).
+    tokenId: text('token_id').references(() => tokens.id),
+    amount: money('amount').notNull(),
+    nonce: bigint('nonce', { mode: 'bigint' }).notNull(),
+    txHash: text('tx_hash').notNull(),
+    rawTx: text('raw_tx').notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('signer_signatures_intent_uq').on(t.intentKind, t.intentId),
+    uniqueIndex('signer_signatures_nonce_uq').on(t.chainId, sql`lower(${t.fromAddress})`, t.nonce),
+    index('signer_signatures_day_idx').on(t.tokenId, t.createdAt),
+  ],
+);
+
+// ---------------------------------------------------------------- M7d: payout addresses and withdrawals
+
+/**
+ * Where a custodial merchant's withdrawals go, per mode and family (M7d, D-090). The newest row whose `activates_at`
+ * has passed (and was not cancelled) is the current one. Live addresses activate 24 h after registration (owners are
+ * emailed); test addresses at once. Rows never change except a pending one being cancelled.
+ */
+export const payoutAddresses = pgTable(
+  'payout_addresses',
+  {
+    id: id(),
+    merchantId: uuid('merchant_id')
+      .notNull()
+      .references(() => merchants.id),
+    livemode: boolean('livemode').notNull(),
+    family: chainFamily('family').notNull(),
+    address: text('address').notNull(),
+    label: text('label'),
+    createdBy: uuid('created_by')
+      .notNull()
+      .references(() => merchantUsers.id),
+    activatesAt: tstz('activates_at').notNull(),
+    cancelledAt: tstz('cancelled_at'),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index('payout_addresses_merchant_idx').on(t.merchantId, t.livemode, t.family, t.activatesAt),
+    check('payout_addresses_address', sql`${t.address} ~ '^0x[0-9a-fA-F]{40}$'`),
+    check('payout_addresses_label', sql`${t.label} is null or char_length(${t.label}) <= 100`),
+  ],
+);
+
+export const withdrawalStatus = pgEnum('withdrawal_status', ['pending_approval', 'approved', 'sent', 'confirmed', 'failed', 'rejected', 'cancelled']);
+
+/**
+ * A custodial payout (M7d, D-090). The amount is held (merchant_available -> merchant_withdrawing) when requested;
+ * it leaves custody when the transfer confirms, or goes back to available when rejected, cancelled or reverted.
+ */
+export const withdrawals = pgTable(
+  'withdrawals',
+  {
+    id: id(),
+    merchantId: uuid('merchant_id')
+      .notNull()
+      .references(() => merchants.id),
+    livemode: boolean('livemode').notNull(),
+    chainId: text('chain_id')
+      .notNull()
+      .references(() => chains.id),
+    tokenId: text('token_id')
+      .notNull()
+      .references(() => tokens.id),
+    amount: money('amount').notNull(),
+    payoutAddressId: uuid('payout_address_id')
+      .notNull()
+      .references(() => payoutAddresses.id),
+    toAddress: text('to_address').notNull(),
+    status: withdrawalStatus('status').notNull(),
+    // How many distinct admins must approve (0: auto-approved, test mode).
+    approvalsRequired: integer('approvals_required').notNull(),
+    approvedBy: uuid('approved_by').array().notNull().default(sql`'{}'`),
+    requestedBy: text('requested_by').notNull(), // 'user:<id>' or 'api_key:<id>'
+    decisionReason: text('decision_reason'),
+    txHash: text('tx_hash'),
+    blockNumber: bigint('block_number', { mode: 'bigint' }),
+    attempts: integer('attempts').notNull().default(0),
+    nextAttemptAt: tstz('next_attempt_at').notNull().defaultNow(),
+    lastError: text('last_error'),
+    confirmedAt: tstz('confirmed_at'),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index('withdrawals_merchant_idx').on(t.merchantId, t.livemode, t.createdAt),
+    index('withdrawals_due_idx').on(t.nextAttemptAt).where(sql`${t.status} in ('approved', 'sent')`),
+    index('withdrawals_status_idx').on(t.status),
+    check('withdrawals_amount', sql`${t.amount} > 0`),
+    check('withdrawals_approvals', sql`${t.approvalsRequired} between 0 and 2 and cardinality(${t.approvedBy}) <= ${t.approvalsRequired}`),
+  ],
+);
+
+// ---------------------------------------------------------------- M7e: treasury (hot <-> cold)
+
+export const treasuryDirection = pgEnum('treasury_direction', ['to_cold', 'to_hot']);
+export const treasuryStatus = pgEnum('treasury_status', ['pending_approval', 'approved', 'sent', 'confirmed', 'failed', 'rejected']);
+
+/**
+ * Platform funds between the hot wallet and the cold multisig (M7e, D-091). `to_cold`: proposed by one admin,
+ * approved by a different one, signed (hot -> allowlisted cold address) and sent by the worker. `to_hot`: the cold
+ * multisig refilled the hot wallet outside the system; an admin records the transaction and the worker books it
+ * only once it is verified on chain.
+ */
+export const treasuryTransfers = pgTable(
+  'treasury_transfers',
+  {
+    id: id(),
+    livemode: boolean('livemode').notNull(),
+    chainId: text('chain_id')
+      .notNull()
+      .references(() => chains.id),
+    tokenId: text('token_id')
+      .notNull()
+      .references(() => tokens.id),
+    direction: treasuryDirection('direction').notNull(),
+    amount: money('amount').notNull(),
+    coldAddress: text('cold_address').notNull(),
+    hotAddress: text('hot_address').notNull(),
+    status: treasuryStatus('status').notNull(),
+    requestedBy: uuid('requested_by')
+      .notNull()
+      .references(() => adminUsers.id),
+    approvedBy: uuid('approved_by').references(() => adminUsers.id),
+    reason: text('reason').notNull(),
+    txHash: text('tx_hash'),
+    blockNumber: bigint('block_number', { mode: 'bigint' }),
+    attempts: integer('attempts').notNull().default(0),
+    nextAttemptAt: tstz('next_attempt_at').notNull().defaultNow(),
+    lastError: text('last_error'),
+    confirmedAt: tstz('confirmed_at'),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index('treasury_transfers_due_idx').on(t.nextAttemptAt).where(sql`${t.status} in ('approved', 'sent')`),
+    uniqueIndex('treasury_transfers_tx_uq').on(t.chainId, sql`lower(${t.txHash})`).where(sql`${t.txHash} is not null`),
+    check('treasury_transfers_amount', sql`${t.amount} > 0`),
+    check('treasury_transfers_two_people', sql`${t.approvedBy} is null or ${t.approvedBy} <> ${t.requestedBy}`),
+    check('treasury_transfers_to_hot_tx', sql`${t.direction} <> 'to_hot' or ${t.txHash} is not null`),
   ],
 );

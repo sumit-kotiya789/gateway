@@ -486,7 +486,7 @@ describe('ledger, fees, outbox', () => {
 
     const bal = (await m.api('GET', '/v1/balances')).json<{ data: { token: string; received: string; fees_owed: string }[] }>();
     expect(bal.data).toEqual([
-      { token: 'evm-fake:usdt', symbol: 'USDT', received: '10', fees_owed: '0.1', fees_charged: '0.1', prepaid_fees: '-0.1', fee_status: 'not_enforced' },
+      { token: 'evm-fake:usdt', symbol: 'USDT', received: '10', fees_owed: '0.1', fees_charged: '0.1', prepaid_fees: '-0.1', fee_status: 'not_enforced', pending: '0', available: '0', withdrawing: '0' },
     ]);
     const dash = (await m.agent.req('GET', '/v1/dashboard/balances/?livemode=false')).json<{ data: unknown[] }>();
     expect(dash.data).toEqual(bal.data);
@@ -603,8 +603,9 @@ describe('ledger, fees, outbox', () => {
     try {
       const issues = await reconcileLedger(deps);
       expect(issues).toEqual([{ check: 'invoice_received', count: 1, sample: [inv.id] }]);
-      const run = await owner.query<{ ok: boolean }>('select ok from reconciliation_runs order by started_at desc limit 1');
-      expect(run.rows[0]?.ok).toBe(false);
+      // This run's row (other files reconcile too, on their own clocks).
+      const run = await owner.query<{ ok: boolean }>('select ok from reconciliation_runs where issues::text like $1', [`%${inv.id}%`]);
+      expect(run.rows.map((r) => r.ok)).toEqual([false]);
     } finally {
       await owner.query('update invoices set amount_received = 0 where id = $1', [inv.id]);
     }
@@ -659,7 +660,7 @@ describe('ledger, fees, outbox', () => {
     await settle();
     expect((await m.agent.req('GET', `/v1/dashboard/invoices/${inv.id}`)).json()).toMatchObject({ status: 'settled', fee_amount: '0.6' }); // 1% of 10 + 0.5
     expect((await m.api('GET', '/v1/balances')).json<{ data: unknown[] }>().data).toEqual([
-      { token: 'evm-fake:usdt', symbol: 'USDT', received: '10', fees_owed: '0', fees_charged: '0.6', prepaid_fees: '0.4', fee_status: 'not_enforced' },
+      { token: 'evm-fake:usdt', symbol: 'USDT', received: '10', fees_owed: '0', fees_charged: '0.6', prepaid_fees: '0.4', fee_status: 'not_enforced', pending: '0', available: '0', withdrawing: '0' },
     ]);
     const j = await owner.query(
       `select a.kind::text account, e.amount::text amount from ledger_journals j join ledger_entries e on e.journal_id = j.id
@@ -670,7 +671,7 @@ describe('ledger, fees, outbox', () => {
       { account: 'platform_topups', amount: '1000000' },
       { account: 'merchant_fees_owed', amount: '-1000000' },
     ]);
-    expect((await reconcileAll()).length).toBe(0);
+    expect(await reconcileAll()).toEqual([]);
 
     // Append-only, and a top-up never commits without its journal.
     await expect(owner.query('update fee_topups set amount = 2 where merchant_id = $1', [m.merchantId])).rejects.toThrow();
@@ -698,7 +699,7 @@ describe('ledger, fees, outbox', () => {
     expect((await op.agent.req('POST', `/admin/v1/invoices/${open.inv.id}/resolve`, { reason: 'not allowed' }, op.stepUp())).statusCode).toBe(409);
     expect((await op.agent.req('POST', '/admin/v1/invoices/00000000-0000-7000-8000-000000000000/resolve', { reason: 'nothing' }, op.stepUp())).statusCode).toBe(404);
     expect((await op.agent.req('GET', '/admin/v1/invoices/00000000-0000-7000-8000-000000000000')).statusCode).toBe(404);
-    expect((await reconcileAll()).length).toBe(0);
+    expect(await reconcileAll()).toEqual([]);
   });
 });
 

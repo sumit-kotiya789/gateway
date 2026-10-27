@@ -99,4 +99,37 @@ describe('CSV exports', () => {
     expect((await (await teammate(m.merchantId, 'developer')).req('GET', '/v1/dashboard/exports/invoices.csv')).statusCode).toBe(403);
     expect((await new Agent(app).req('GET', '/v1/dashboard/exports/invoices.csv')).statusCode).toBe(401);
   });
+
+  it("merchant API: `read` key exports its own mode only, audited as the key; range rules apply", async () => {
+    const m = await merchantWithKey(app, clock, owner);
+    const inv = (await m.api('POST', '/v1/invoices', { amount: '7', token: 'evm-local:usdt' })).json<{ id: string }>();
+    const other = await merchantWithKey(app, clock, owner);
+    await other.api('POST', '/v1/invoices', { amount: '1', token: 'evm-local:usdt' });
+
+    const r = await m.api('GET', '/v1/exports/invoices.csv');
+    expect(r.statusCode).toBe(200);
+    expect(r.headers['cache-control']).toBe('no-store');
+    expect(r.headers['content-disposition']).toMatch(/filename="invoices-test-/);
+    expect(parse(r.body).slice(1).map((x) => x[0])).toEqual([inv.id]);
+    expect(parse((await m.api('GET', '/v1/exports/payments.csv')).body)).toHaveLength(1);
+
+    // The key's mode decides; asking for the other mode is not a parameter.
+    expect((await m.api('GET', '/v1/exports/invoices.csv?livemode=true')).statusCode).toBe(400);
+    expect((await m.api('GET', '/v1/exports/invoices.csv?from=2025-01-01&to=2026-01-02')).statusCode).toBe(400);
+    const writeOnly = await m.mintKey(['invoices:write']);
+    expect((await m.api('GET', '/v1/exports/invoices.csv', undefined, {}, writeOnly)).statusCode).toBe(403);
+    expect((await app.inject({ method: 'GET', url: '/v1/exports/invoices.csv' })).statusCode).toBe(401);
+
+    const audit = await owner.query<{ actor_type: string; after: unknown }>("select actor_type, after from audit_logs where merchant_id = $1 and action = 'export.downloaded' order by seq", [m.merchantId]);
+    expect(audit.rows.map((x) => x.actor_type)).toEqual(['api_key', 'api_key']);
+    expect(audit.rows[0]?.after).toMatchObject({ kind: 'invoices', livemode: false, rows: 1 });
+  });
+
+  it('exports are rate limited per key', async () => {
+    const m = await merchantWithKey(app, clock, owner);
+    const codes: number[] = [];
+    for (let i = 0; i < 11; i++) codes.push((await m.api('GET', '/v1/exports/payments.csv')).statusCode);
+    expect(codes.slice(0, 10).every((c) => c === 200)).toBe(true);
+    expect(codes[10]).toBe(429);
+  });
 });

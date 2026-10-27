@@ -7,6 +7,15 @@ Each procedure is written when the component it covers ships. Headings are fixed
 - Processes exit non-zero on invalid configuration; the error names the bad keys (never values).
 - On SIGTERM/SIGINT the api stops accepting connections, drains, and exits; forced exit after 10 s.
 
+## Metrics and alerts
+- Set `METRICS_TOKEN` (32+ random characters) and scrape `GET /metrics` on the api's internal listener with
+  `Authorization: Bearer <token>` (`infra/prometheus/prometheus.example.yml`). Never route `/metrics` through the public edge.
+- Alert rules: `infra/prometheus/alerts.yml`; each links to a heading in this runbook. Health gauges (scanner, worker,
+  reconciliation, webhooks, email) are read from the database, so scraping one api process covers every process.
+- `NaN` for `gw_scanner_cursor_age_seconds` = an enabled chain no watcher has scanned yet.
+- Not covered yet: RPC provider disagreement (needs the quorum check, D-085), audit-chain verification (run
+  `select audit_verify();` on a schedule).
+
 ## Database roles and migrations
 - Migrations run as the schema owner: `DATABASE_MIGRATION_URL=… pnpm migrate` (compose: the one-shot `migrate` service runs before `api`).
 - The app connects as a LOGIN user that is a member of `gw_app` (never the owner). New environment:
@@ -23,6 +32,10 @@ Each procedure is written when the component it covers ships. Headings are fixed
 ## Bootstrap the first admin
 `pnpm admin:create <email> superadmin` (compose: `docker compose run --rm api node cli/admin-create.cjs <email> superadmin`).
 Prints a generated password and a TOTP enrollment URI once. Store the password in a password manager and enroll TOTP immediately.
+Every further admin is managed by a superadmin in the admin console (Admins page, TOTP): create, change role, disable,
+re-enable, reset credentials (lost phone or leaked password: also signs the admin out everywhere). Credentials are shown
+once; hand them over in person or through the password manager. Keep at least two superadmins so one can recover the
+other; the last active superadmin cannot be disabled or demoted (API check + DB trigger).
 
 ## Verify audit log integrity
 As the owner or app role: `select audit_verify();` returns NULL when the chain is intact, otherwise the first bad `seq`.
@@ -123,12 +136,75 @@ kept: `select started_at, ok, issues from reconciliation_runs order by started_a
   `update webhook_deliveries set status = 'pending', attempts = 0, next_attempt_at = now() where endpoint_id = '…' and status = 'failed';`
 - `... resolves to a non-public address` = the URL points at a private network (SSRF guard). Expected; the merchant
   must use a public URL.
+## Custody setup (M7)
+Custodial mode is off unless `FEATURE_CUSTODIAL=true`. The worker then also needs `SIGNER_URL` + `SIGNER_HMAC_SECRET`
+and refuses to start without them; the api and watcher never get the secret.
+1. Signer (its own host, its own DB login in `gw_signer`: `CREATE ROLE gateway_signer LOGIN PASSWORD '…' IN ROLE gw_signer;`).
+   Dev/test: `pnpm -s --filter @gw/signer init-seed > custody.json` (add `--show-mnemonic` once, for the offline
+   backup: the words go to the terminal, never into the file). Production: refused until a KMS seed source exists (D-010).
+2. Add the cold multisig to `custody.json` as `"cold_wallets": [{"livemode": true, "address": "0x…"}]` (and in the
+   signer's `SIGNER_COLD_ADDRESSES`), then `pnpm platform:register custody.json`: deposit xpubs, hot/gas/cold wallets.
+   It refuses to replace different keys.
+3. Fund each gas wallet with a little native coin (BNB): it pays the network fee of every sweep.
+4. Set `SIGNER_LIMITS` per token before any payout (tokens without limits cannot be paid out).
+
+Local stack (`docker compose`, profile `custodial`; the signer has no host port and plain HTTP, dev only):
+1. In `.env`: `FEATURE_CUSTODIAL=true`, `SIGNER_DB_PASSWORD`, `SIGNER_HMAC_SECRET` (`openssl rand -base64 32`) and
+   `SIGNER_SEED_KEK` (`openssl rand -base64 32`). The signer's DB login is created on a fresh postgres volume only;
+   on an existing one run the `CREATE ROLE gateway_signer …` above as `gateway`.
+2. `docker compose --profile custodial run --rm -T signer node cli/init-seed.cjs > custody.json` (seed sealed in the
+   `signerdata` volume), then register it as in step 2 (`pnpm platform:register` with `DATABASE_URL` pointing at
+   `localhost:${PG_HOST_PORT:-5432}`).
+3. `docker compose --profile custodial up --build`.
+
 ## Stuck transaction (M7)
+- Sweeps: `select id, status, attempts, last_error, gas_tx_hash, tx_hash, next_attempt_at from sweeps where status in ('pending','gas_sent','sweep_sent') order by created_at;`
+  - `last_error = paused`: the signer is paused (env `SIGNER_PAUSED` or admin kill switch). Expected during a drill.
+  - `gas_price_too_high`: network fees are above `SIGNER_MAX_GAS_PRICE_GWEI`; it resumes when they drop.
+  - `needs_gas` after a top-up was mined: fees rose since; wait, or raise `SIGNER_MAX_GAS_TOPUP` carefully.
+  - Gas wallet empty: top-ups fail at broadcast (`insufficient funds` in the worker log). Fund the gas wallet.
+  - `gas_sent`/`sweep_sent` for long: the worker rebroadcasts the same signed bytes every 15 s. If the RPC dropped
+    it for a too-low fee, it stays stuck: a replacement at the same nonce is a manual, two-person operation.
+- `status = failed`, `last_error = sweep_reverted`: the next round plans a new sweep automatically. Any other failed
+  sweep (`over_booked`, `not_our_address`, `wrong_destination`, `wallet_mismatch`) is an incident: data and keys
+  disagree. Pause the signer and investigate before anything else moves.
+## Withdrawals (M7)
+- Approval queue: admin console → Withdrawals (or `GET /admin/v1/withdrawals`). Check the merchant, the amount
+  against its history, and that the payout address was not changed recently (dashboard audit log) before approving.
+- Approved but not sent: `select id, status, attempts, last_error, next_attempt_at from withdrawals where status = 'approved';`
+  `over_limit` / `no_limits`: `SIGNER_LIMITS` (24 h window; raise it in the signer's config only after review).
+  `insufficient_funds` / `needs_gas`: refill the hot wallet from cold (two signers) or fund it with BNB.
+  `paused`: the signer is paused.
+- Failed with `payout_address_changed`, `merchant_inactive`, `payouts_frozen`: released automatically; the merchant
+  requests again if appropriate.
+
+## Treasury (M7)
+- Policy: keep only what payouts need in the hot wallet. Alert `GatewayHotWalletAboveCap` (set the cap per token in
+  `infra/prometheus/alerts.yml`) means: move the excess to cold.
+- Hot → cold: admin console → Custody → Treasury, "Move to cold" (TOTP); a second admin approves (TOTP). The signer
+  only sends to addresses in its own `SIGNER_COLD_ADDRESSES`, which must match the registered cold wallet.
+- Cold → hot: the multisig signers send the tokens to the hot wallet themselves, then an admin records the transaction
+  hash and amount. It is booked only when the chain shows exactly that transfer (`not_a_matching_transfer` otherwise:
+  check the hash and amount, record again). A refill can bring back at most what the ledger holds in cold.
+- Hourly reconciliation compares each hot wallet's token balance on chain with the ledger: `hot_wallet_shortfall`
+  (less on chain) is an incident: pause the signer first. `hot_wallet_unchecked`: the RPC did not answer.
+
 ## Hot wallet compromise (M7)
+1. Pause the signer (admin console → Custody → Pause; or `SIGNER_PAUSED=true` and restart it). Every sweep, payout and
+   treasury transfer stops.
+2. `select audit_verify();` and preserve a DB snapshot. Compare the hot wallet on chain with the ledger
+   (`hot_wallet_shortfall` in the latest reconciliation run).
+3. Move what is left: a new seed (key ceremony), new hot and gas wallets registered, old ones retired. Never resume
+   with the old seed.
+
 ## Emergency kill switch (M7)
+Admin console → Custody → Pause (any operator, immediate, audited). Resume needs a superadmin and TOTP. Independent
+of the database: `SIGNER_PAUSED=true` in the signer's environment. While paused, sweeps and withdrawals wait (never
+fail) and continue on resume.
+
 ## Key rotation
 - Webhook secrets: the merchant rotates in the dashboard (TOTP). The old secret keeps signing for 0-72 h. A leaked secret:
   rotate with "expire it now". Secrets are envelope-encrypted with `DATA_KEK`; KEK rotation re-wraps data keys (M11).
-- Signer keys: M7.
+- Signer keys: a new seed is a key ceremony (D-010): new deposit, hot and gas keys registered with `platform:register` after the old ones are retired; open sweeps finish on the old keys first. Rotate `SIGNER_HMAC_SECRET` on both sides together.
 ## Mass refund (M7)
 ## DB restore (M11)

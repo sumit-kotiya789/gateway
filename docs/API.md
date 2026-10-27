@@ -68,8 +68,11 @@ verified email (`403`, `details.reason = "email_unverified"`). `GET /auth/me` re
 | GET | `/v1/payment-links`, `/v1/payment-links/:id` | API key | `read` | M3 |
 | PATCH | `/v1/payment-links/:id` | API key | `invoices:write` (affects future invoices only) | M3 |
 | DELETE | `/v1/payment-links/:id` | API key | `invoices:write` (deactivates) | M3 |
-| GET | `/v1/balances` | API key | `read` (per token: `received`, `fees_charged`, `fees_owed` (charged, not covered by top-ups), `prepaid_fees` (signed), `fee_status` ok / low / blocked / not_enforced; live keys also list every usable live token) | M5/M8 |
+| GET | `/v1/balances` | API key | `read` (per token: `received`, `fees_charged`, `fees_owed` (charged, not covered by top-ups), `prepaid_fees` (signed), `fee_status` ok / low / blocked / not_enforced; custodial: `pending` (not swept yet), `available` (withdrawable), `withdrawing`; top-level `custody_mode`; live keys also list every usable live token) | M5/M8/M7 |
 | GET | `/v1/events`, `/v1/events/:id` | API key | `read` (`limit`, `starting_after`, `type`; newest first) | M5 |
+| POST | `/v1/withdrawals` | API key | `withdrawals:write` (`token`, `amount`; custodial; to the current payout address; Idempotency-Key; held at once) | M7 |
+| GET | `/v1/withdrawals`, `/v1/withdrawals/:id` | API key | `read` | M7 |
+| GET | `/v1/exports/invoices.csv`, `/v1/exports/payments.csv` | API key | `read` (the key's mode; `from`, `to` as UTC dates, default last 31 days, ≤ 366 days, ≤ 50,000 rows; 10/min per key; audited as the key) | M10 |
 | GET | `/checkout/:id`, `/checkout/:id/status` | public (invoice id) | – | M3 |
 | GET | `/checkout/:id?embed=1&origin=<site>` | public | – (framable only by the merchant's allowlisted `origin`; posts status to it) | M10 |
 | GET | `/widget.js` | public | – (embeddable widget; `Cross-Origin-Resource-Policy: cross-origin`) | M10 |
@@ -143,7 +146,13 @@ Statuses: `pending → detected → confirming → paid | underpaid | overpaid �
 | POST | `/v1/dashboard/webhooks/:id/deliveries/:deliveryId/retry` | session | `webhooks:manage` (finished deliveries only; fresh retry budget) | M6 |
 | GET | `/v1/dashboard/balances/` | session | `account:read` (`livemode`) | M5 |
 | GET | `/v1/dashboard/fee-topups/` | session | `account:read` (`livemode`; newest first) | M8 |
-| GET | `/v1/dashboard/exports/invoices.csv`, `/v1/dashboard/exports/payments.csv` | session | `reports:read` (`livemode`, `from`, `to` as UTC dates, default last 31 days, ≤ 366 days, ≤ 50,000 rows; audited) | M10 |
+| GET | `/v1/dashboard/exports/invoices.csv`, `/v1/dashboard/exports/payments.csv` | session | `reports:read` (`livemode`, `from`, `to` as UTC dates, default last 31 days, ≤ 366 days, ≤ 50,000 rows; 10/min; audited) | M10 |
+| GET | `/v1/dashboard/withdrawals/` | session | `account:read` (`livemode`, `starting_after`) | M7 |
+| POST | `/v1/dashboard/withdrawals/` | session + **2FA** | `withdrawals:request` (`livemode`, `token`, `amount`; verified email for live) | M7 |
+| POST | `/v1/dashboard/withdrawals/:id/cancel` | session | `withdrawals:request` (while awaiting approval) | M7 |
+| GET | `/v1/dashboard/withdrawals/payout-addresses` | session | `account:read` (`livemode`; status current / pending / superseded / cancelled) | M7 |
+| POST | `/v1/dashboard/withdrawals/payout-addresses` | session + **2FA** | `payouts:manage` (`livemode`, `address` (EIP-55 checked), `label`; live: active after 24 h, owners emailed) | M7 |
+| POST | `/v1/dashboard/withdrawals/payout-addresses/:id/cancel` | session | `payouts:manage` (only before it is active) | M7 |
 | GET | `/v1/dashboard/settings/` | session | `account:read` (`widget_origins`) | M10 |
 | PUT | `/v1/dashboard/settings/widget-origins` | session | `settings:manage` (`widget_origins`: ≤ 10 exact origins, https in production; audited) | M10 |
 | POST | `/admin/v1/auth/login` | none | password + TOTP | M1 |
@@ -163,6 +172,22 @@ Statuses: `pending → detected → confirming → paid | underpaid | overpaid �
 | GET | `/admin/v1/registry` | admin session | `admin:read` (chains and tokens with `enabled`) | M5b |
 | POST | `/admin/v1/registry/:kind/:id/disable` | admin session | `kill_switch:manage` (`kind`: chain or token; `reason`) | M5b |
 | POST | `/admin/v1/registry/:kind/:id/enable` | admin session + **2FA** | `registry:enable` (`reason`) | M5b |
+| GET | `/admin/v1/admins/` | admin session | `admins:manage` (every admin account) | M9 |
+| POST | `/admin/v1/admins/` | admin session + **2FA** | `admins:manage` (`email`, `role`, `reason`; returns `password`, `totp_uri`, `qr_svg` once) | M9 |
+| PUT | `/admin/v1/admins/:id/role` | admin session + **2FA** | `admins:manage` (`role`, `reason`; not yourself; a superadmin remains; applies to open sessions at once) | M9 |
+| POST | `/admin/v1/admins/:id/disable` | admin session | `admins:manage` (`reason`; not yourself; a superadmin remains) | M9 |
+| POST | `/admin/v1/admins/:id/enable` | admin session + **2FA** | `admins:manage` (`reason`; clears lockout) | M9 |
+| POST | `/admin/v1/admins/:id/reset-credentials` | admin session + **2FA** | `admins:manage` (`reason`; new password + TOTP shown once; signs the admin out everywhere) | M9 |
+| GET | `/admin/v1/withdrawals/` | admin session | `admin:read` (`status`, default `pending_approval`; `merchant_id`) | M7 |
+| POST | `/admin/v1/withdrawals/:id/approve` | admin session + **2FA** | `withdrawals:approve` (`reason`; two different admins at or above `WITHDRAWAL_TWO_PERSON_MIN`) | M7 |
+| POST | `/admin/v1/withdrawals/:id/reject` | admin session | `withdrawals:approve` (`reason`; releases the hold) | M7 |
+| GET | `/admin/v1/custody/` | admin session | `admin:read` (signer state, platform wallets, custody totals, open sweeps, withdrawal queue) | M7 |
+| POST | `/admin/v1/custody/signer/pause` | admin session | `kill_switch:manage` (`reason`; the signer refuses everything) | M7 |
+| POST | `/admin/v1/custody/signer/resume` | admin session + **2FA** | `registry:enable` (`reason`) | M7 |
+| GET | `/admin/v1/custody/treasury` | admin session | `admin:read` | M7 |
+| POST | `/admin/v1/custody/treasury` | admin session + **2FA** | `treasury:manage` (`livemode`, `token`, `direction` to_cold / to_hot, `amount`, `tx_hash` for to_hot, `reason`) | M7 |
+| POST | `/admin/v1/custody/treasury/:id/approve` | admin session + **2FA** | `treasury:manage` (a different admin than the proposer) | M7 |
+| POST | `/admin/v1/custody/treasury/:id/reject` | admin session | `treasury:manage` | M7 |
 | GET | `/admin/v1/audit-logs` | admin session | `audit:read` (`merchant_id`, `actor_id`, `action` prefix, `limit`, `starting_after` seq) | M5b |
 | GET | `/admin/v1/audit-logs/verify` | admin session | `audit:read` (`{ intact, first_bad_seq }`) | M5b |
 

@@ -162,9 +162,9 @@ export function requireAdmin(deps: Deps, permission: AdminPermission): preHandle
     // Admin traffic is low: re-check the account on every request so disabling an admin takes effect immediately.
     const adminId = p.sub;
     const [a] = await withSystem(deps.db, (tx) =>
-      tx.select({ role: adminUsers.role, disabledAt: adminUsers.disabledAt }).from(adminUsers).where(eq(adminUsers.id, adminId)),
+      tx.select({ role: adminUsers.role, disabledAt: adminUsers.disabledAt, epoch: adminUsers.sessionEpoch }).from(adminUsers).where(eq(adminUsers.id, adminId)),
     );
-    if (!a || a.disabledAt || a.role !== role) throw new AppError('unauthorized', 'authentication required');
+    if (!a || a.disabledAt || a.role !== role || (p.sv ?? 0) !== a.epoch) throw new AppError('unauthorized', 'authentication required');
     req.admin = { id: adminId, role };
     if (!adminCan(role, permission)) throw new AppError('forbidden', `missing permission ${permission}`);
   };

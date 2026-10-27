@@ -48,7 +48,7 @@ flowchart LR
 ```
 packages/core     pure domain: money, errors, state machine, fee math, interfaces, zod schemas. No IO.
 apps/server       api / worker / watcher entrypoints, modules, migrations, tests
-apps/signer       isolated signing service (M7)
+apps/signer       isolated signing service (M7b, D-088): own process, own DB role, intents only
 apps/dashboard    merchant dashboard, Vite + React SPA (M3b)
 apps/admin        admin console, Vite + React SPA, separate origin + auth domain (M5b)
 docs/             this folder
@@ -70,7 +70,7 @@ MVP (in order): M0 → M1 → M2 → M3 → M3b → M4 → M5 → M5b → M6 →
 | M5b | Minimal admin console: merchants, kill switches, audit log, risk flags, manual resolve underpaid/late |
 | M6 | Webhooks: signing, retries, SSRF guard, replay, secret rotation |
 | M8 | Non-custodial xpub mode: xpub management, fee models, derivation visibility |
-| M7 | Custodial settlement (after review; feature flag, off in production) |
+| M7 | Custodial settlement: ledger, signer, sweeps, withdrawals, treasury, kill switch (built; feature flag off; production needs a KMS) |
 | M9 | Platform/sub-merchant mode, admin API completion, risk hooks, metrics, alerts |
 | M10 | Full dashboard, reports/exports, emails, widget, SDKs, WooCommerce plugin |
 | M11 | Hardening: security, chaos, load tests, HA doc, runbook, launch checklist |

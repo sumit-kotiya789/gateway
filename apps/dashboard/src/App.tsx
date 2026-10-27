@@ -6,6 +6,7 @@ import { InvoiceDetail, Invoices } from './invoices';
 import { Security, Xpubs } from './settings';
 import { AcceptInvite, Team } from './team';
 import { Widget } from './widget';
+import { Withdrawals } from './withdrawals';
 import { Alert, BrandMark, ErrorBox, Icon, Toaster, errorText, type IconName } from './ui';
 
 function useHash(): string {
@@ -66,9 +67,12 @@ export function App() {
   const role = me.user.role;
   const dev = role === 'owner' || role === 'admin' || role === 'developer';
   const totp = me.user.totp_enabled;
+  const custodial = me.merchant.custody_mode === 'custodial';
   const nav: { href: string; label: string; icon: IconName; show: boolean; group: 'Payments' | 'Developers' | 'Account' }[] = [
     { href: '#/invoices', label: 'Invoices', icon: 'invoice', show: true, group: 'Payments' },
-    { href: '#/xpub', label: 'Payout wallet', icon: 'wallet', show: true, group: 'Payments' },
+    // Custodial accounts withdraw what we hold for them; non-custodial ones are paid straight into their own wallet.
+    { href: '#/withdrawals', label: 'Withdrawals', icon: 'wallet', show: custodial, group: 'Payments' },
+    { href: '#/xpub', label: 'Payout wallet', icon: 'wallet', show: !custodial, group: 'Payments' },
     { href: '#/api-keys', label: 'API keys', icon: 'key', show: dev, group: 'Developers' },
     { href: '#/webhooks', label: 'Webhooks', icon: 'zap', show: dev, group: 'Developers' },
     { href: '#/widget', label: 'Checkout widget', icon: 'widget', show: dev, group: 'Developers' },
@@ -83,6 +87,7 @@ export function App() {
   else if (page === 'api-keys' && dev) body = <ApiKeys livemode={livemode} totp={totp} />;
   else if (page === 'webhooks' && dev) body = <Webhooks livemode={livemode} totp={totp} />;
   else if (page === 'xpub') body = <Xpubs livemode={livemode} canManage={role === 'owner'} totp={totp} custodyMode={me.merchant.custody_mode} />;
+  else if (page === 'withdrawals' && custodial) body = <Withdrawals livemode={livemode} canRequest={role === 'owner' || role === 'finance'} canManageAddress={role === 'owner'} totp={totp} />;
   else if (page === 'security') body = <Security totp={totp} onChange={loadMe} />;
   else if (page === 'team') body = <Team me={me.user} totp={totp} />;
   else if (page === 'widget' && dev) body = <Widget canManage={role === 'owner' || role === 'admin'} apiOrigin={me.api_origin} />;

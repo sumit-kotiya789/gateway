@@ -17,6 +17,7 @@ docker compose up --build   # postgres, redis, anvil, mailpit, migrate (one-shot
 pnpm admin:create you@example.com superadmin   # first admin (prints password + TOTP URI once)
 ```
 Emails (verification, password reset, notices) land in Mailpit: http://localhost:8025.
+Custodial mode (M7) adds the signer: `docker compose --profile custodial up` (setup: `docs/RUNBOOK.md`, "Custody setup").
 
 ## Scripts
 | Script | Does |
@@ -24,6 +25,7 @@ Emails (verification, password reset, notices) land in Mailpit: http://localhost
 | `pnpm dev` | api with reload (reads `.env`) |
 | `pnpm migrate` | apply migrations as the schema owner (`DATABASE_MIGRATION_URL`) |
 | `pnpm admin:create <email> <role>` | bootstrap an admin |
+| `pnpm platform:register <file>` | register custody keys printed by the signer's `init-seed` (custodial, M7) |
 | `pnpm test` / `pnpm test:coverage` | unit + integration (integration needs Docker); coverage gate on money-critical files |
 | `pnpm test:unit` / `pnpm test:integration` | one project only |
 | `pnpm lint` | eslint (type-aware, bans float money helpers) |

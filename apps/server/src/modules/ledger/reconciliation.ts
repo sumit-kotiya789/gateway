@@ -1,21 +1,66 @@
 // Independent re-check of the ledger against payments and invoices (worker job, hourly). Postings and the DB guards
 // should make every check return nothing; a hit means a bug or tampering. Results are kept in reconciliation_runs.
-import { sql } from 'drizzle-orm';
-import { withSystem } from '../../common/db.js';
-import { reconciliationRuns } from '../../db/schema.js';
+import { eq, sql } from 'drizzle-orm';
+import { withSystem, type Tx } from '../../common/db.js';
+import { chains, reconciliationRuns } from '../../db/schema.js';
+import type { ChainTx } from '../custody/chain-tx.js';
 import type { Deps } from '../../deps.js';
 
 const NC = sql.raw(`'non_custodial_xpub'`);
+const C = sql.raw(`'custodial'`);
 
 const CHECKS = {
-  /** Every confirmed non-custodial payment has its payment journal. */
+  /** Every confirmed payment (non-custodial and custodial) has its payment journal. */
   payment_without_journal: sql`select p.id from payments p join invoices i on i.id = p.invoice_id
-    where p.status = 'confirmed' and i.custody_mode = ${NC}
+    where p.status = 'confirmed' and i.custody_mode in (${NC}, ${C})
       and not exists (select 1 from ledger_journals j where j.kind = 'payment' and j.payment_id = p.id)`,
   /** The journal books exactly the payment's amount. */
   payment_journal_amount: sql`select j.id from ledger_journals j join payments p on p.id = j.payment_id
-    join ledger_entries e on e.journal_id = j.id join ledger_accounts a on a.id = e.account_id and a.kind = 'merchant_received'
+    join ledger_entries e on e.journal_id = j.id join ledger_accounts a on a.id = e.account_id and a.kind in ('merchant_received', 'custody_deposits')
     where e.amount <> p.amount`,
+  /** Custodial: what merchants were credited as pending = sum of their confirmed custodial payments. */
+  custodial_received: sql`select concat_ws(':', x.merchant_id, x.livemode, x.token_id) as id from (
+      select i.merchant_id, i.livemode, i.token_id, sum(p.amount) as paid from payments p join invoices i on i.id = p.invoice_id
+      where p.status = 'confirmed' and i.custody_mode = ${C} group by 1, 2, 3) x
+    full join (
+      select a.merchant_id, a.livemode, a.token_id, -sum(e.amount) as booked from ledger_entries e
+      join ledger_accounts a on a.id = e.account_id join ledger_journals j on j.id = e.journal_id
+      where a.kind = 'merchant_pending' and j.kind = 'payment' group by 1, 2, 3) y
+    using (merchant_id, livemode, token_id)
+    where coalesce(x.paid, 0) <> coalesce(y.booked, 0)`,
+  /** Settled custodial invoices: one settlement moving exactly what was received out of pending, net of the invoice's fee. */
+  custodial_settlement: sql`select i.id from invoices i
+    where i.status = 'settled' and i.custody_mode = ${C}
+      and (i.fee_amount is null
+        or i.amount_received <> coalesce((select sum(e.amount) from ledger_journals j join ledger_entries e on e.journal_id = j.id
+          join ledger_accounts a on a.id = e.account_id and a.kind = 'merchant_pending' where j.kind = 'settlement' and j.invoice_id = i.id), 0)
+        or i.fee_amount <> -coalesce((select sum(e.amount) from ledger_journals j join ledger_entries e on e.journal_id = j.id
+          join ledger_accounts a on a.id = e.account_id and a.kind = 'platform_fee_revenue' where j.kind = 'settlement' and j.invoice_id = i.id), 0))`,
+  /** Every confirmed sweep is booked once, for exactly its amount, out of custody_deposits. */
+  sweep_journal: sql`select s.id from sweeps s where s.status = 'confirmed'
+    and coalesce((select sum(e.amount) from ledger_journals j join ledger_entries e on e.journal_id = j.id
+      join ledger_accounts a on a.id = e.account_id and a.kind = 'custody_deposits' where j.kind = 'sweep' and j.sweep_id = s.id), 0) <> -s.amount`,
+  /** Platform custody accounts never go negative (nothing leaves custody that was not booked into it). */
+  negative_custody: sql`select a.id from ledger_accounts a join ledger_entries e on e.account_id = a.id
+    where a.kind in ('custody_deposits', 'custody_hot', 'custody_cold') group by a.id having sum(e.amount) < 0`,
+  /**
+   * Every withdrawal's journals match its state: a hold of its amount always; then exactly one payout (confirmed) or
+   * one release (failed, rejected, cancelled), and neither while it is still open.
+   */
+  withdrawal_journal: sql`select w.id from withdrawals w
+    left join lateral (select
+        coalesce(sum(-e.amount) filter (where j.kind = 'withdrawal_hold'), 0) as hold,
+        coalesce(sum(e.amount) filter (where j.kind = 'withdrawal'), 0) as paid,
+        coalesce(sum(e.amount) filter (where j.kind = 'withdrawal_release'), 0) as released
+      from ledger_journals j join ledger_entries e on e.journal_id = j.id
+      join ledger_accounts a on a.id = e.account_id and a.kind = 'merchant_withdrawing'
+      where j.withdrawal_id = w.id) x on true
+    where x.hold <> w.amount
+       or x.paid <> case when w.status = 'confirmed' then w.amount else 0 end
+       or x.released <> case when w.status in ('failed', 'rejected', 'cancelled') then w.amount else 0 end`,
+  /** No merchant balance is ever negative (a withdrawal can never take more than was available). */
+  negative_merchant_balance: sql`select a.id from ledger_accounts a join ledger_entries e on e.account_id = a.id
+    where a.kind in ('merchant_pending', 'merchant_available', 'merchant_withdrawing') group by a.id having sum(e.amount) > 0`,
   /** invoices.amount_received = sum of confirmed payments. */
   invoice_received: sql`select i.id from invoices i left join payments p on p.invoice_id = i.id and p.status = 'confirmed'
     group by i.id having i.amount_received <> coalesce(sum(p.amount), 0)`,
@@ -47,9 +92,38 @@ const CHECKS = {
     group by a.token_id having sum(e.amount) <> 0`,
 };
 
-export type ReconciliationIssue = { check: keyof typeof CHECKS; count: number; sample: string[] };
+export type ReconciliationIssue = { check: keyof typeof CHECKS | 'hot_wallet_shortfall' | 'hot_wallet_unchecked'; count: number; sample: string[] };
 
-export async function reconcileLedger(deps: Deps): Promise<ReconciliationIssue[]> {
+/**
+ * Custodial (M7e): the hot wallet must hold on chain at least what the ledger says it holds, per mode and token. Less
+ * means funds left it without a booking (key compromise, a bug, or a refill not recorded): an incident.
+ */
+async function checkHotWallets(tx: Tx, chainTx: (chain: typeof chains.$inferSelect) => ChainTx, issues: ReconciliationIssue[], log: Deps['log']): Promise<void> {
+  const rows = await tx.execute<{ livemode: boolean; token_id: string; booked: string; chain_id: string; contract: string; hot: string | null }>(sql`
+    select a.livemode, a.token_id, sum(e.amount)::text as booked, t.chain_id, t.contract_address as contract,
+           (select w.address from platform_wallets w join chains c on c.family = w.family
+            where c.id = t.chain_id and w.kind = 'hot' and w.livemode = a.livemode and w.retired_at is null) as hot
+    from ledger_accounts a join ledger_entries e on e.account_id = a.id join tokens t on t.id = a.token_id
+    where a.kind = 'custody_hot' group by a.livemode, a.token_id, t.chain_id, t.contract_address having sum(e.amount) > 0`);
+  const short: string[] = [];
+  const unchecked: string[] = [];
+  for (const r of rows.rows) {
+    const [chain] = await tx.select().from(chains).where(eq(chains.id, r.chain_id));
+    try {
+      /* v8 ignore next -- FK; and a booked hot balance implies a hot wallet once existed */
+      if (!chain || !r.hot) throw new Error('no chain or hot wallet');
+      const onchain = await chainTx(chain).tokenBalance(r.contract, r.hot);
+      if (onchain < BigInt(r.booked)) short.push(`${String(r.livemode)}:${r.token_id}`);
+    } catch (err) {
+      log.warn({ token: r.token_id, err: (err as Error).message }, 'hot wallet balance could not be checked');
+      unchecked.push(`${String(r.livemode)}:${r.token_id}`);
+    }
+  }
+  if (short.length) issues.push({ check: 'hot_wallet_shortfall', count: short.length, sample: short });
+  if (unchecked.length) issues.push({ check: 'hot_wallet_unchecked', count: unchecked.length, sample: unchecked });
+}
+
+export async function reconcileLedger(deps: Deps, opts: { chainTx?: (chain: typeof chains.$inferSelect) => ChainTx } = {}): Promise<ReconciliationIssue[]> {
   const startedAt = new Date(deps.clock());
   return withSystem(deps.db, async (tx) => {
     const issues: ReconciliationIssue[] = [];
@@ -57,6 +131,7 @@ export async function reconcileLedger(deps: Deps): Promise<ReconciliationIssue[]
       const r = await tx.execute<{ id: string }>(query);
       if (r.rows.length > 0) issues.push({ check, count: r.rows.length, sample: r.rows.slice(0, 20).map((x) => x.id) });
     }
+    if (opts.chainTx) await checkHotWallets(tx, opts.chainTx, issues, deps.log);
     await tx.insert(reconciliationRuns).values({ startedAt, finishedAt: new Date(deps.clock()), ok: issues.length === 0, issues });
     if (issues.length > 0) deps.log.error({ issues }, 'RECONCILIATION MISMATCH');
     return issues;

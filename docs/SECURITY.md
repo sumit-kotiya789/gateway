@@ -30,6 +30,13 @@ Every file with a `// MONEY-CRITICAL` header is listed here and in the coverage 
 | `apps/server/db/migrations/0011_ledger_outbox_security.sql` | balanced append-only ledger, fee immutability, trigger-only outbox | M5 |
 | `apps/server/src/modules/ledger/fee-balance.ts` | prepaid fee balance and the live-invoice block | M8 |
 | `apps/server/db/migrations/0017_fees.sql`, `0018_fees_security.sql` | fixed fee snapshot, top-up journals, append-only top-ups, journal/top-up consistency | M8 |
+| `apps/signer/src/signer.ts` | the only signing code: intent checks, re-derivation, limits, kill switch, one transaction per intent | M7 |
+| `apps/signer/src/keys.ts`, `apps/signer/src/seed.ts` | key derivation by role; sealed seed file (dev/test only) | M7 |
+| `apps/server/src/modules/custody/sweeper.ts` | sweeps: gas top-up, transfer to hot, confirmation, booking, settlement | M7 |
+| `apps/server/src/modules/custody/payouts.ts` | sending approved withdrawals, confirm or release | M7 |
+| `apps/server/src/modules/custody/treasury.ts` | hot ↔ cold transfers, on-chain verification of refills | M7 |
+| `apps/server/src/modules/withdrawals/withdrawals.ts` | payout addresses, requests and holds, approvals, release | M7 |
+| `apps/server/db/migrations/0029_custodial_ledger.sql` … `0038_treasury_security.sql` | custodial account kinds and journals, per-journal account allow-lists, sweep/withdrawal/treasury/platform-wallet guards, signer DB role | M7 |
 
 ## Security-critical files (mandatory human review)
 
@@ -90,8 +97,8 @@ Status: `planned` until the mitigation's milestone lands, then the test that pro
 | Webhook replay | Signed timestamp, receivers reject > 5 min skew; stable event id (`gateway-event-id`) for dedup | `webhooks.test.ts` | M6 |
 | SSRF via webhook URL | All resolved addresses must be public (IANA special-purpose v4/v6 ranges, metadata, NAT64, 6to4, mapped); connect to the vetted address (DNS rebinding); no redirects; 10 s, 64 KiB caps; dev override refused in production | `ssrf.test.ts`, `webhooks.test.ts` | M6 |
 | Insider tampering with audit trail | App role has no UPDATE/DELETE/TRUNCATE on `audit_logs`; trigger blocks even the owner; SHA-256 hash chain verified by `audit_verify()` | `db-security.test.ts` | M1 |
-| Insider misuse (approvals) | Admin RBAC; reason on every change, audited in the same transaction; step-up TOTP for actions that lower a control (D-064); two-person approval above threshold (M7) | `admin.test.ts`, `watcher.test.ts` | M5b/M7 |
-| Key theft | Seed only in signer; signer caps + allowlist; hot wallet cap; cold multisig | planned | M7 |
+| Insider misuse (approvals) | Admin RBAC; reason on every change, audited in the same transaction; step-up TOTP for actions that lower a control (D-064); withdrawals need an admin approval with TOTP, two different admins at or above `WITHDRAWAL_TWO_PERSON_MIN` (DB guard: approvals only grow, one per admin) | `admin.test.ts`, `watcher.test.ts` | M5b/M7 |
+| Key theft | Seed only in the signer process (sealed file in dev; KMS required in production, refused otherwise); signer takes intents not transactions, re-reads every record and re-derives every address from its own seed; hot/gas wallets must derive from that seed; per-token limits and cold allowlist in the signer's own env; kill switch (env + DB); HMAC on every request + mTLS in production, the HMAC secret held by the worker only (api and watcher never get it); seed file sealed with a pinned 16-byte GCM tag; signatures written only by the signer's DB role, append-only | `signer.test.ts`, `signer-unit.test.ts` | M7b |
 | Dust / address poisoning | Ignore below `min_amount`; never display unsolicited transfers | planned | M4 |
 | Invoice / index race | Atomic index allocation; unique `(family, address)`; one address per invoice (unique FK) | `custody.test.ts`, `invoices.test.ts` | M2/M3 |
 | Duplicate invoice from client retries | Idempotency-Key claimed in the same transaction as the invoice; concurrent duplicates block on the unique index and replay; different body → 409 | `invoices.test.ts` (20 parallel same-key requests → 1 invoice) | M3 |
@@ -109,6 +116,9 @@ Status: `planned` until the mitigation's milestone lands, then the test that pro
 | Credential brute force | argon2id (m=19 MiB, t=2, p=1); per-account lockout (5 fails → 15 min, doubling, 24 h cap); per-IP rate limit 10/min on auth routes; identical errors + dummy hash for unknown accounts | `auth.test.ts` | M1 |
 | Session theft / refresh replay | 10-min access JWT; httpOnly SameSite=Strict cookies; refresh rotation with reuse detection that revokes the whole family | `auth.test.ts` | M1 |
 | Account takeover via email (password reset) | Reset token: 256-bit, SHA-256 stored, single use, 1 h, emailed via encrypted outbox; with 2FA on, reset also needs an authenticator or recovery code (failures count toward lockout); every session revoked; "password changed" email; forgot always answers 202 (no enumeration), one email/min/account | `email.test.ts` | M10 |
+| Account takeover redirects payouts | Payout address changes need owner + TOTP, wait 24 h in live mode (owners emailed, cancellable), EIP-55 checksum against typos; a withdrawal is only sent to the address that is current when signing; owners emailed on every request | `withdrawals.test.ts` | M7 |
+| Withdrawal double spend / over-withdrawal | Amount held at request under the merchant row lock; DB guards on states and approvals; the signer re-checks the hold and signs once per withdrawal; reconciliation `withdrawal_journal`, `negative_merchant_balance`, `negative_custody` | `withdrawals.test.ts` | M7 |
+| Unnoticed sign-in with stolen credentials | Sign-in from a browser without a known device token (random, httpOnly cookie, hash stored) emails the user time, IP and browser, after 2FA passed; tokens bound to their user (trigger); client text sanitized | `email.test.ts` | M10 |
 | Fake or mistyped signup email reaching live mode | Live API keys, xpubs, invoices, webhooks need a verified email (link token, 48 h, single use) | `email.test.ts` | M10 |
 | Removed or demoted team member keeps access | Sessions revoked on role change and removal; removed users cannot sign in, refresh or reset; access tokens expire within 10 min; management routes re-read roles from the DB | `team.test.ts` | M10 |
 | Admin escalates to owner / account left ownerless | Admins cannot grant or manage owner/admin; nobody changes their own role; last owner protected by API check and deferred DB trigger | `team.test.ts` | M10 |
@@ -118,6 +128,7 @@ Status: `planned` until the mitigation's milestone lands, then the test that pro
 | TOTP replay | Last accepted time step persisted; codes at or below it refused | `crypto.test.ts`, `auth.test.ts`, `api-keys.test.ts` | M1 |
 | TOTP secret theft from DB | Envelope encryption (per-value DEK, AES-256-GCM, KEK wrap, AAD bound to row) | `crypto.test.ts`, `auth.test.ts` | M1 |
 | Cross-tenant access (IDOR) | Repository scoping by `merchant_id` + Postgres RLS (no context = no rows; wrong-tenant writes rejected) | `db-security.test.ts`, `api-keys.test.ts` | M1 (extended each milestone) |
+| Rogue or compromised admin account lingers | Superadmin-only management with step-up TOTP and audited reasons; role and disabled state re-read on every admin request; credential reset bumps a session epoch carried in admin tokens (old sessions die at once; epoch cannot go down, trigger); nobody manages their own account; last active superadmin kept by API check + deferred trigger | `admins.test.ts` | M9 |
 | Admin takeover via merchant session | Separate table, JWT secret, audience, cookie names/path and origin; password + TOTP every login; disabled admins cut off on next request; optional IP allowlist (404 outside) | `admin.test.ts` | M1 |
 | Privilege escalation (role) | Server-side permission matrix on every route; mass-assignment blocked by strict schemas | `ids-rbac.test.ts`, `api-keys.test.ts`, `auth.test.ts` | M1 |
 | Secret leakage via logs / audit | Key-name + value-pattern redaction applied to logs and audit payloads; config errors print key names only | `logger.test.ts`, `config.test.ts`, `db-security.test.ts` | M0/M1 |

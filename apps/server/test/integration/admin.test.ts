@@ -144,7 +144,7 @@ describe('admin console', () => {
     const d = (await agent.req('GET', `${B}/merchants/${s.merchantId}`)).json<{ balances: { livemode: boolean; data: { received: string; prepaid_fees: string; fee_status: string }[] }[] }>();
     expect(d).toMatchObject({ id: s.merchantId, name, status: 'active', risk_flags: [], users: [{ email: s.email, role: 'owner', totp_enabled: false }] });
     // Live balances list every usable live token (other test files may add some), all blocked until a top-up.
-    expect(d.balances[0]).toEqual({ livemode: false, data: [] });
+    expect(d.balances[0]).toEqual({ livemode: false, custody_mode: 'non_custodial_xpub', data: [] });
     expect(d.balances[1]?.livemode).toBe(true);
     expect(d.balances[1]?.data.every((b) => b.received === '0' && b.prepaid_fees === '0' && b.fee_status === 'blocked')).toBe(true);
     expect((await agent.req('GET', `${B}/merchants/00000000-0000-7000-8000-000000000000`)).statusCode).toBe(404);

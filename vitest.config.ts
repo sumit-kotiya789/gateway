@@ -18,6 +18,14 @@ const MONEY_CRITICAL = [
   'packages/core/src/fees.ts',
   'apps/server/src/modules/ledger/ledger.ts',
   'apps/server/src/modules/ledger/fee-balance.ts',
+  // Custodial (M7)
+  'apps/signer/src/signer.ts',
+  'apps/signer/src/keys.ts',
+  'apps/signer/src/seed.ts',
+  'apps/server/src/modules/custody/treasury.ts',
+  'apps/server/src/modules/custody/sweeper.ts',
+  'apps/server/src/modules/custody/payouts.ts',
+  'apps/server/src/modules/withdrawals/withdrawals.ts',
 ];
 const gate = { lines: 90, functions: 90, branches: 90, statements: 90 };
 

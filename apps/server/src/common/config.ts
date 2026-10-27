@@ -57,6 +57,27 @@ const schema = z
     FEATURE_CUSTODIAL: z.stringbool().default(false),
     // Lets webhooks reach private/loopback addresses (local receivers in dev and tests). Refused in production.
     WEBHOOK_ALLOW_PRIVATE_NETWORKS: z.stringbool().default(false),
+    // Live withdrawals at or above this amount (token units) need two different admins; below, one (D-090).
+    WITHDRAWAL_TWO_PERSON_MIN: z.string().regex(/^\d+(\.\d+)?$/).default('10000'),
+    // Custodial (M7): the worker asks the signer to sign sweeps and payouts. Worker only: it refuses to start without
+    // them when FEATURE_CUSTODIAL is on; the api and watcher never get the HMAC secret.
+    SIGNER_URL: z
+      .union([z.literal(''), z.url()])
+      .optional()
+      .transform((v) => v || undefined),
+    SIGNER_HMAC_SECRET: z
+      .union([z.literal(''), secret(32)])
+      .optional()
+      .transform((v) => v || undefined),
+    // mTLS to the signer (required in production): the worker's client certificate and the signer's CA.
+    SIGNER_CLIENT_CERT_FILE: z.string().optional(),
+    SIGNER_CLIENT_KEY_FILE: z.string().optional(),
+    SIGNER_CA_FILE: z.string().optional(),
+    // Bearer token for GET /metrics (Prometheus). Unset = no metrics route.
+    METRICS_TOKEN: z
+      .union([z.literal(''), secret(32)])
+      .optional()
+      .transform((v) => v || undefined),
   })
   .superRefine((c, ctx) => {
     if (c.JWT_SECRET === c.ADMIN_JWT_SECRET) {
@@ -69,6 +90,9 @@ const schema = z
       }
     }
     if (c.NODE_ENV === 'production') {
+      if (c.SIGNER_URL && (!c.SIGNER_URL.startsWith('https://') || !c.SIGNER_CLIENT_CERT_FILE || !c.SIGNER_CLIENT_KEY_FILE || !c.SIGNER_CA_FILE)) {
+        ctx.addIssue({ code: 'custom', path: ['SIGNER_URL'], message: 'must be https with a client certificate (mTLS) in production' });
+      }
       if (!c.PUBLIC_BASE_URL.startsWith('https://')) {
         ctx.addIssue({ code: 'custom', path: ['PUBLIC_BASE_URL'], message: 'must be https in production' });
       }

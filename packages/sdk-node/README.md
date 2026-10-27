@@ -14,6 +14,8 @@ const invoice = await gw.invoices.create({ amount: '25.00', token: 'nexis:usdt',
 await gw.invoices.retrieve(invoice.id);
 await gw.invoices.list({ status: 'paid', limit: 20 });
 await gw.balances();
+// Accounting sync: CSV text for the key's mode, inclusive UTC dates (≤ 366 days).
+const csv = await gw.exports.invoicesCsv({ from: '2026-10-01', to: '2026-10-31' });
 
 // Webhooks (Express): use the raw body.
 app.post('/gateway/webhook', express.raw({ type: 'application/json' }), (req, res) => {

@@ -1,0 +1,26 @@
+{
+  "name": "@gw/signer",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch --env-file=../../.env src/main.ts",
+    "build": "esbuild src/main.ts src/cli/init-seed.ts --bundle --platform=node --target=node22 --format=cjs --sourcemap --outdir=dist --out-extension:.js=.cjs",
+    "typecheck": "tsc -p tsconfig.json",
+    "init-seed": "tsx --env-file=../../.env src/cli/init-seed.ts"
+  },
+  "dependencies": {
+    "@gw/chains": "workspace:*",
+    "@gw/core": "workspace:*",
+    "@scure/bip32": "2.4.0",
+    "@scure/bip39": "2.4.0",
+    "pg": "8.23.1",
+    "viem": "2.57.7",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/pg": "8.23.1",
+    "esbuild": "0.28.2",
+    "tsx": "4.23.15"
+  }
+}

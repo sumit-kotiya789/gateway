@@ -372,7 +372,7 @@ verification requires every placeholder to be set). Run `pnpm chains:verify` bef
   revokes every session, clears the lockout, counts as email verification, and sends a "password changed" email.
 - **Notices.** Owners get: xpub change requested / applied / failed; live fee balance crossing into low or blocked
   (once per crossing). Users get: password changed; 2FA reset by an admin.
-- Not yet: new-device login emails, team invites (next M10 part), digest/marketing mail.
+- Not yet: team invites (next M10 part), digest/marketing mail. New-device sign-in emails: D-083.
 
 ## D-078 Team management (amends D-052) (2026-10-26)
 - Invitations by email: single-use 7-day link (token hash stored), opened at `DASHBOARD_URL/#/accept-invite`. Accepting
@@ -393,7 +393,7 @@ verification requires every placeholder to be set). Run `pnpm chains:verify` bef
 Dashboard-only (`reports:read`: owner, admin, finance, read-only) invoice and payment CSVs per mode and UTC date range
 (≤ 366 days, ≤ 50,000 rows, else narrow the range). Built in one query and sent with `no-store`; every download is
 audited with its range and row count. Formula-looking cells are prefixed with `'` (OWASP CSV injection). Amounts are
-decimal token units like the API. Merchant-API exports and scheduled reports: later (M10 reports).
+decimal token units like the API. Merchant-API exports: D-084. Scheduled reports: later.
 
 ## D-080 Checkout widget: framed hosted checkout, allowlisted origins (2026-10-26)
 `/widget.js` opens `/checkout/:id?embed=1&origin=<page origin>` in an overlay iframe. The checkout sends
@@ -421,3 +421,118 @@ asks for its reason there). Poppins is bundled from `@fontsource/poppins` and se
 gains only `font-src 'self'`; no third-party font host. Components never set `style` attributes (`style-src 'self'`
 stays without `'unsafe-inline'`). The hosted checkout keeps its per-response nonce CSP and no font downloads: it uses
 the same palette with a system font stack.
+
+## D-083 New-device sign-in emails (2026-10-27)
+A completed dashboard sign-in (password, plus 2FA when on) remembers the browser: a random 43-character token in the
+`gw_dev` cookie (httpOnly, SameSite=Strict, path `/v1/dashboard/auth`, 400 days); `user_devices` stores its SHA-256
+with first/last IP and User-Agent. A sign-in without a token known for that user registers a device and emails the user
+(time, IP, browser, how to reset). No email for signup, invite acceptance, or a user's first device (accounts that
+existed before devices were tracked). Detection is by cookie, not IP or User-Agent: those change on every network and
+browser update, and a new-device email nobody reads helps no one. A cleared cookie means one extra email. The
+`auth.login` audit entry records `new_device`. Devices are not listed or revocable in the dashboard yet.
+
+## D-084 Exports over the merchant API (amends D-079) (2026-10-27)
+`GET /v1/exports/{invoices,payments}.csv` with a secret key's `read` scope, for accounting syncs. Same builders,
+columns, range and row limits as the dashboard; the mode is the key's (no `livemode` parameter, like every API-key
+route); the audit entry names the key as actor. Exports are rate limited to 10 a minute per key (dashboard: per client
+IP) because each one may scan a year of rows. No new scope: `read` already returns every invoice field via the list
+API. Scheduled (emailed) reports stay out: an email with a year of payments is a bigger leak than a link to sign in.
+
+## D-085 Metrics and alert rules (M9) (2026-10-27)
+`GET /metrics` on the api in Prometheus text format, behind `Authorization: Bearer <METRICS_TOKEN>`; without the token
+configured the route does not exist. No client library: a few gauges and counters are written by hand.
+- **Health gauges come from the database at scrape time** (cached 5 s): scanner cursor age, newest scanned block and its
+  age per enabled chain; last reconciliation run (age, ok, issues per check); due and recently failed webhook deliveries
+  and emails, with the oldest wait; pending invoices more than 2 minutes past their deadline (expiry job down). The
+  worker and watchers need no HTTP listener, and one scrape of any api process sees the whole system.
+- **HTTP counters** per api process: requests and total seconds by method, route template and status class (never the
+  raw URL, so label cardinality stays bounded).
+- Partial indexes keep the "failed in the last 24 h" counts cheap.
+- Alert rules in `infra/prometheus/alerts.yml` link to runbook headings. An RPC-disagreement alert waits for the quorum
+  check (SECURITY.md "Lying RPC", still planned).
+
+## D-086 Admin accounts managed in the console (M9) (2026-10-27)
+`/admin/v1/admins` for superadmins (`admins:manage`); `pnpm admin:create` stays for the first one. Creating, role
+changes, re-enabling and credential resets need step-up TOTP; disabling does not (it only removes access). Generated
+password and TOTP secret are returned once (with a QR code) and never stored in clear. Nobody manages their own account
+there, so one superadmin cannot lock others out by accident or quietly raise themselves. An active superadmin always
+remains: API check under row locks, plus a deferred constraint trigger. Admin tokens carry `sv`, the account's
+`session_epoch`; a credential reset increments it, so every open session of that admin ends at once (role and disabled
+state were already re-read per request). The epoch only goes up (trigger). Console page: Admins (superadmin only).
+
+## D-087 Custodial ledger: pending until swept, fee deducted at settlement (M7a) (2026-10-27)
+Custodial payments credit `merchant_pending` against the platform asset `custody_deposits`. Only when the deposit
+address has been swept into the hot wallet (M7c) does the invoice settle: what it received moves to
+`merchant_available`, minus the fee, which goes to `platform_fee_revenue`. Settling only after the sweep means a
+merchant can never withdraw funds the platform does not yet control. Overpayments are credited in full (fee on the
+expected amount); underpaid and late payments stay pending until an admin decision. No prepaid fee balance for
+custodial merchants. New account kinds `custody_deposits`, `custody_hot`, `custody_cold` (platform) and
+`merchant_pending`, `merchant_available`, `merchant_withdrawing` (merchant); journal kind `settlement`. Enum types
+recreated as in D-076. A DB guard restricts each journal kind to its account kinds. Fees charged to a custodial
+merchant are derived from the merchant's own settlement lines (R − (R−F)), because platform accounts are invisible in
+a merchant's RLS context.
+
+## D-088 Signer service (M7b) (2026-10-27)
+`apps/signer` is its own process and deployment; it is the only code that holds keys. Extends D-019.
+- **Seed.** `SeedSource` interface. `local-file` (24-word mnemonic sealed with AES-256-GCM under `SIGNER_SEED_KEK`) is
+  for development and tests; the signer refuses it in production until a KMS-backed source exists (D-010 still open).
+  `init-seed` creates the file and prints only public values (deposit xpubs, hot and gas addresses); the mnemonic is
+  printed only with `--show-mnemonic`, for an offline backup.
+- **Paths.** Deposits `m/44'/60'/0'` (live) and `1'` (test) via `wallet_accounts`; hot `10'/0/0` and `11'/0/0`; gas
+  `20'/0/0` and `21'/0/0`. Cold is an external multisig, allowlisted in `SIGNER_COLD_ADDRESSES`.
+- **Intents only.** `POST /v1/sign {kind, id}`: `gas_topup` and `sweep` now, `withdrawal` and `treasury` later. The
+  signer re-reads the record, re-derives the sender and the hot/gas wallet from its own seed and refuses any mismatch,
+  never sweeps more than the confirmed payments to an address minus earlier confirmed sweeps, checks the token balance
+  on chain, refuses above `SIGNER_MAX_GAS_PRICE_GWEI` and `SIGNER_MAX_GAS_TOPUP`, and builds the transaction itself.
+  Payout intents need per-token `SIGNER_LIMITS` (per transaction and per 24 h); a token without limits is refused.
+- **One transaction per intent.** `signer_signatures` (unique per intent, and per sender nonce) stores the signed
+  bytes; asking again returns them, so the worker rebroadcasts the same transaction instead of creating a second one.
+  Nonce = max(chain pending nonce, last signed + 1) under a per-sender advisory lock. The signer never broadcasts.
+- **Database.** Own role `gw_signer`: SELECT on the tables it checks, INSERT on `signer_signatures` only. The app role
+  can read signatures but not write them; nobody can change them (trigger).
+- **Transport.** HMAC-SHA256 of each body (`x-signer-auth`, 60 s window) always; mTLS (TLS 1.3, client certificate)
+  required in production. Errors return a refusal code, never internals.
+- **Kill switch.** `SIGNER_PAUSED` in the signer's env, or `signer_controls.paused` (admin, M7e).
+
+## D-089 Sweeps: gas top-up, sweep, settle after confirmation (M7c) (2026-10-27)
+A custodial invoice settles only once its funds are in the hot wallet, so merchants can never withdraw money the
+platform does not control. The worker plans one sweep per deposit address (never more than the confirmed payments to
+it minus earlier sweeps, checked again by the signer), funds the address's network fee from a dedicated gas wallet,
+sweeps to the active hot wallet, and books Dr `custody_hot` / Cr `custody_deposits` with the sweep's confirmation, in
+the same transaction that settles the invoice (if it is paid; an underpaid one settles when an admin accepts it).
+Rebroadcasts reuse the signed bytes; only a mined revert fails a sweep, and the next round plans a new one. Refusals
+that mean data and keys disagree fail the sweep and log an error (incident); refusals that depend on the moment
+(paused, gas price) retry with backoff. Gas costs are paid in the native coin by the platform and are not in the token
+ledger. Unsolicited extra tokens on an address are not swept (they are not booked). Custody keys are registered with
+`pnpm platform:register`, which refuses to replace a different active key.
+
+## D-090 Withdrawals: payout address cooldown, hold at request, admin approval, signer re-checks (M7d) (2026-10-27)
+- **Payout address.** One current address per merchant, mode and family: the newest that has activated and was not
+  cancelled. Live addresses activate 24 h after they are added (owners emailed), like xpub changes (D-075); test
+  ones at once. EIP-55 checksum enforced when mixed case; stored checksummed. Times use the database clock, because
+  the database guards enforce them. Address changes are dashboard-only (TOTP), never through API keys.
+- **Request.** Dashboard (owner/finance, TOTP, verified email for live) or API (`withdrawals:write`, idempotent).
+  The merchant row is locked, the available balance checked and the amount held in the same transaction.
+- **Approval.** Test mode needs none. Live needs one admin (`withdrawals:approve`, TOTP);
+  `WITHDRAWAL_TWO_PERSON_MIN` (default 10,000 token units) and above, two different admins. Rejecting needs no
+  TOTP (it only stops money). A DB guard keeps approvals growing, distinct and only while pending.
+- **Sending.** Worker → signer (D-088), which re-checks everything itself and enforces its own limits. A refusal that
+  says the request is wrong fails it and releases the hold; a refusal of the moment waits. Network fees are paid by
+  the platform in the native coin (no withdrawal fee yet).
+- **Events.** `withdrawal.<status>` through the outbox (DB trigger), so webhooks and `/v1/events` carry them.
+
+## D-091 Custody operations: kill switch, treasury, on-chain hot wallet check (M7e) (2026-10-27)
+- **Kill switch.** `signer_controls.paused`, set from the admin console: any operator pauses at once (audited);
+  resuming needs a superadmin and TOTP. The signer also honours `SIGNER_PAUSED` from its own environment.
+- **Treasury.** Hot → cold is proposed by one admin and approved by a different one (both TOTP, DB check), signed only
+  to an address in the signer's own `SIGNER_COLD_ADDRESSES` that also matches the registered cold wallet, and not
+  subject to payout limits (it can only reach cold). Cold → hot happens outside the system (multisig); an admin
+  records the transaction and the worker books it only when the receipt holds exactly that token transfer from cold
+  to hot for that amount, with confirmations; at most the ledger's cold balance. Treasury journals are platform-only
+  (`merchant_id` null, the only such journals), between `custody_hot` and `custody_cold`.
+- **Hot wallet check.** The hourly reconciliation (custodial deployments) reads each hot wallet's token balance on
+  chain: less than the ledger's `custody_hot` is `hot_wallet_shortfall` (incident); no answer is
+  `hot_wallet_unchecked`. Deposit addresses are not checked on chain: each is swept as soon as it is confirmed.
+- **Cap.** No hard cap in code: `gw_custody_balance` and the `GatewayHotWalletAboveCap` alert carry the treasury
+  policy, and moving the excess is a two-person decision.
+

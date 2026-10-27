@@ -6,7 +6,7 @@ through an audited admin migration (later milestone). Each invoice snapshots `cu
 
 | | custodial | non_custodial_xpub | non_custodial_forwarder |
 |---|---|---|---|
-| Status | M7, behind feature flag, off in production | M8, MVP | M12, experimental, audit required |
+| Status | M7 built, behind `FEATURE_CUSTODIAL` (off by default); production refuses the signer until a KMS seed source exists (D-010) | M8, MVP | M12, experimental, audit required |
 | Deposit address | Platform HD wallet, `m/44'/60'/{account}'/0/{i}` | Merchant account xpub (depth 3), child `0/{i}` | CREATE2 forwarder |
 | Keys on app servers | xpub only | xpub only | none |
 | Who moves funds | Platform (sweep, withdrawal via signer) | Merchant, with their own wallet | Contract auto-forwards |
@@ -53,6 +53,49 @@ Database guards that hold even if application code is wrong:
 1. Build: the strategy module cannot import signer, settlement or withdrawal code (dependency rule in CI).
 2. Database: inserts into `settlement_sweeps` / `withdrawals` are rejected by trigger for non-custodial merchants.
 3. Tests: end-to-end flow asserts zero signer calls and zero sweep/withdrawal jobs.
+
+## Custodial ledger (M7a, D-087)
+
+| Event | Journal | Lines |
+|---|---|---|
+| Payment confirmed (A) | `payment` | Dr `custody_deposits` A (platform) / Cr `merchant_pending` A |
+| Invoice settled after its deposit address was swept (R received, F fee) | `settlement` | Dr `merchant_pending` R / Cr `merchant_available` R−F / Cr `platform_fee_revenue` F |
+
+- Fee = floor(min(R, expected) × bps / 10000) + fixed, never above that base; deducted at settlement. Custodial merchants
+  have no prepaid fee balance (`fee_status` = `not_enforced`, live invoices never get 402).
+- Underpaid and late payments stay in `merchant_pending` until an admin accepts them (they then settle like any paid
+  invoice) or they are refunded (M7d).
+- The database lets each journal kind touch only its own account kinds (`ledger_entry_guard`): a custodial payment can
+  never book into `merchant_received`, a `fee` journal is refused on a custodial invoice, a `settlement` journal on
+  anything but a paid custodial invoice.
+- Reconciliation adds `custodial_received`, `custodial_settlement` and `negative_merchant_balance`.
+
+## Sweeps (M7c, D-089)
+Worker queue `custody` (every 15 s, only with `FEATURE_CUSTODIAL`):
+1. **Plan**: one sweep per custodial deposit address holding confirmed payments not swept yet; amount = confirmed
+   payments − earlier confirmed sweeps; destination = the active hot wallet (DB trigger enforces both).
+2. **Gas**: the signer tops the address up from the gas wallet (enough for one token transfer at today's price +20%,
+   capped by `SIGNER_MAX_GAS_TOPUP`), or answers `not_needed`.
+3. **Sweep**: the signer signs `transfer(hot, amount)` from the deposit address; the worker broadcasts it.
+4. **Confirm**: after `max(chain default, token minimum)` confirmations: sweep `confirmed`, journal
+   Dr `custody_hot` / Cr `custody_deposits`, and the invoice settles if it is paid (`settleIfSwept`).
+Unmined transactions are rebroadcast with the same bytes; only a mined revert fails a sweep. Reconciliation:
+`sweep_journal`, `negative_custody`. Metrics: `gw_sweeps_open`, `gw_sweep_oldest_open_seconds`, `gw_sweeps_failed_24h`.
+
+## Withdrawals (M7d, D-090)
+1. **Payout address** (dashboard, owner + TOTP): EIP-55 checksum checked; live addresses become current 24 h after
+   they are added (owners emailed; cancellable meanwhile); test addresses at once. Withdrawals always go to the
+   current one; a newer address or a cancellation stops older requests (the signer re-checks).
+2. **Request** (dashboard: owner/finance + TOTP; API: `withdrawals:write`): at most the available balance, held at
+   once (`withdrawal_hold`). Refused while suspended or `payouts_frozen`. Test mode: approved at once.
+3. **Approval** (admin console, `withdrawals:approve` + TOTP): live needs one admin; at or above
+   `WITHDRAWAL_TWO_PERSON_MIN` (token units) two different admins. Rejecting (or the merchant cancelling) releases.
+4. **Sending** (custody worker): the signer re-checks status and approvals, merchant state and flags, current payout
+   address, the hold, its own per-token limits (per transaction, per 24 h) and the hot wallet's token and gas, then
+   signs a token transfer from the hot wallet. Confirmed: `withdrawal` journal (leaves custody). Reverted or refused
+   as wrong: `withdrawal_release` (back to available). Refused for the moment (paused, limits, hot wallet short):
+   waits with backoff; admins see `last_error`.
+5. Webhook events `withdrawal.<status>`; owners are emailed on request and on the outcome.
 
 ## Merchant responsibilities (non-custodial)
 

@@ -1,0 +1,123 @@
+# Prometheus alert rules for the gateway (M9, D-085). Scrape the api's /metrics with the METRICS_TOKEN bearer token,
+# job name "gateway" (see prometheus.example.yml). Each alert links to its docs/RUNBOOK.md heading.
+# Thresholds suit BSC (3 s blocks); tune per chain if a testnet produces blocks rarely.
+groups:
+  - name: gateway
+    rules:
+      - alert: GatewayMetricsDown
+        expr: up{job="gateway"} == 0
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "Prometheus cannot scrape the gateway api ({{ $labels.instance }})"
+          runbook: "docs/RUNBOOK.md#process-health"
+
+      - alert: GatewayScannerStuck
+        expr: gw_scanner_cursor_age_seconds > 120
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: "Scanner for {{ $labels.chain }} has not advanced for {{ $value | humanizeDuration }}"
+          runbook: "docs/RUNBOOK.md#scanner-stuck"
+
+      - alert: GatewayScannerNeverRan
+        # NaN = an enabled chain has no cursor yet (watcher not started for it).
+        expr: gw_scanner_cursor_age_seconds != gw_scanner_cursor_age_seconds
+        for: 10m
+        labels: { severity: critical }
+        annotations:
+          summary: "No watcher has ever scanned enabled chain {{ $labels.chain }}"
+          runbook: "docs/RUNBOOK.md#scanner-stuck"
+
+      - alert: GatewayScannerBehind
+        expr: gw_scanner_block_age_seconds > 900
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Scanner for {{ $labels.chain }} is {{ $value | humanizeDuration }} behind the chain"
+          runbook: "docs/RUNBOOK.md#rpc-outage"
+
+      - alert: GatewayReconciliationMismatch
+        expr: gw_reconciliation_last_ok == 0
+        labels: { severity: critical }
+        annotations:
+          summary: "Ledger reconciliation failed: {{ range query \"gw_reconciliation_issues\" }}{{ .Labels.check }}={{ .Value }} {{ end }}"
+          runbook: "docs/RUNBOOK.md#reconciliation-mismatch"
+
+      - alert: GatewayReconciliationNotRunning
+        expr: gw_reconciliation_last_run_age_seconds > 7200 or gw_reconciliation_last_run_age_seconds != gw_reconciliation_last_run_age_seconds
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: "No reconciliation run in the last 2 hours (worker down?)"
+          runbook: "docs/RUNBOOK.md#worker"
+
+      - alert: GatewayWorkerNotExpiring
+        expr: gw_invoices_overdue_pending > 0
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ $value }} pending invoices are past their deadline: the worker's expiry job is not running"
+          runbook: "docs/RUNBOOK.md#worker"
+
+      - alert: GatewayWebhookBacklog
+        expr: gw_webhook_oldest_due_seconds > 300
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Webhook deliveries waiting {{ $value | humanizeDuration }} ({{ with query \"gw_webhook_deliveries_due\" }}{{ . | first | value }}{{ end }} due)"
+          runbook: "docs/RUNBOOK.md#webhook-backlog"
+
+      - alert: GatewayWebhookFailures
+        expr: gw_webhook_deliveries_failed_24h > 100
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $value }} webhook deliveries gave up in 24 h"
+          runbook: "docs/RUNBOOK.md#webhook-backlog"
+
+      - alert: GatewayEmailBacklog
+        expr: gw_email_oldest_due_seconds > 600
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Emails waiting {{ $value | humanizeDuration }} (SMTP relay or worker down?)"
+          runbook: "docs/RUNBOOK.md#email"
+
+      - alert: GatewayEmailFailures
+        expr: gw_emails_failed_24h > 10
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $value }} emails given up on in 24 h"
+          runbook: "docs/RUNBOOK.md#email"
+
+      - alert: GatewaySweepsStuck
+        expr: gw_sweep_oldest_open_seconds > 3600
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "A custodial sweep has been open for {{ $value | humanizeDuration }} (signer paused, gas, RPC?)"
+          runbook: "docs/RUNBOOK.md#stuck-transaction-m7"
+
+      - alert: GatewaySweepFailed
+        expr: gw_sweeps_failed_24h > 0
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ $value }} custodial sweeps failed in 24 h"
+          runbook: "docs/RUNBOOK.md#stuck-transaction-m7"
+
+      - alert: GatewayHotWalletAboveCap
+        # The cap is a treasury policy: set it per token (here 50,000 units) and move the excess to cold storage.
+        expr: gw_custody_balance{account="hot", livemode="true"} > 50000
+        for: 30m
+        labels: { severity: warning }
+        annotations:
+          summary: "Hot wallet holds {{ $value }} {{ $labels.token }}: above the cap, move the excess to cold storage"
+          runbook: "docs/RUNBOOK.md#treasury-m7"
+
+      - alert: GatewayApiErrors
+        expr: sum(rate(gw_http_requests_total{status="5xx"}[5m])) > 0.2
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "api answers {{ $value | humanize }} 5xx responses per second"
+          runbook: "docs/RUNBOOK.md#process-health"

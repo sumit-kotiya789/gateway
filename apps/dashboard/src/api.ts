@@ -128,6 +128,36 @@ export interface Balance {
   fees_charged: string;
   prepaid_fees: string;
   fee_status: 'ok' | 'low' | 'blocked' | 'not_enforced';
+  /** Custodial only: received but not swept yet / withdrawable / held for withdrawals in flight. */
+  pending: string;
+  available: string;
+  withdrawing: string;
+}
+
+export interface PayoutAddress {
+  id: string;
+  livemode: boolean;
+  address: string;
+  label: string | null;
+  status: 'current' | 'pending' | 'superseded' | 'cancelled';
+  activates_at: string;
+  created_at: string;
+}
+
+export interface Withdrawal {
+  id: string;
+  livemode: boolean;
+  status: 'pending_approval' | 'approved' | 'sent' | 'confirmed' | 'failed' | 'rejected' | 'cancelled';
+  token: string;
+  symbol: string;
+  amount: string;
+  to_address: string;
+  approvals_required: number;
+  approvals: number;
+  tx_hash: string | null;
+  reason: string | null;
+  created_at: string;
+  confirmed_at: string | null;
 }
 
 export interface FeeTopup {

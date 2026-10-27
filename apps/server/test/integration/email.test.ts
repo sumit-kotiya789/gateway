@@ -177,6 +177,56 @@ describe('recovery codes', () => {
   });
 });
 
+describe('new-device sign-in', () => {
+  const login = (a: Agent, s: { email: string; password: string }, headers: Record<string, string> = {}) =>
+    a.req('POST', '/v1/dashboard/auth/login', { email: s.email, password: s.password }, headers);
+  const deviceKinds = async (merchantId: string) => (await kinds(merchantId)).filter((k) => k === 'new_device_login').length;
+
+  it('the signup browser is known; another browser is emailed once, then known; the cookie is httpOnly', async () => {
+    const s = await signup(app);
+    expect(s.agent.cookies.get('gw_dev')).toMatch(/^[A-Za-z0-9]{43}$/);
+    expect((await login(s.agent, s)).statusCode).toBe(200);
+    expect(await deviceKinds(s.merchantId)).toBe(0);
+
+    const other = new Agent(app);
+    const res = await login(other, s, { 'user-agent': 'Évil\tBrowser/1.0 ✓' });
+    expect(res.statusCode).toBe(200);
+    const set = res.cookies.find((c) => c.name === 'gw_dev');
+    expect(set).toMatchObject({ httpOnly: true, sameSite: 'Strict', path: '/v1/dashboard/auth' });
+    const mail = await mailTo(s.email, /New sign-in to your account/);
+    expect(mail.text).toContain(`IP address: ${other.ip}`);
+    expect(mail.text).toContain('Browser: ?vil?Browser/1.0 ?');
+    const logged = await owner.query<{ after: unknown }>("select after from audit_logs where actor_id = $1 and action = 'auth.login' order by seq desc limit 1", [s.userId]);
+    expect(logged.rows[0]?.after).toEqual({ mfa: false, new_device: true });
+
+    expect((await login(other, s)).statusCode).toBe(200);
+    expect(await deviceKinds(s.merchantId)).toBe(1);
+    // A device token stays bound to its user: it cannot be updated to another one.
+    await expect(owner.query('update user_devices set user_id = gen_random_uuid() where user_id = $1', [s.userId])).rejects.toThrow(/immutable/);
+  });
+
+  it('with 2FA the email goes out only once the second factor passed', async () => {
+    const s = await signup(app);
+    const { secret } = await enable2fa(s.agent, clock);
+    const other = new Agent(app);
+    const first = await login(other, s);
+    expect(await deviceKinds(s.merchantId)).toBe(0);
+    clock.advance(30_000);
+    const done = await other.req('POST', '/v1/dashboard/auth/login/2fa', { mfa_token: first.json<{ mfa_token: string }>().mfa_token, code: totpNow(secret, clock()) });
+    expect(done.statusCode).toBe(200);
+    expect(await deviceKinds(s.merchantId)).toBe(1);
+  });
+
+  it("another user's device token on a shared browser does not count as known", async () => {
+    const a = await signup(app);
+    const b = await signup(app);
+    b.agent.cookies.set('gw_dev', a.agent.cookies.get('gw_dev') ?? '');
+    expect((await login(b.agent, b)).statusCode).toBe(200);
+    expect(await deviceKinds(b.merchantId)).toBe(1);
+    expect(b.agent.cookies.get('gw_dev')).not.toBe(a.agent.cookies.get('gw_dev'));
+  });
+});
+
 describe('outbox delivery', () => {
   it('retries with backoff, then gives up and erases the payload', async () => {
     const s = await signup(app, 'Acme', { verified: false });

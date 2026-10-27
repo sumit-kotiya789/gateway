@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { loadConfig } from '../../src/common/config.js';
+import { createSignerClient } from '../../src/modules/custody/signer-client.js';
 
 const base = {
   DATABASE_URL: 'postgres://u:p@localhost:5432/db',
@@ -79,6 +80,16 @@ describe('loadConfig', () => {
 
   it('custodial feature flag is off unless explicitly enabled', () => {
     expect(loadConfig(base).FEATURE_CUSTODIAL).toBe(false);
+    // Only the worker needs the signer (it refuses to start without it); the api and watcher run without the secret.
     expect(loadConfig({ ...base, FEATURE_CUSTODIAL: 'true' }).FEATURE_CUSTODIAL).toBe(true);
+    expect(() => createSignerClient(loadConfig({ ...base, FEATURE_CUSTODIAL: 'true' }))).toThrow(/SIGNER_URL and SIGNER_HMAC_SECRET are required/);
+    const signer = { SIGNER_URL: 'http://signer.internal:3100', SIGNER_HMAC_SECRET: 's'.repeat(32) };
+    expect(() => createSignerClient(loadConfig({ ...base, FEATURE_CUSTODIAL: 'true', ...signer }))).not.toThrow();
+  });
+
+  it('production signer link must be mTLS', () => {
+    const prod = { ...base, NODE_ENV: 'production', FEATURE_CUSTODIAL: 'true', SIGNER_URL: 'http://signer.internal:3100', SIGNER_HMAC_SECRET: 's'.repeat(32) };
+    expect(issues(prod)).toMatch(/SIGNER_URL: must be https with a client certificate/);
+    expect(issues({ ...prod, SIGNER_URL: 'https://signer.internal:3100', SIGNER_CLIENT_CERT_FILE: '/c', SIGNER_CLIENT_KEY_FILE: '/k', SIGNER_CA_FILE: '/ca' })).not.toMatch(/SIGNER_URL/);
   });
 });

@@ -1,0 +1,2 @@
+CREATE INDEX "email_outbox_failed_idx" ON "email_outbox" USING btree ("created_at") WHERE "email_outbox"."status" = 'failed';--> statement-breakpoint
+CREATE INDEX "webhook_deliveries_failed_idx" ON "webhook_deliveries" USING btree ("last_attempt_at") WHERE "webhook_deliveries"."status" = 'failed';

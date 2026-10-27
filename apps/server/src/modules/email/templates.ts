@@ -8,6 +8,8 @@ export interface Rendered {
 
 const footer = '\n\n-- \nGateway. You get this email because of activity on your account.';
 const mode = (livemode: boolean) => (livemode ? 'live' : 'test');
+/** Client-supplied text (a User-Agent header): one line of printable characters, capped. */
+const printable = (s: string, max: number) => s.replace(/[^\x20-\x7e]/g, '?').slice(0, max);
 
 export const templates = {
   verifyEmail: (url: string): Rendered => ({
@@ -21,6 +23,10 @@ export const templates = {
   passwordChanged: (): Rendered => ({
     subject: 'Your password was changed',
     text: `The password of your account was just reset and every session was signed out.\n\nIf this was not you, contact support immediately.${footer}`,
+  }),
+  newDeviceLogin: (p: { at: string; ip: string; userAgent: string | null; dashboardUrl: string }): Rendered => ({
+    subject: 'New sign-in to your account',
+    text: `Your account was just signed in to from a browser we have not seen before.\n\nTime: ${p.at}\nIP address: ${p.ip}\nBrowser: ${printable(p.userAgent ?? 'unknown', 200)}\n\nIf this was you, there is nothing to do. If not, reset your password now ("Forgot password" on the sign-in page) and turn on two-factor authentication:\n${p.dashboardUrl}${footer}`,
   }),
   twoFactorReset: (): Rendered => ({
     subject: 'Two-factor authentication was reset',
@@ -45,6 +51,21 @@ export const templates = {
   memberRemoved: (p: { merchantName: string }): Rendered => ({
     subject: 'You were removed from a Gateway account',
     text: `You no longer have access to "${p.merchantName}" on Gateway and were signed out.${footer}`,
+  }),
+  payoutAddressAdded: (p: { livemode: boolean; address: string; activatesAt: string; dashboardUrl: string }): Rendered => ({
+    subject: 'A new payout address was added',
+    text: `A new ${mode(p.livemode)} payout address was added to your account: ${p.address}\n\nWithdrawals go there from ${p.activatesAt}. Until then nothing changes.\n\nIf you did not do this, cancel it now under Withdrawals and change your password:\n${p.dashboardUrl}/#/withdrawals${footer}`,
+  }),
+  withdrawalRequested: (p: { livemode: boolean; amount: string; symbol: string; address: string }): Rendered => ({
+    subject: 'Withdrawal requested',
+    text: `A ${mode(p.livemode)} withdrawal of ${p.amount} ${p.symbol} to ${p.address} was requested.\n\nIf you did not do this, cancel it in the dashboard (while it awaits approval), change your password and contact support.${footer}`,
+  }),
+  withdrawalDone: (p: { status: 'confirmed' | 'failed' | 'rejected'; amount: string; symbol: string; address: string; txHash: string | null; reason: string | null }): Rendered => ({
+    subject: p.status === 'confirmed' ? 'Withdrawal sent' : 'Withdrawal not sent',
+    text:
+      p.status === 'confirmed'
+        ? `Your withdrawal of ${p.amount} ${p.symbol} to ${p.address} is confirmed on chain (transaction ${p.txHash ?? ''}).${footer}`
+        : `Your withdrawal of ${p.amount} ${p.symbol} to ${p.address} was ${p.status}${p.reason ? `: ${p.reason}` : ''}. The amount is available again.${footer}`,
   }),
   feeBalance: (p: { status: 'low' | 'blocked'; token: string; prepaid: string; symbol: string }): Rendered => ({
     subject: p.status === 'blocked' ? 'Live invoices paused: prepaid fees used up' : 'Prepaid fee balance is running low',

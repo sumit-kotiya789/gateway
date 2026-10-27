@@ -313,6 +313,7 @@ details:not(.card) > summary { cursor: pointer; color: var(--text-2); margin: 0.
 .topbar .title { font-weight: 600; font-size: 1rem; margin-right: auto; display: flex; align-items: center; gap: 0.6rem; }
 .topbar .workspace { font-weight: 600; }
 .stepup { display: flex; align-items: center; justify-content: space-between; gap: 1rem 2rem; flex-wrap: wrap; padding: 1rem 1.25rem; }
+.stepup.paused { border-color: var(--danger-line); background: var(--danger-soft); }
 .stepup .stepup-text { display: flex; flex-direction: column; gap: 0.15rem; }
 .stepup .field { margin: 0; min-width: 220px; }
 .stepup .field small { display: none; }
@@ -381,12 +382,12 @@ td .badge + .badge { margin-left: 0.3rem; }
   border-radius: var(--pill); background: rgba(255, 255, 255, 0.05); border: 1px solid var(--border-strong); color: var(--text-2); text-transform: capitalize;
 }
 .badge::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity: 0.9; }
-.s-paid, .s-settled, .s-overpaid, .s-succeeded, .s-active, .s-sent, .s-applied, .s-ok { color: var(--accent); border-color: var(--accent-line); background: var(--accent-soft); }
+.s-paid, .s-settled, .s-overpaid, .s-succeeded, .s-active, .s-sent, .s-applied, .s-ok, .s-confirmed, .s-approved, .s-current { color: var(--accent); border-color: var(--accent-line); background: var(--accent-soft); }
 .s-paid::before, .s-settled::before, .s-succeeded::before, .s-active::before { box-shadow: 0 0 8px currentColor; }
-.s-detected, .s-confirming, .s-pending { color: var(--info); border-color: var(--info-line); background: var(--info-soft); }
+.s-detected, .s-confirming, .s-pending, .s-pending_approval { color: var(--info); border-color: var(--info-line); background: var(--info-soft); }
 .s-underpaid, .s-late_payment, .s-low, .s-retired { color: var(--warn); border-color: var(--warn-line); background: var(--warn-soft); }
-.s-failed, .s-blocked, .s-revoked, .s-expired, .s-cancelled { color: var(--danger); border-color: var(--danger-line); background: var(--danger-soft); }
-.s-expired, .s-cancelled { color: var(--muted); border-color: var(--border-strong); background: rgba(255, 255, 255, 0.04); }
+.s-failed, .s-blocked, .s-revoked, .s-expired, .s-cancelled, .s-rejected { color: var(--danger); border-color: var(--danger-line); background: var(--danger-soft); }
+.s-expired, .s-cancelled, .s-superseded { color: var(--muted); border-color: var(--border-strong); background: rgba(255, 255, 255, 0.04); }
 
 /* ---------------------------------------------------------------- empty, loading */
 .empty { text-align: center; padding: 2.75rem 1rem; border: 1px dashed var(--border-strong); border-radius: var(--r-lg); background: rgba(255, 255, 255, 0.012); margin-bottom: 1rem; }
@@ -466,3 +467,4 @@ td .badge + .badge { margin-left: 0.3rem; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
 }
+.hidden { display: none; }
