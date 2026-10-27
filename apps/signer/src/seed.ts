@@ -21,9 +21,11 @@ export interface SeedSource {
   load(): Promise<Uint8Array>;
 }
 
+const TAG_BYTES = 16;
+
 function seal(mnemonic: string, kek: Buffer): SealedSeed {
   const iv = randomBytes(12);
-  const c = createCipheriv('aes-256-gcm', kek, iv);
+  const c = createCipheriv('aes-256-gcm', kek, iv, { authTagLength: TAG_BYTES });
   c.setAAD(AAD);
   const ct = Buffer.concat([c.update(mnemonic, 'utf8'), c.final()]);
   return { v: 1, iv: iv.toString('base64'), tag: c.getAuthTag().toString('base64'), ct: ct.toString('base64') };
@@ -31,7 +33,8 @@ function seal(mnemonic: string, kek: Buffer): SealedSeed {
 
 function open(s: SealedSeed, kek: Buffer): string {
   if (s.v !== 1) throw new Error('unsupported seed file version');
-  const d = createDecipheriv('aes-256-gcm', kek, Buffer.from(s.iv, 'base64'));
+  // A pinned tag length: a truncated tag is refused instead of checked against fewer bytes.
+  const d = createDecipheriv('aes-256-gcm', kek, Buffer.from(s.iv, 'base64'), { authTagLength: TAG_BYTES });
   d.setAAD(AAD);
   d.setAuthTag(Buffer.from(s.tag, 'base64'));
   return Buffer.concat([d.update(Buffer.from(s.ct, 'base64')), d.final()]).toString('utf8');

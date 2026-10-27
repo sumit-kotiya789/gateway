@@ -91,6 +91,7 @@ async function paidDeposit(amount: bigint, sweepAmount: bigint | null = amount, 
     const [p] = await tx.update(payments).set({ status: 'confirmed', confirmedAt: new Date(clock()) }).where(eq(payments.id, r.rows[0]?.id ?? '')).returning();
     if (!p) throw new Error('payment missing');
     await postPayment(tx, p);
+    await tx.execute(`update invoices set amount_received = ${amount.toString()} where id = '${inv.id}'`);
     await transitionInvoice(deps, tx, inv.id, 'detected', 'test');
     if (sweepAmount === null) return '';
     const [d] = await tx.execute<{ id: string }>(`select deposit_address_id as id from invoices where id = '${inv.id}'`).then((x) => x.rows);

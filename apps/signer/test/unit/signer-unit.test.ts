@@ -44,6 +44,11 @@ describe('seed file', () => {
     sealed.ct = Buffer.from(Buffer.from(sealed.ct, 'base64').map((b, i) => (i === 0 ? b ^ 1 : b))).toString('base64');
     await writeFile(join(dir, 'bad.json'), JSON.stringify(sealed));
     await expect(new LocalFileSeed(join(dir, 'bad.json'), kek).load()).rejects.toThrow(/cannot be opened/);
+    // A truncated tag is refused outright (never verified against fewer bytes).
+    const short = { ...(JSON.parse(file) as { tag: string }) };
+    short.tag = Buffer.from(short.tag, 'base64').subarray(0, 4).toString('base64');
+    await writeFile(join(dir, 'short.json'), JSON.stringify(short));
+    await expect(new LocalFileSeed(join(dir, 'short.json'), kek).load()).rejects.toThrow(/cannot be opened/);
     await expect(LocalFileSeed.create(path, kek)).rejects.toThrow(/EEXIST/);
     // Another file version, or a sealed value that is not a mnemonic, is refused.
     await writeFile(join(dir, 'v2.json'), JSON.stringify({ ...(JSON.parse(file) as object), v: 2 }));
