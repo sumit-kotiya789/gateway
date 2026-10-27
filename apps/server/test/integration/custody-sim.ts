@@ -88,6 +88,22 @@ export class FakeChain {
   }
 }
 
+/**
+ * Cross-file test lock around the global signer switch: every test signature holds it shared; the kill-switch test
+ * holds it exclusively while the signer is paused, so test files signing in parallel never see that pause.
+ */
+const SIGNER_SWITCH_LOCK = 7_310_001;
+export async function withSwitchLock<T>(pool: pg.Pool, mode: 'shared' | 'exclusive', fn: () => Promise<T>): Promise<T> {
+  const c = await pool.connect();
+  try {
+    await c.query(mode === 'shared' ? 'select pg_advisory_lock_shared($1)' : 'select pg_advisory_lock($1)', [SIGNER_SWITCH_LOCK]);
+    return await fn();
+  } finally {
+    await c.query(mode === 'shared' ? 'select pg_advisory_unlock_shared($1)' : 'select pg_advisory_unlock($1)', [SIGNER_SWITCH_LOCK]);
+    c.release();
+  }
+}
+
 /** A LOGIN user in gw_signer (the signer's DB role), and a pool connected as it. */
 export async function signerPool(owner: pg.Pool): Promise<pg.Pool> {
   await owner.query(`do $$ begin if not exists (select 1 from pg_roles where rolname = 'signer_test') then create role signer_test login password 'signer' in role gw_signer; end if; end $$`);
@@ -110,7 +126,7 @@ export function custodyEnv(pool: pg.Pool, c: FakeChain, signerEnv: Record<string
   const client: SignerClient = {
     sign: async (kind, id) => {
       try {
-        return { ok: true, tx: await signer.sign({ kind, id }) };
+        return { ok: true, tx: await withSwitchLock(pool, 'shared', () => signer.sign({ kind, id })) };
       } catch (err) {
         if (err instanceof Refusal) return { ok: false, code: err.code, message: err.message };
         throw err;

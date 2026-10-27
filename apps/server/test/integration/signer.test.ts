@@ -13,6 +13,7 @@ import { loadSignerConfig } from '../../../signer/src/config.js';
 import { Keyring } from '../../../signer/src/keys.js';
 import { createSignerClient } from '../../src/modules/custody/signer-client.js';
 import { authHeader, requestHandler } from '../../../signer/src/server.js';
+import { withSwitchLock } from './custody-sim.js';
 import { createSigner, Refusal } from '../../../signer/src/signer.js';
 import { LOCAL_USDT, TEST_MNEMONIC, buildTestApp, ensureLiveSimRegistry, ensureLocalRegistry, ensurePlatformCustody, merchantWithKey, ownerPool } from './helpers.js';
 
@@ -65,12 +66,13 @@ function makeSigner(env: Record<string, string> = {}, mnemonic = TEST_MNEMONIC) 
     SIGNER_SEED_KEK: Buffer.alloc(32, 7).toString('base64'),
     ...env,
   });
-  return createSigner({
+  const s = createSigner({
     pool: signerPool,
     keyring: Keyring.fromMnemonic(mnemonic),
     config,
     rpcFor: (row) => ({ ...rpc, chainId: async () => (chain.wrongChain ? 1 : row.evm_chain_id) }),
   });
+  return { sign: (i: Parameters<typeof s.sign>[0]) => withSwitchLock(signerPool, 'shared', () => s.sign(i)) };
 }
 
 let logIndex = 0;

@@ -23,6 +23,7 @@ import { registryDashboardRoutes, registryRoutes } from './modules/registry/regi
 import { checkoutRoutes } from './modules/checkout/checkout.routes.js';
 import { invoiceDashboardRoutes, invoiceRoutes } from './modules/invoices/invoices.routes.js';
 import { feeTopupDashboardRoutes, ledgerDashboardRoutes, ledgerRoutes } from './modules/ledger/ledger.routes.js';
+import { custodyAdminRoutes } from './modules/custody/custody.routes.js';
 import { HttpMetrics, metricsRoutes } from './modules/metrics/metrics.js';
 import { withdrawalAdminRoutes, withdrawalDashboardRoutes, withdrawalRoutes } from './modules/withdrawals/withdrawals.routes.js';
 import { webhookDashboardRoutes } from './modules/webhooks/webhooks.routes.js';
@@ -172,6 +173,7 @@ export function buildApp(logger: FastifyBaseLogger, deps?: Deps) {
       await admin.register(adminRoutes(deps));
       await admin.register(adminUserRoutes(deps), { prefix: '/admins' });
       await admin.register(withdrawalAdminRoutes(deps), { prefix: '/withdrawals' });
+      await admin.register(custodyAdminRoutes(deps), { prefix: '/custody' });
     },
     { prefix: '/admin/v1' },
   );
