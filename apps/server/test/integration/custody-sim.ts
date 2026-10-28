@@ -140,7 +140,8 @@ export async function withSwitchLock<T>(pool: pg.Pool, mode: 'shared' | 'exclusi
 
 /** A LOGIN user in gw_signer (the signer's DB role), and a pool connected as it. */
 export async function signerPool(owner: pg.Pool): Promise<pg.Pool> {
-  await owner.query(`do $$ begin if not exists (select 1 from pg_roles where rolname = 'signer_test') then create role signer_test login password 'signer' in role gw_signer; end if; end $$`);
+  await owner.query(`do $$ begin if not exists (select 1 from pg_roles where rolname = 'signer_test') then create role signer_test login password 'signer' in role gw_signer; end if;
+    exception when duplicate_object or unique_violation then null; end $$`); // test files create it in parallel
   const url = new URL(inject('pgOwnerUrl'));
   url.username = 'signer_test';
   url.password = 'signer';

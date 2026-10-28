@@ -1,3 +1,4 @@
+import { fromMinorUnits } from '@gw/core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type pg from 'pg';
 import { advanceWithdrawals } from '../../src/modules/custody/payouts.js';
@@ -325,5 +326,23 @@ describe('withdrawals: refusals and recovery', () => {
     clock.advance(31 * 60_000);
     const r = await advanceWithdrawals(deps, env);
     expect(r.error ?? 0).toBe(0);
+  });
+
+  // Keep last: the payout it signs counts toward the 24 h limit the tests above share.
+  it('two payouts signed at once cannot both fit the 24 h limit', async () => {
+    const m = await funded(100n * E18);
+    await payout(m, false);
+    const ids = [(await withdraw(m, false, '20')).json<{ id: string }>().id, (await withdraw(m, false, '20')).json<{ id: string }>().id];
+    chain.token.set(custody.hot.toLowerCase(), 1000n * E18);
+    chain.native.set(custody.hot.toLowerCase(), E18);
+    // Room for one of them: what this token already paid out in the last 24 h (only this file signs payouts) + 30.
+    const day = await owner.query<{ total: string }>(
+      "select coalesce(sum(amount), 0)::text as total from signer_signatures where token_id = 'evm-local:usdt' and intent_kind = 'withdrawal' and created_at > now() - interval '24 hours'",
+    );
+    const perDay = fromMinorUnits(BigInt(day.rows[0]?.total ?? '0') + 30n * E18, 18);
+    const tight = custodyEnv(pool, chain, { SIGNER_LIMITS: JSON.stringify({ 'evm-local:usdt': { per_tx: '50', per_day: perDay } }) });
+    const results = await Promise.all(ids.map((id) => tight.signer.sign('withdrawal', id)));
+    expect(results.filter((r) => r.ok)).toHaveLength(1);
+    expect(results.find((r) => !r.ok)).toMatchObject({ code: 'over_limit' });
   });
 });

@@ -13,7 +13,7 @@ import { loadSignerConfig } from '../../../signer/src/config.js';
 import { Keyring } from '../../../signer/src/keys.js';
 import { createSignerClient } from '../../src/modules/custody/signer-client.js';
 import { authHeader, requestHandler } from '../../../signer/src/server.js';
-import { withSwitchLock } from './custody-sim.js';
+import { signerPool as makeSignerPool, withSwitchLock } from './custody-sim.js';
 import { createSigner, Refusal } from '../../../signer/src/signer.js';
 import { LOCAL_USDT, TEST_MNEMONIC, buildTestApp, ensureLiveSimRegistry, ensureLocalRegistry, ensurePlatformCustody, merchantWithKey, ownerPool } from './helpers.js';
 
@@ -46,11 +46,7 @@ beforeAll(async () => {
   await app.ready();
   await ensureLocalRegistry(owner);
   custody = await ensurePlatformCustody(owner);
-  await owner.query(`do $$ begin if not exists (select 1 from pg_roles where rolname = 'signer_test') then create role signer_test login password 'signer' in role gw_signer; end if; end $$`);
-  const url = new URL(inject('pgOwnerUrl'));
-  url.username = 'signer_test';
-  url.password = 'signer';
-  signerPool = new pg.Pool({ connectionString: url.toString(), max: 3 });
+  signerPool = await makeSignerPool(owner);
 });
 afterAll(async () => {
   await signerPool.end();

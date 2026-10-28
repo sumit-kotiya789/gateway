@@ -77,8 +77,8 @@ export function createSigner(deps: SignerDeps) {
   const maxTopup = parseUnits(config.SIGNER_MAX_GAS_TOPUP, 18);
   const tokenGas = BigInt(config.SIGNER_TOKEN_TRANSFER_GAS);
 
-  async function one<T extends pg.QueryResultRow>(q: string, args: unknown[]): Promise<T | undefined> {
-    return (await pool.query<T>(q, args)).rows[0];
+  async function one<T extends pg.QueryResultRow>(q: string, args: unknown[], db: pg.Pool | pg.PoolClient = pool): Promise<T | undefined> {
+    return (await db.query<T>(q, args)).rows[0];
   }
 
   async function chainOf(chainId: string): Promise<{ chain: ChainRow; rpc: ChainRpc; gasPrice: bigint }> {
@@ -273,13 +273,13 @@ export function createSigner(deps: SignerDeps) {
    * Per-token daily and per-transaction limits for merchant withdrawals. Treasury transfers are not limited: they can
    * only reach an address on the signer's own cold allowlist.
    */
-  async function checkLimits(kind: IntentKind, plan: Plan): Promise<void> {
+  async function checkLimits(kind: IntentKind, plan: Plan, db: pg.PoolClient): Promise<void> {
     if (kind !== 'withdrawal') return;
     // Payouts are token transfers: tokenId is always set here.
     const tokenId = plan.tokenId ?? '';
     const limits = config.SIGNER_LIMITS[tokenId];
     if (!limits) throw new Refusal('no_limits', 'no signer limits configured for this token');
-    const t = await one<{ decimals: number }>('select decimals from tokens where id = $1', [tokenId]);
+    const t = await one<{ decimals: number }>('select decimals from tokens where id = $1', [tokenId], db);
     /* v8 ignore next -- the plan's token came from the database just before */
     if (!t) throw new Refusal('not_found', 'token not found');
     if (plan.amount > toMinorUnits(limits.per_tx, t.decimals)) throw new Refusal('over_limit', 'amount above the per-transaction limit');
@@ -287,6 +287,7 @@ export function createSigner(deps: SignerDeps) {
       `select coalesce(sum(amount), 0)::text as total from signer_signatures
        where token_id = $1 and intent_kind = 'withdrawal' and created_at > now() - interval '24 hours'`,
       [tokenId],
+      db,
     );
     /* v8 ignore next -- an aggregate without GROUP BY returns exactly one row */
     if (!day) throw new Error('daily total query returned no row');
@@ -320,13 +321,14 @@ export function createSigner(deps: SignerDeps) {
     const prior = await priorSignature(intent);
     if (prior) return prior;
     const plan = await handlers[intent.kind](intent.id);
-    await checkLimits(intent.kind, plan);
 
     const c = await pool.connect();
     try {
       await c.query('begin');
-      // One nonce sequence per sender: serialize signers of the same address.
+      // One nonce sequence per sender: serialize signers of the same address. Withdrawals of a token all leave the
+      // same hot wallet, so the 24-hour limit is checked under this lock too (two racing payouts cannot both fit).
       await c.query('select pg_advisory_xact_lock(hashtext($1))', [`${plan.chain.id}:${plan.from.toLowerCase()}`]);
+      await checkLimits(intent.kind, plan, c);
       const last = await c.query<{ n: string | null }>('select max(nonce)::text as n from signer_signatures where chain_id = $1 and lower(from_address) = lower($2)', [plan.chain.id, plan.from]);
       const fromDb = last.rows[0]?.n === null || last.rows[0]?.n === undefined ? 0n : BigInt(last.rows[0].n) + 1n;
       const pending = await plan.rpc.pendingNonce(plan.from);
