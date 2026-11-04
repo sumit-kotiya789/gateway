@@ -19,6 +19,6 @@
   },
   "devDependencies": {
     "@scure/bip39": "2.4.0",
-    "@types/node": "22"
+    "@types/node": "26"
   }
 }
