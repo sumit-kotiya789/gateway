@@ -22,6 +22,7 @@ const MONEY_CRITICAL = [
   'apps/signer/src/signer.ts',
   'apps/signer/src/keys.ts',
   'apps/signer/src/seed.ts',
+  'apps/signer/src/openbao.ts',
   'apps/server/src/modules/custody/treasury.ts',
   'apps/server/src/modules/custody/sweeper.ts',
   'apps/server/src/modules/custody/partials.ts',

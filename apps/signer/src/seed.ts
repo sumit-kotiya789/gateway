@@ -1,7 +1,8 @@
 // MONEY-CRITICAL
-// Where the platform seed comes from (D-010, D-088). Only this file and keys.ts ever see key material, and only
-// inside the signer process. `local-file` is for development and tests: the mnemonic sealed with AES-256-GCM under
-// SIGNER_SEED_KEK. Production refuses it (config.ts) until a KMS-backed source is implemented.
+// Where the platform seed comes from (D-010, D-088, D-093). Only the seed sources and keys.ts ever see key material,
+// and only inside the signer process. `local-file` is for development and tests: the mnemonic sealed with AES-256-GCM
+// under SIGNER_SEED_KEK; production refuses it (config.ts). `openbao` (openbao.ts): the mnemonic encrypted by an
+// OpenBao Transit key.
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
 import { generateMnemonic, mnemonicToSeedSync, validateMnemonic } from '@scure/bip39';
@@ -19,6 +20,12 @@ interface SealedSeed {
 export interface SeedSource {
   /** BIP39 seed bytes (64). Callers keep it in memory only. */
   load(): Promise<Uint8Array>;
+}
+
+/** BIP39 seed bytes of an opened mnemonic; anything else is refused. */
+export function seedFromMnemonic(mnemonic: string): Uint8Array {
+  if (!validateMnemonic(mnemonic, wordlist)) throw new Error('seed file does not hold a valid mnemonic');
+  return mnemonicToSeedSync(mnemonic);
 }
 
 const TAG_BYTES = 16;
@@ -54,8 +61,7 @@ export class LocalFileSeed implements SeedSource {
       // Never say more: a wrong KEK and a tampered file look the same on purpose.
       throw new Error('seed file cannot be opened (wrong SIGNER_SEED_KEK or damaged file)');
     }
-    if (!validateMnemonic(mnemonic, wordlist)) throw new Error('seed file does not hold a valid mnemonic');
-    return mnemonicToSeedSync(mnemonic);
+    return seedFromMnemonic(mnemonic);
   }
 
   /** Creates a new 24-word mnemonic and writes it sealed. Refuses to overwrite. Returns the mnemonic for backup. */

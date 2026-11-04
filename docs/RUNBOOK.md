@@ -144,12 +144,34 @@ Custodial mode is off unless `FEATURE_CUSTODIAL=true`. The worker then also need
 and refuses to start without them; the api and watcher never get the secret.
 1. Signer (its own host, its own DB login in `gw_signer`: `CREATE ROLE gateway_signer LOGIN PASSWORD '…' IN ROLE gw_signer;`).
    Dev/test: `pnpm -s --filter @gw/signer init-seed > custody.json` (add `--show-mnemonic` once, for the offline
-   backup: the words go to the terminal, never into the file). Production: refused until a KMS seed source exists (D-010).
+   backup: the words go to the terminal, never into the file). Production: `SIGNER_SEED_SOURCE=openbao`, see below.
 2. Add the cold multisig to `custody.json` as `"cold_wallets": [{"livemode": true, "address": "0x…"}]` (and in the
    signer's `SIGNER_COLD_ADDRESSES`), then `pnpm platform:register custody.json`: deposit xpubs, hot/gas/cold wallets.
    It refuses to replace different keys.
 3. Fund each gas wallet with a little native coin (BNB): it pays the network fee of every sweep.
 4. Set `SIGNER_LIMITS` per token before any payout (tokens without limits cannot be paid out).
+
+Production seed in OpenBao (D-093; HashiCorp Vault takes the same commands with `vault`). OpenBao runs on its own host,
+never the signer's; TLS on; an audit device on; unseal key shares held by different people.
+```sh
+bao audit enable file file_path=/var/log/openbao/audit.log
+bao secrets enable transit
+bao write -f transit/keys/gateway-signer type=aes256-gcm96        # not exportable, not deletable (the defaults)
+bao policy write gateway-signer - <<'POLICY'
+path "transit/encrypt/gateway-signer" { capabilities = ["update"] }
+path "transit/decrypt/gateway-signer" { capabilities = ["update"] }
+POLICY
+bao auth enable approle
+bao write auth/approle/role/gateway-signer token_policies=gateway-signer token_ttl=5m token_max_ttl=10m \
+  secret_id_bound_cidrs=SIGNER_IP/32 token_bound_cidrs=SIGNER_IP/32
+bao read -field=role_id auth/approle/role/gateway-signer/role-id          # SIGNER_OPENBAO_ROLE_ID
+bao write -f -field=secret_id auth/approle/role/gateway-signer/secret-id  # into SIGNER_OPENBAO_SECRET_ID_FILE (0400, signer user)
+```
+Then on the signer host, with `SIGNER_SEED_SOURCE=openbao` and the `SIGNER_OPENBAO_*` settings:
+`node cli/init-seed.cjs --show-mnemonic > custody.json` (key ceremony: two people, the words written down offline,
+never stored digitally). Afterwards remove `encrypt` from the policy: the signer only decrypts, once per start, and
+revokes its token at once. If OpenBao is lost, the offline words restore the same keys. Incident: destroy the signer's
+secret id or disable the role, and no copy of the seed file can be opened anywhere.
 
 Local stack (`docker compose`, profile `custodial`; the signer has no host port and plain HTTP, dev only):
 1. In `.env`: `FEATURE_CUSTODIAL=true`, `SIGNER_DB_PASSWORD`, `SIGNER_HMAC_SECRET` (`openssl rand -base64 32`) and
@@ -208,6 +230,6 @@ fail) and continue on resume.
 ## Key rotation
 - Webhook secrets: the merchant rotates in the dashboard (TOTP). The old secret keeps signing for 0-72 h. A leaked secret:
   rotate with "expire it now". Secrets are envelope-encrypted with `DATA_KEK`; KEK rotation re-wraps data keys (M11).
-- Signer keys: a new seed is a key ceremony (D-010): new deposit, hot and gas keys registered with `platform:register` after the old ones are retired; open sweeps finish on the old keys first. Rotate `SIGNER_HMAC_SECRET` on both sides together.
+- Signer keys: a new seed is a key ceremony (D-010, D-093): new deposit, hot and gas keys registered with `platform:register` after the old ones are retired; open sweeps finish on the old keys first. Rotate `SIGNER_HMAC_SECRET` on both sides together.
 ## Mass refund (M7)
 ## DB restore (M11)

@@ -88,7 +88,7 @@ describe('signer config', () => {
     const c = loadSignerConfig(base);
     expect(c).toMatchObject({ SIGNER_PORT: 3100, SIGNER_PAUSED: false, SIGNER_LIMITS: {} });
     const prod = () => loadSignerConfig({ ...base, NODE_ENV: 'production' });
-    expect(prod).toThrow(/KMS seed source is required/);
+    expect(prod).toThrow(/local-file is refused in production: use openbao/);
     expect(prod).toThrow(/mTLS/);
   });
   it('limits and cold addresses are validated; errors never echo values', () => {

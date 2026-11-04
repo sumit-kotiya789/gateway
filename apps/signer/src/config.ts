@@ -1,6 +1,7 @@
 // Signer configuration (M7b, D-088). Lives in the signer's own environment, not in the app database: limits and the
 // cold-wallet allowlist cannot be changed by anyone who only controls the app or its database.
 import { z } from 'zod';
+import type { OpenBaoSettings } from './openbao.js';
 
 const secret = (min: number) => z.string().min(min, `must be at least ${String(min)} characters`);
 const decimal = z.string().regex(/^\d+(\.\d+)?$/, 'a plain decimal');
@@ -17,13 +18,22 @@ const schema = z
     SIGNER_DATABASE_URL: z.url(),
     // Shared with the worker: every request carries an HMAC of its body.
     SIGNER_HMAC_SECRET: secret(32),
-    // Seed source. `local-file`: dev/test only, an AES-256-GCM sealed mnemonic. Production needs a KMS (D-010).
-    SIGNER_SEED_SOURCE: z.enum(['local-file']).default('local-file'),
+    // Seed source. `local-file`: dev/test only, an AES-256-GCM sealed mnemonic under SIGNER_SEED_KEK. `openbao`: the
+    // mnemonic encrypted by an OpenBao (or Vault) Transit key, opened once at boot through AppRole (D-093).
+    SIGNER_SEED_SOURCE: z.enum(['local-file', 'openbao']).default('local-file'),
     SIGNER_SEED_FILE: z.string().min(1).optional(),
     SIGNER_SEED_KEK: z
       .base64()
       .refine((s) => Buffer.from(s, 'base64').length === 32, 'must be 32 bytes, base64')
       .optional(),
+    SIGNER_OPENBAO_ADDR: z.url({ protocol: /^https?$/ }).optional(),
+    SIGNER_OPENBAO_TRANSIT_MOUNT: z.string().regex(/^[A-Za-z0-9_-]+(\/[A-Za-z0-9_-]+)*$/, 'a mount path like transit').default('transit'),
+    SIGNER_OPENBAO_TRANSIT_KEY: z.string().regex(/^[A-Za-z0-9_-]+$/, 'a key name like gateway-signer').default('gateway-signer'),
+    SIGNER_OPENBAO_ROLE_ID: z.string().min(1).optional(),
+    // The AppRole secret id is read from this file (never from the environment).
+    SIGNER_OPENBAO_SECRET_ID_FILE: z.string().min(1).optional(),
+    // CA that issued OpenBao's TLS certificate (default: system roots).
+    SIGNER_OPENBAO_CA_FILE: z.string().min(1).optional(),
     // mTLS (required in production): server cert/key and the CA that issued the worker's client certificate.
     SIGNER_TLS_CERT_FILE: z.string().optional(),
     SIGNER_TLS_KEY_FILE: z.string().optional(),
@@ -58,18 +68,34 @@ const schema = z
     SIGNER_PAUSED: z.stringbool().default(false),
   })
   .superRefine((c, ctx) => {
-    // local-file is the only seed source so far: dev and test only.
-    if (c.NODE_ENV === 'production') {
-      ctx.addIssue({ code: 'custom', path: ['SIGNER_SEED_SOURCE'], message: 'local-file is refused in production: a KMS seed source is required (D-010)' });
+    const need = (key: keyof typeof c, present: boolean) => {
+      if (!present) ctx.addIssue({ code: 'custom', path: [key], message: `required for ${c.SIGNER_SEED_SOURCE}` });
+    };
+    need('SIGNER_SEED_FILE', Boolean(c.SIGNER_SEED_FILE));
+    if (c.SIGNER_SEED_SOURCE === 'local-file') {
+      if (c.NODE_ENV === 'production') {
+        ctx.addIssue({ code: 'custom', path: ['SIGNER_SEED_SOURCE'], message: 'local-file is refused in production: use openbao (D-093)' });
+      }
+      need('SIGNER_SEED_KEK', Boolean(c.SIGNER_SEED_KEK));
+    } else {
+      need('SIGNER_OPENBAO_ADDR', Boolean(c.SIGNER_OPENBAO_ADDR));
+      need('SIGNER_OPENBAO_ROLE_ID', Boolean(c.SIGNER_OPENBAO_ROLE_ID));
+      need('SIGNER_OPENBAO_SECRET_ID_FILE', Boolean(c.SIGNER_OPENBAO_SECRET_ID_FILE));
+      if (c.NODE_ENV === 'production' && c.SIGNER_OPENBAO_ADDR && !c.SIGNER_OPENBAO_ADDR.startsWith('https://')) {
+        ctx.addIssue({ code: 'custom', path: ['SIGNER_OPENBAO_ADDR'], message: 'must be https in production' });
+      }
     }
-    if (!c.SIGNER_SEED_FILE) ctx.addIssue({ code: 'custom', path: ['SIGNER_SEED_FILE'], message: 'required for local-file' });
-    if (!c.SIGNER_SEED_KEK) ctx.addIssue({ code: 'custom', path: ['SIGNER_SEED_KEK'], message: 'required for local-file' });
     if (c.NODE_ENV === 'production' && !(c.SIGNER_TLS_CERT_FILE && c.SIGNER_TLS_KEY_FILE && c.SIGNER_TLS_CLIENT_CA_FILE)) {
       ctx.addIssue({ code: 'custom', path: ['SIGNER_TLS_CERT_FILE'], message: 'mTLS (cert, key, client CA) is required in production' });
     }
   });
 
-export type SignerConfig = z.infer<typeof schema>;
+/** The seed source and its settings, checked: what seedSource() and createSeed() take. */
+export type SeedSettings =
+  | { source: 'local-file'; file: string; kek: Buffer }
+  | { source: 'openbao'; file: string; openbao: OpenBaoSettings };
+
+export type SignerConfig = z.infer<typeof schema> & { SEED: SeedSettings };
 
 /** Validates env at boot. Errors name keys only, never values. */
 export function loadSignerConfig(env: Record<string, string | undefined> = process.env): SignerConfig {
@@ -78,5 +104,23 @@ export function loadSignerConfig(env: Record<string, string | undefined> = proce
   if (!res.success) {
     throw new Error(`invalid signer configuration: ${res.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ')}`);
   }
-  return res.data;
+  const c = res.data;
+  // The refinements above guarantee every value used here; the fallbacks only satisfy the types.
+  const file = c.SIGNER_SEED_FILE ?? '';
+  const SEED: SeedSettings =
+    c.SIGNER_SEED_SOURCE === 'openbao'
+      ? {
+          source: 'openbao',
+          file,
+          openbao: {
+            addr: c.SIGNER_OPENBAO_ADDR ?? '',
+            mount: c.SIGNER_OPENBAO_TRANSIT_MOUNT,
+            key: c.SIGNER_OPENBAO_TRANSIT_KEY,
+            roleId: c.SIGNER_OPENBAO_ROLE_ID ?? '',
+            secretIdFile: c.SIGNER_OPENBAO_SECRET_ID_FILE ?? '',
+            ...(c.SIGNER_OPENBAO_CA_FILE ? { caFile: c.SIGNER_OPENBAO_CA_FILE } : {}),
+          },
+        }
+      : { source: 'local-file', file, kek: Buffer.from(c.SIGNER_SEED_KEK ?? '', 'base64') };
+  return { ...c, SEED };
 }

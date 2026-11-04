@@ -34,7 +34,7 @@ If the RPC does not support `finalized`, fall back to confirmation count only.
 At zero prepaid fee balance: block new invoices. Low-balance alerts. Optional small fixed grace amount per merchant.
 
 ## D-010 Key custody (2026-10-20, owner)
-KMS provider undecided. Dev KEK behind a `KeyEncryptionKey` interface. Decision required before M7.
+KMS provider undecided. Dev KEK behind a `KeyEncryptionKey` interface. Decision required before M7. Signer seed: D-093.
 
 ## D-011 Fees default 1% + 0, rounded down (2026-10-20)
 `fee = floor(amount * bps / 10000) + fixed`. Rounding favors the merchant. Platform fee wallet is separate and multisig-ready by config.
@@ -475,7 +475,7 @@ a merchant's RLS context.
 ## D-088 Signer service (M7b) (2026-10-27)
 `apps/signer` is its own process and deployment; it is the only code that holds keys. Extends D-019.
 - **Seed.** `SeedSource` interface. `local-file` (24-word mnemonic sealed with AES-256-GCM under `SIGNER_SEED_KEK`) is
-  for development and tests; the signer refuses it in production until a KMS-backed source exists (D-010 still open).
+  for development and tests; the signer refuses it in production (production source: D-093).
   `init-seed` creates the file and prints only public values (deposit xpubs, hot and gas addresses); the mnemonic is
   printed only with `--show-mnemonic`, for an offline backup.
 - **Paths.** Deposits `m/44'/60'/0'` (live) and `1'` (test) via `wallet_accounts`; hot `10'/0/0` and `11'/0/0`; gas
@@ -548,3 +548,15 @@ ledger. Unsolicited extra tokens on an address are not swept (they are not booke
 - `partially_paid` is never `paid`: merchants must not fulfil it as a paid order (INTEGRATION). Non-custodial invoices
   never take it (DB guard): those merchants already hold what arrived, and underpaid stays a manual decision for them.
 - Money after an invoice closed (`settled`, `partially_paid`) stays pending and shows in reconciliation for an operator.
+
+## D-093 Signer seed in OpenBao Transit (M7) (2026-11-04, owner asked for a free option)
+- Production seed source `openbao`: the mnemonic is encrypted by an OpenBao Transit key (free, open source, MPL-2.0;
+  the HashiCorp Vault API, so Vault works too). The key never leaves OpenBao; the signer's seed file holds only the
+  ciphertext, useless without OpenBao. Fits D-012 (plain VMs): OpenBao runs on its own VM.
+- The signer logs in with AppRole (role id in its env, secret id in a file; both bound to the signer's IP), decrypts
+  once per start and revokes its token. Every decrypt is in OpenBao's audit log; destroying the secret id or disabling
+  the role stops every copy of the file from being opened. No client library: plain HTTPS (`apps/signer/src/http.ts`).
+- Not protected against: root on the running signer host (the seed is in its memory, as with any software key). The
+  offline mnemonic backup stays the recovery path if OpenBao is lost.
+- A cloud KMS (AWS KMS about $1 per key per month, Google Cloud KMS a few cents) would remove running OpenBao; it fits
+  the same `SeedSource` interface if the deployment moves to a cloud.

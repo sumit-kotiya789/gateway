@@ -6,9 +6,9 @@ import pg from 'pg';
 import { rpcFor } from './chain.js';
 import { loadSignerConfig } from './config.js';
 import { Keyring } from './keys.js';
-import { LocalFileSeed } from './seed.js';
 import { requestHandler } from './server.js';
 import { createSigner } from './signer.js';
+import { seedSource } from './sources.js';
 
 const log = {
   info: (o: object, msg: string) => process.stdout.write(`${JSON.stringify({ level: 'info', msg, ...o })}\n`),
@@ -18,9 +18,7 @@ const log = {
 
 async function main(): Promise<void> {
   const config = loadSignerConfig();
-  /* v8 ignore next -- config refuses local-file without both values */
-  if (!config.SIGNER_SEED_FILE || !config.SIGNER_SEED_KEK) throw new Error('seed source not configured');
-  const keyring = new Keyring(await new LocalFileSeed(config.SIGNER_SEED_FILE, Buffer.from(config.SIGNER_SEED_KEK, 'base64')).load());
+  const keyring = new Keyring(await seedSource(config.SEED).load());
   const pool = new pg.Pool({ connectionString: config.SIGNER_DATABASE_URL, max: 5 });
   const signer = createSigner({ pool, keyring, config, rpcFor: (c) => rpcFor(c.rpc_urls, process.env) });
   const handler = requestHandler({ secret: config.SIGNER_HMAC_SECRET, sign: signer.sign, log });
