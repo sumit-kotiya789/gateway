@@ -27,6 +27,7 @@ describe('invoice state machine', () => {
     ['confirming', 'pending'],
     ['underpaid', 'detected'],
     ['underpaid', 'paid'],
+    ['underpaid', 'partially_paid'],
     ['paid', 'settled'],
     ['overpaid', 'settled'],
     ['expired', 'late_payment'],
@@ -34,7 +35,7 @@ describe('invoice state machine', () => {
     ['late_payment', 'paid'],
   ];
 
-  it('allows exactly the documented transitions (all 144 pairs checked)', () => {
+  it('allows exactly the documented transitions (all 169 pairs checked)', () => {
     const allowed = new Set(legal.map(([a, b]) => `${a}>${b}`));
     for (const from of INVOICE_STATUSES) {
       for (const to of INVOICE_STATUSES) {
@@ -49,6 +50,8 @@ describe('invoice state machine', () => {
     ['expired', 'paid'], // late money is never auto-fulfilled
     ['cancelled', 'pending'],
     ['settled', 'paid'],
+    ['partially_paid', 'paid'], // a closed partial payment is final
+    ['partially_paid', 'late_payment'],
     ['paid', 'pending'], // a paid invoice never reopens
     ['pending', 'pending'],
   ] as [InvoiceStatus, InvoiceStatus][])('rejects %s -> %s', (from, to) => {
@@ -60,6 +63,7 @@ describe('invoice state machine', () => {
   it('terminal states have no exits', () => {
     expect(INVOICE_TRANSITIONS.settled).toEqual([]);
     expect(INVOICE_TRANSITIONS.failed).toEqual([]);
+    expect(INVOICE_TRANSITIONS.partially_paid).toEqual([]);
   });
 });
 
@@ -137,6 +141,7 @@ describe('planInvoice (watcher)', () => {
     ['paid', { confirmed: 300n }, []], // extra funds after paid: recorded only
     ['late_payment', { confirmed: 300n }, []],
     ['settled', { outstanding: 2 }, []],
+    ['partially_paid', { confirmed: 100n }, []], // closed: the rest arriving later is recorded only
   ])('case %# from %s', (status, over, path) => {
     expect(planInvoice(status, E, 50, t(over))).toEqual(path);
   });

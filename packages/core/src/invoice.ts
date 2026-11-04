@@ -15,6 +15,7 @@ export const INVOICE_STATUSES = [
   'cancelled',
   'failed',
   'late_payment',
+  'partially_paid',
 ] as const;
 export type InvoiceStatus = (typeof INVOICE_STATUSES)[number];
 
@@ -24,8 +25,9 @@ export const INVOICE_TRANSITIONS: Readonly<Record<InvoiceStatus, readonly Invoic
   // Back to pending = the only transfer was reorged away before confirmation.
   detected: ['confirming', 'pending'],
   confirming: ['paid', 'underpaid', 'overpaid', 'pending'],
-  // Top-up seen (detected), or merchant accepts the shortfall (paid).
-  underpaid: ['detected', 'paid'],
+  // Top-up seen (detected), merchant accepts the shortfall (paid), or custodial only: the deadline passed and what
+  // arrived is credited to the merchant (partially_paid, D-092).
+  underpaid: ['detected', 'paid', 'partially_paid'],
   paid: ['settled'],
   overpaid: ['settled'],
   // Funds arriving after expiry/cancel are recorded, never auto-fulfilled.
@@ -34,6 +36,7 @@ export const INVOICE_TRANSITIONS: Readonly<Record<InvoiceStatus, readonly Invoic
   // Manual resolution only (admin / merchant decision).
   late_payment: ['paid'],
   settled: [],
+  partially_paid: [],
   failed: [],
 };
 
@@ -93,7 +96,8 @@ export interface PaymentTotals {
 
 /**
  * Edges the watcher may take on its own. Manual edges are excluded on purpose: underpaid -> paid (merchant accepts the
- * shortfall) and late_payment -> paid (manual resolution) must never happen automatically.
+ * shortfall) and late_payment -> paid (manual resolution) must never happen automatically. underpaid -> partially_paid
+ * is the custody worker's, after the deadline (closeUnderpaidInvoices), never the watcher's.
  */
 export const WATCHER_TRANSITIONS: Readonly<Partial<Record<InvoiceStatus, readonly InvoiceStatus[]>>> = {
   pending: ['detected', 'expired'],
@@ -107,7 +111,7 @@ export const WATCHER_TRANSITIONS: Readonly<Partial<Record<InvoiceStatus, readonl
 function watcherTarget(status: InvoiceStatus, expected: bigint, toleranceBps: number, t: PaymentTotals): InvoiceStatus {
   // Funds after expiry/cancel are recorded once confirmed, never auto-fulfilled.
   if (status === 'expired' || status === 'cancelled') return t.confirmed > 0n ? 'late_payment' : status;
-  if (!OPEN_STATUSES.includes(status)) return status; // paid, overpaid, settled, late_payment, failed: watcher only records
+  if (!OPEN_STATUSES.includes(status)) return status; // paid, overpaid, settled, late_payment, partially_paid, failed: watcher only records
   if (t.outstanding > 0) return t.outstandingMined || status === 'confirming' ? 'confirming' : 'detected';
   if (t.confirmed === 0n) return 'pending'; // everything seen was reorged away
   return classifyPayment(expected, t.confirmed, toleranceBps);

@@ -524,6 +524,7 @@ export const invoiceStatus = pgEnum('invoice_status', [
   'cancelled',
   'failed',
   'late_payment',
+  'partially_paid',
 ]);
 
 export const paymentLinks = pgTable(

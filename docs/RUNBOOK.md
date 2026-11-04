@@ -78,7 +78,8 @@ the user's sessions and recovery codes; the user signs in with the password and 
   proxies `/admin/v1/*`. Its own origin, never the dashboard's (config refuses a shared origin); list it in `ADMIN_ORIGINS`.
   Restrict it at the edge (VPN / IP allowlist) and set `ADMIN_IP_ALLOWLIST` (non-listed IPs get 404).
 - Underpaid / late-payment invoices: the Invoices page lists them; "Mark as paid" (operator + TOTP) books the fee and
-  settles. Use it only when the merchant confirms they accept the funds; it cannot be undone.
+  settles. Use it only when the merchant confirms they accept the funds; it cannot be undone. Custodial underpaid
+  invoices need no action: after their deadline the worker closes them as `partially_paid` and credits what arrived.
 - Suspend a merchant: immediate (API keys stop working, no new invoices). Reactivation needs TOTP.
 - Dev: `pnpm --filter @gw/admin dev` (http://localhost:5174/admin/, proxies to the api on :3000).
 
@@ -124,6 +125,8 @@ kept: `select started_at, ok, issues from reconciliation_runs order by started_a
 - `payment_without_journal` / `invoice_received` / `received_balance`: a payment and its booking disagree. Never edit
   ledger rows (they are append-only by design); corrections are new journals, written by code and reviewed by two people.
 - `unsettled`: a paid non-custodial invoice was not settled; re-run settlement for it after finding why.
+- `custodial_settlement` on a `settled` or `partially_paid` invoice whose `amount_received` grew: the customer sent money
+  after it closed. The funds are in custody and in `merchant_pending`; agree with the merchant whether to refund.
 
 ## Webhook backlog
 - Worker queue `webhooks` delivers every 5 s (up to 10 batches of 50 per run). Backlog:

@@ -22,7 +22,7 @@ import { and, eq, inArray, sql } from 'drizzle-orm';
 import type { Tx } from '../../common/db.js';
 import { feeTopups, ledgerAccounts, ledgerEntries, ledgerJournals, invoices, payments, sweeps } from '../../db/schema.js';
 import type { Deps } from '../../deps.js';
-import { transitionInvoice } from '../invoices/invoices.js';
+import { transitionInvoice, type InvoiceRow } from '../invoices/invoices.js';
 import { noticeFeeBalance } from './fee-balance.js';
 
 type AccountKind = (typeof ledgerAccounts.$inferSelect)['kind'];
@@ -108,6 +108,29 @@ export async function postPayment(tx: Tx, p: PaymentRow): Promise<void> {
 export async function settleCustodialInvoice(deps: Deps, tx: Tx, invoiceId: string): Promise<boolean> {
   const [inv] = await tx.select().from(invoices).where(eq(invoices.id, invoiceId)).for('update');
   if (!inv || inv.custodyMode !== 'custodial' || (inv.status !== 'paid' && inv.status !== 'overpaid')) return false;
+  await creditReceived(tx, inv);
+  await transitionInvoice(deps, tx, inv.id, 'settled', 'funds swept; platform fee deducted');
+  return true;
+}
+
+/**
+ * Custodial partial payment (D-092): an underpaid invoice whose deadline passed closes as partially_paid, and what it
+ * received moves from pending to available minus the fee on that amount (fixed + percentage, never more than what
+ * arrived). The caller checked the deadline and that every confirmed payment was swept. No-op for any other invoice.
+ */
+export async function closePartialPayment(deps: Deps, tx: Tx, invoiceId: string): Promise<boolean> {
+  const [inv] = await tx.select().from(invoices).where(eq(invoices.id, invoiceId)).for('update');
+  if (!inv || inv.custodyMode !== 'custodial' || inv.status !== 'underpaid') return false;
+  // Status first: the journal guard credits only paid, overpaid or partially_paid custodial invoices.
+  await creditReceived(tx, await transitionInvoice(deps, tx, inv.id, 'partially_paid', 'deadline passed: what arrived is credited'));
+  return true;
+}
+
+/**
+ * Pending -> available for everything the invoice received, minus its fee; records the fee. Callers hold the invoice
+ * row lock and checked a status that has no settlement journal yet.
+ */
+async function creditReceived(tx: Tx, inv: InvoiceRow): Promise<void> {
   const received = inv.amountReceived;
   const fee = computeFee(feeBase(inv.amountExpected, received), inv.feeBps, inv.feeFixed);
   const head = { kind: 'settlement' as const, merchantId: inv.merchantId, livemode: inv.livemode, tokenId: inv.tokenId, invoiceId: inv.id };
@@ -116,11 +139,9 @@ export async function settleCustodialInvoice(deps: Deps, tx: Tx, invoiceId: stri
     ['merchant_available', 'merchant', -(received - fee)],
     ['platform_fee_revenue', 'platform', -fee],
   ]);
-  /* v8 ignore next -- invariant: the status check above means no settlement journal exists yet */
-  if (!posted) return false;
+  /* v8 ignore next -- invariant: see above; the one-settlement-per-invoice index would refuse a second one */
+  if (!posted) throw new Error('settlement already posted');
   await tx.update(invoices).set({ feeAmount: fee }).where(eq(invoices.id, inv.id));
-  await transitionInvoice(deps, tx, inv.id, 'settled', 'funds swept; platform fee deducted');
-  return true;
 }
 
 /**

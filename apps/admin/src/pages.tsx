@@ -418,7 +418,7 @@ export function MerchantDetail(props: { id: string; manage: boolean }) {
 
 // ---------------------------------------------------------------- invoices
 
-const STATUSES = ['underpaid', 'late_payment', 'paid', 'overpaid', 'settled', 'pending', 'detected', 'confirming', 'expired', 'cancelled', 'failed'];
+const STATUSES = ['underpaid', 'late_payment', 'paid', 'overpaid', 'settled', 'pending', 'detected', 'confirming', 'expired', 'cancelled', 'failed', 'partially_paid'];
 
 export function Invoices(props: { merchantId?: string | undefined }) {
   const [status, setStatus] = useState('');

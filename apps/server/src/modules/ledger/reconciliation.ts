@@ -28,9 +28,12 @@ const CHECKS = {
       where a.kind = 'merchant_pending' and j.kind = 'payment' group by 1, 2, 3) y
     using (merchant_id, livemode, token_id)
     where coalesce(x.paid, 0) <> coalesce(y.booked, 0)`,
-  /** Settled custodial invoices: one settlement moving exactly what was received out of pending, net of the invoice's fee. */
+  /**
+   * Settled or partially paid custodial invoices: one settlement moving exactly what was received out of pending, net of
+   * the invoice's fee.
+   */
   custodial_settlement: sql`select i.id from invoices i
-    where i.status = 'settled' and i.custody_mode = ${C}
+    where i.status in ('settled', 'partially_paid') and i.custody_mode = ${C}
       and (i.fee_amount is null
         or i.amount_received <> coalesce((select sum(e.amount) from ledger_journals j join ledger_entries e on e.journal_id = j.id
           join ledger_accounts a on a.id = e.account_id and a.kind = 'merchant_pending' where j.kind = 'settlement' and j.invoice_id = i.id), 0)

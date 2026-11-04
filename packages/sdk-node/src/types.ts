@@ -1,7 +1,8 @@
 // Response shapes of the merchant API (see GET /v1/openapi.json). Amounts are decimal strings in token units.
 
 export type InvoiceStatus =
-  | 'created' | 'pending' | 'detected' | 'confirming' | 'paid' | 'underpaid' | 'overpaid' | 'settled' | 'expired' | 'cancelled' | 'failed' | 'late_payment';
+  | 'created' | 'pending' | 'detected' | 'confirming' | 'paid' | 'underpaid' | 'overpaid' | 'settled' | 'expired' | 'cancelled' | 'failed' | 'late_payment'
+  | 'partially_paid';
 
 export interface Page<T> {
   data: T[];

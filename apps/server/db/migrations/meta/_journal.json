@@ -274,6 +274,20 @@
       "when": 1793096317481,
       "tag": "0038_treasury_security",
       "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1793782462936,
+      "tag": "0039_partial_payments",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1793782482472,
+      "tag": "0040_partial_payments_security",
+      "breakpoints": true
     }
   ]
 }

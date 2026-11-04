@@ -14,7 +14,7 @@ import { WIDGET_JS } from './widget.js';
 
 export const CHECKOUT_RATE_LIMIT = { max: 60, timeWindow: '1 minute' } as const;
 const DONE = new Set(['paid', 'overpaid', 'settled']);
-const DEAD = new Set(['expired', 'cancelled', 'failed', 'late_payment']);
+const DEAD = new Set(['expired', 'cancelled', 'failed', 'late_payment', 'partially_paid']);
 
 async function load(deps: Deps, id: string) {
   const [r] = await withSystem(deps.db, (tx) =>

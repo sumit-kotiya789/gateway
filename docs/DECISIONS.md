@@ -536,3 +536,15 @@ ledger. Unsolicited extra tokens on an address are not swept (they are not booke
 - **Cap.** No hard cap in code: `gw_custody_balance` and the `GatewayHotWalletAboveCap` alert carry the treasury
   policy, and moving the excess is a two-person decision.
 
+
+## D-092 Custodial underpaid and late payments (M7) (2026-11-04, owner)
+- **Underpaid = partial credit.** An underpaid custodial invoice stays open until its deadline, so the customer can send
+  the rest. After the deadline it closes as `partially_paid` (new final status, event `invoice.partially_paid`) and
+  the merchant is credited what arrived, minus the fee on that amount: floor(R × bps / 10000) + fixed, never above R.
+  The custody worker does it only once the chain's scanner has passed the deadline (a top-up mined in time is recorded
+  first) and every confirmed payment was swept (the credit is backed by funds in the hot wallet).
+- **Late = admin approval only.** Payments after expiry or cancellation stay `late_payment` and in `merchant_pending`
+  until an admin accepts them (existing resolve, TOTP); they then settle like any paid invoice.
+- `partially_paid` is never `paid`: merchants must not fulfil it as a paid order (INTEGRATION). Non-custodial invoices
+  never take it (DB guard): those merchants already hold what arrived, and underpaid stays a manual decision for them.
+- Money after an invoice closed (`settled`, `partially_paid`) stays pending and shows in reconciliation for an operator.

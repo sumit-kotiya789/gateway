@@ -103,7 +103,9 @@ Fields: `amount` decimal string (≤ token decimals, ≥ token minimum); `expire
 `metadata` ≤ 50 string keys/values, ≤ 4 KB; URLs http(s), https only in production.
 
 Statuses: `pending → detected → confirming → paid | underpaid | overpaid → settled`; also `expired`, `cancelled`,
-`failed`, `late_payment`. Payments after expiry become `late_payment` and are never auto-fulfilled.
+`failed`, `late_payment`, `partially_paid`. Payments after expiry become `late_payment` and are never auto-fulfilled.
+Custodial only: an invoice still `underpaid` at its deadline closes as `partially_paid`, and what arrived is credited to
+the merchant's balance minus the fee on that amount (D-092).
 | POST | `/v1/dashboard/auth/signup` | none | – | M1 |
 | POST | `/v1/dashboard/auth/login` | none | – (returns `mfa_required` + `mfa_token` when 2FA on) | M1 |
 | POST | `/v1/dashboard/auth/login/2fa` | `mfa_token` | `code` or `recovery_code` | M1 |

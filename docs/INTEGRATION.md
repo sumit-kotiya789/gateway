@@ -29,6 +29,10 @@ For merchants and developers integrating the gateway. Everything below runs in *
 Treat an order as paid only when status is `paid` or `overpaid` (later `settled`). Never on `detected`/`confirming`.
 Non-custodial invoices move to `settled` right after `paid`/`overpaid`, once the platform fee is booked.
 An `underpaid` or `late_payment` invoice can later become `paid` by a manual decision (event reason `manual: ...`).
+Custodial accounts: an invoice still `underpaid` at its deadline closes as `partially_paid` (`invoice.partially_paid`).
+What arrived is credited to your balance minus the fee on that amount. The order was **not** paid in full: do not
+fulfil it as paid; refund the customer or ask for the rest on a new invoice. Late payments (after the deadline, status
+`late_payment`) are credited only once an admin accepts them.
 `GET /v1/events` lists every status change (`invoice.paid`, `invoice.settled`, ...); `GET /v1/balances` sums what you received.
 `GET /v1/invoices/:id` lists the on-chain `payments` (tx hash, amount, block, status). A payment mined before the deadline
 counts even if it is detected later; one mined after it turns the invoice into `late_payment` (never auto-fulfilled).
@@ -51,7 +55,8 @@ Each invoice status change is POSTed as JSON to every endpoint of that mode (tes
 ```
 
 Types: `invoice.<status>` for every status after creation (`detected`, `confirming`, `paid`, `underpaid`, `overpaid`,
-`settled`, `expired`, `cancelled`, `late_payment`, and `pending` when a detected payment was reorged away).
+`settled`, `expired`, `cancelled`, `late_payment`, `partially_paid`, and `pending` when a detected payment was reorged
+away).
 The same objects are listed by `GET /v1/events`.
 
 - **Verify** the `gateway-signature` header (`t=<unix>,v1=<hex>[,v1=<hex>]`): HMAC-SHA256 of `"<t>.<raw body>"` keyed
