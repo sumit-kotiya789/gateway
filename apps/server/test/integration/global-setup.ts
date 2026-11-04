@@ -30,7 +30,7 @@ async function services() {
   }
   [pgc, rc, ac] = await Promise.all([
     new PostgreSqlContainer('postgres:17-alpine').start(),
-    new RedisContainer('redis:7-alpine').start(),
+    new RedisContainer('redis:8-alpine').start(),
     // Local EVM chain (chain id 31337), 1 block per transaction, standard test mnemonic.
     new GenericContainer('ghcr.io/foundry-rs/foundry:stable')
       .withEntrypoint(['anvil'])
