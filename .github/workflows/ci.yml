@@ -12,7 +12,7 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v5
         with:
           node-version: 22
@@ -30,7 +30,7 @@ jobs:
   gitleaks:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - run: docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:v8.28.0 git /repo --redact --verbose --config /repo/.gitleaks.toml
@@ -38,7 +38,7 @@ jobs:
   semgrep:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - run: >
           docker run --rm -v "$PWD:/src" semgrep/semgrep:latest
           semgrep scan --config p/typescript --config p/nodejs --config p/secrets --error --metrics=off
@@ -46,7 +46,7 @@ jobs:
   trivy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - run: docker build -f apps/server/Dockerfile -t gateway-server:ci .
       - run: docker build -f apps/dashboard/Dockerfile -t gateway-dashboard:ci .
       - run: docker build -f apps/admin/Dockerfile -t gateway-admin:ci .
