@@ -20,6 +20,7 @@
     "test:integration": "vitest run --project integration",
     "contracts:build": "docker run --rm -v \"$PWD/contracts:/c\" -w /c ghcr.io/foundry-rs/foundry:stable \"forge build\" && node scripts/export-contract-artifacts.mjs",
     "db:seed": "pnpm --filter @gw/server db:seed",
+    "dev:usdt": "pnpm --filter @gw/server dev:usdt",
     "chains:verify": "pnpm --filter @gw/server chains:verify",
     "platform:register": "pnpm --filter @gw/server platform:register"
   },
