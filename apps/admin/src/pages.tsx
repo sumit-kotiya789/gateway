@@ -486,6 +486,7 @@ export function InvoiceDetail(props: { id: string; manage: boolean }) {
         <dt>Platform fee</dt><dd className="num">{i.fee_amount ?? '—'}</dd>
         <dt>Deposit address</dt><dd><CopyField value={i.deposit_address} /></dd>
         <dt>Order id</dt><dd>{i.external_order_id ?? '—'}</dd>
+        {i.sub_merchant_id && <><dt>Seller</dt><dd><code>{i.sub_merchant_id}</code></dd></>}
         <dt>Expires</dt><dd>{fmtDate(i.expires_at)}</dd>
       </dl>
       {props.manage && i.status === 'held' && (

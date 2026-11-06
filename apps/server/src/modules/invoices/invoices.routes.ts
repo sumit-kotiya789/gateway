@@ -69,6 +69,7 @@ const ListQuery = z.strictObject({
   starting_after: z.uuid().optional(),
   status: z.enum(INVOICE_STATUSES).optional(),
   external_order_id: z.string().min(1).max(200).optional(),
+  sub_merchant: z.uuid().optional(),
 });
 
 /** One page of a merchant's invoices for a mode, newest first. Shared by the merchant API and the dashboard. */
@@ -85,6 +86,7 @@ export async function listInvoices(tx: Tx, merchantId: string, livemode: boolean
         q.starting_after ? lt(invoices.id, q.starting_after) : undefined,
         q.status ? eq(invoices.status, q.status) : undefined,
         q.external_order_id ? eq(invoices.externalOrderId, q.external_order_id) : undefined,
+        q.sub_merchant ? eq(invoices.subMerchantId, q.sub_merchant) : undefined,
       ),
     )
     // UUIDv7 ids are time-ordered: newest first, stable cursor.
@@ -111,6 +113,7 @@ export function invoiceRoutes(deps: Deps): FastifyPluginAsyncZod {
     expires_in: z.number().int().min(EXPIRY_S.min).max(EXPIRY_S.max).optional(),
     success_url: redirectUrl(production).optional(),
     cancel_url: redirectUrl(production).optional(),
+    sub_merchant: z.uuid().optional(),
   });
 
   return async (app) => {
@@ -127,6 +130,7 @@ export function invoiceRoutes(deps: Deps): FastifyPluginAsyncZod {
           expiresInSeconds: b.expires_in,
           successUrl: b.success_url,
           cancelUrl: b.cancel_url,
+          subMerchantId: b.sub_merchant,
         });
         const r = await loadInvoiceWithToken(tx, eq(invoices.id, inv.id));
         if (!r) throw new Error('created invoice not found');
@@ -236,6 +240,7 @@ export function invoiceDashboardRoutes(deps: Deps): FastifyPluginAsyncZod {
             external_order_id: z.string().min(1).max(200).optional(),
             description: z.string().max(500).optional(),
             expires_in: z.number().int().min(EXPIRY_S.min).max(EXPIRY_S.max).optional(),
+            sub_merchant: z.uuid().optional(),
           }),
         },
       },
@@ -249,6 +254,7 @@ export function invoiceDashboardRoutes(deps: Deps): FastifyPluginAsyncZod {
             externalOrderId: b.external_order_id,
             description: b.description,
             expiresInSeconds: b.expires_in,
+            subMerchantId: b.sub_merchant,
           });
           await audit(tx, { actorType: 'merchant_user', actorId: u.id, merchantId: u.merchantId, action: 'invoice.created', targetType: 'invoice', targetId: inv.id }, req);
           const r = await loadInvoiceWithToken(tx, eq(invoices.id, inv.id));

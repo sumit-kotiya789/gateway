@@ -25,6 +25,7 @@ Every file with a `// MONEY-CRITICAL` header is listed here and in the coverage 
 | `apps/server/db/migrations/0016_xpub_security.sql` | pending change immutability, key uniqueness across pending changes, proof immutability | M8 |
 | `apps/server/src/modules/watcher/scanner.ts` | payment detection, reorg handling, confirmation, invoice reconciliation, fencing | M4 |
 | `apps/server/db/migrations/0009_payments_security.sql` | payment/invoice consistency, immutable amounts, confirmed is final | M4 |
+| `apps/server/db/migrations/0039_risk.sql`, `0040_risk_security.sql` | `held` status, transitions into and out of it, limits tenant isolation | M9 |
 | `apps/server/src/modules/risk/risk.ts` | risk hold decision: blocked payer, live limits (D-094) | M9 |
 | `packages/core/src/fees.ts` | fee base and rounding | M5 |
 | `apps/server/src/modules/ledger/ledger.ts` | ledger postings, fee charge, settlement, manual resolution | M5 |
@@ -61,6 +62,7 @@ Not money-moving, but a bug here breaks authentication, tenant isolation or audi
 | `apps/server/src/modules/webhooks/webhooks.routes.ts` | webhook signing-secret generation, encryption, rotation | M3b |
 | `apps/server/src/modules/webhooks/ssrf.ts`, `delivery.ts` | outbound SSRF guard (address pinning), signing, retry state | M6 |
 | `apps/server/db/migrations/0014_webhooks_security.sql` | trigger-only delivery creation, tenant isolation | M6 |
+| `apps/server/db/migrations/0041_sub_merchants.sql`, `0042_sub_merchants_security.sql` | sellers stay inside their merchant and mode (composite FKs, RLS), invoice seller immutable, seller-scoped webhook fan-out | M9 |
 | `apps/server/src/modules/ledger/reconciliation.ts` | detects ledger/payment/invoice drift | M5 |
 | `apps/server/src/modules/email/*.ts` | emailed tokens (hash-only storage, single use), encrypted outbox, delivery | M10 |
 | `apps/server/src/modules/auth/dashboard-auth.routes.ts` | verification, password reset (2FA still required), session revocation | M1/M10 |

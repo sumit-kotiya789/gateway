@@ -3,6 +3,7 @@ import { ApiError, api, type Me } from './api';
 import { Login, ResetPassword, VerifyBanner, VerifyEmail, linkToken } from './auth';
 import { ApiKeys, Webhooks } from './developers';
 import { InvoiceDetail, Invoices } from './invoices';
+import { Sellers } from './sellers';
 import { Security, Xpubs } from './settings';
 import { AcceptInvite, Team } from './team';
 import { Widget } from './widget';
@@ -70,6 +71,7 @@ export function App() {
   const custodial = me.merchant.custody_mode === 'custodial';
   const nav: { href: string; label: string; icon: IconName; show: boolean; group: 'Payments' | 'Developers' | 'Account' }[] = [
     { href: '#/invoices', label: 'Invoices', icon: 'invoice', show: true, group: 'Payments' },
+    { href: '#/sellers', label: 'Sellers', icon: 'store', show: true, group: 'Payments' },
     // Custodial accounts withdraw what we hold for them; non-custodial ones are paid straight into their own wallet.
     { href: '#/withdrawals', label: 'Withdrawals', icon: 'wallet', show: custodial, group: 'Payments' },
     { href: '#/xpub', label: 'Payout wallet', icon: 'wallet', show: !custodial, group: 'Payments' },
@@ -84,6 +86,7 @@ export function App() {
 
   let body;
   if (page === 'invoices' && id) body = <InvoiceDetail id={id} canWrite={role !== 'read_only'} />;
+  else if (page === 'sellers') body = <Sellers livemode={livemode} canWrite={role !== 'read_only'} />;
   else if (page === 'api-keys' && dev) body = <ApiKeys livemode={livemode} totp={totp} />;
   else if (page === 'webhooks' && dev) body = <Webhooks livemode={livemode} totp={totp} />;
   else if (page === 'xpub') body = <Xpubs livemode={livemode} canManage={role === 'owner'} totp={totp} custodyMode={me.merchant.custody_mode} />;

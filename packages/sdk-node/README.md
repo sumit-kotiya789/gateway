@@ -17,6 +17,12 @@ await gw.balances();
 // Accounting sync: CSV text for the key's mode, inclusive UTC dates (≤ 366 days).
 const csv = await gw.exports.invoicesCsv({ from: '2026-10-01', to: '2026-10-31' });
 
+// Marketplaces: keep sellers as sub-merchants; payments still go to your wallet.
+const seller = await gw.subMerchants.create({ name: 'Alice Ceramics', reference: 'seller-42' });
+await gw.invoices.create({ amount: '40', token: 'nexis:usdt', sub_merchant: seller.id });
+const { totals } = await gw.subMerchants.retrieve(seller.id); // received per token
+await gw.subMerchants.update(seller.id, { active: false });
+
 // Webhooks (Express): use the raw body.
 app.post('/gateway/webhook', express.raw({ type: 'application/json' }), (req, res) => {
   let event;

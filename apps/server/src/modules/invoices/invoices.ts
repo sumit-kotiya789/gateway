@@ -11,7 +11,7 @@ import {
 import { and, eq, lte, sql } from 'drizzle-orm';
 import { audit } from '../../common/audit.js';
 import { withSystem, type Tx } from '../../common/db.js';
-import { chainCursors, chains, depositAddresses, invoices, merchants, tokens } from '../../db/schema.js';
+import { chainCursors, chains, depositAddresses, invoices, merchants, subMerchants, tokens } from '../../db/schema.js';
 import type { Deps } from '../../deps.js';
 import { allocateDepositAddress } from '../custody/custody.js';
 import { assertFeeBalance } from '../ledger/fee-balance.js';
@@ -35,6 +35,8 @@ export interface CreateInvoiceInput {
   successUrl?: string | undefined;
   cancelUrl?: string | undefined;
   paymentLinkId?: string | undefined;
+  /** Marketplace seller (D-095): active, this merchant's, this mode's. */
+  subMerchantId?: string | undefined;
 }
 
 /** Token + chain usable for this mode: both enabled, testnet for test mode, mainnet for live mode. */
@@ -72,6 +74,15 @@ export async function createInvoice(deps: Deps, tx: Tx, merchantId: string, live
     .from(merchants)
     .where(eq(merchants.id, merchantId));
   if (!m) throw new AppError('not_found', 'merchant not found');
+  if (input.subMerchantId !== undefined) {
+    // RLS + the (merchant, mode, id) foreign key also enforce ownership; this gives a clear error first.
+    const [s] = await tx
+      .select({ active: subMerchants.active })
+      .from(subMerchants)
+      .where(and(eq(subMerchants.id, input.subMerchantId), eq(subMerchants.merchantId, merchantId), eq(subMerchants.livemode, livemode)));
+    if (!s) throw new AppError('validation_error', 'sub-merchant not found in this mode', { field: 'sub_merchant' });
+    if (!s.active) throw new AppError('conflict', 'sub-merchant is deactivated');
+  }
   // Before an address is allocated: a refused invoice must not burn a derivation index (wallet gap).
   // Custodial merchants pay fees out of each settlement instead (D-087).
   if (m.mode !== 'custodial') await assertFeeBalance(tx, merchantId, livemode, token, m.feeGrace);
@@ -87,6 +98,7 @@ export async function createInvoice(deps: Deps, tx: Tx, merchantId: string, live
       merchantId,
       livemode,
       externalOrderId: input.externalOrderId ?? null,
+      subMerchantId: input.subMerchantId ?? null,
       chainId: chain.id,
       tokenId: token.id,
       amountExpected,
@@ -198,6 +210,7 @@ export function invoiceView(inv: InvoiceRow, token: TokenRow, chain: ChainRow, b
     success_url: inv.successUrl,
     cancel_url: inv.cancelUrl,
     payment_link_id: inv.paymentLinkId,
+    sub_merchant_id: inv.subMerchantId,
     expires_at: inv.expiresAt.toISOString(),
     status_changed_at: inv.statusChangedAt.toISOString(),
     created_at: inv.createdAt.toISOString(),

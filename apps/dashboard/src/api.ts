@@ -107,6 +107,7 @@ export interface Invoice {
   deposit_address: string;
   checkout_url: string;
   external_order_id: string | null;
+  sub_merchant_id?: string | null;
   description: string | null;
   expires_at: string;
   created_at: string;

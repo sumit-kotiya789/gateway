@@ -1,7 +1,7 @@
 // Merchant API client. Zero dependencies (global fetch, Node >= 18). POSTs that create something send an
 // Idempotency-Key (generated unless given), so retries after a timeout or 5xx never create duplicates.
 import { randomUUID } from 'node:crypto';
-import type { Balance, CreateInvoiceParams, GatewayEvent, Invoice, ListInvoicesParams, Page, PaymentLink } from './types.js';
+import type { Balance, CreateInvoiceParams, GatewayEvent, Invoice, ListInvoicesParams, Page, PaymentLink, SubMerchant } from './types.js';
 
 export class GatewayError extends Error {
   override readonly name = 'GatewayError';
@@ -34,6 +34,7 @@ type ExportRange = { from?: string; to?: string };
 export class Gateway {
   readonly invoices;
   readonly paymentLinks;
+  readonly subMerchants;
   readonly events;
   readonly exports;
   private readonly base: string;
@@ -56,6 +57,14 @@ export class Gateway {
       retrieve: (id: string) => r<PaymentLink>('GET', `/v1/payment-links/${encodeURIComponent(id)}`),
       list: (params: { limit?: number; starting_after?: string } = {}) => r<Page<PaymentLink>>('GET', '/v1/payment-links', { query: { ...params } }),
     };
+    this.subMerchants = {
+      create: (params: { name: string; reference?: string; metadata?: Record<string, string> }, o: { idempotencyKey?: string } = {}) =>
+        r<SubMerchant>('POST', '/v1/sub-merchants', { body: params, idempotencyKey: o.idempotencyKey ?? randomUUID() }),
+      retrieve: (id: string) => r<SubMerchant>('GET', `/v1/sub-merchants/${encodeURIComponent(id)}`),
+      list: (params: { limit?: number; starting_after?: string; reference?: string } = {}) => r<Page<SubMerchant>>('GET', '/v1/sub-merchants', { query: { ...params } }),
+      update: (id: string, params: { name?: string; active?: boolean; metadata?: Record<string, string> }) =>
+        r<SubMerchant>('PATCH', `/v1/sub-merchants/${encodeURIComponent(id)}`, { body: params }),
+    };
     this.events = {
       retrieve: (id: string) => r<GatewayEvent>('GET', `/v1/events/${encodeURIComponent(id)}`),
       list: (params: { limit?: number; starting_after?: string; type?: string } = {}) => r<Page<GatewayEvent>>('GET', '/v1/events', { query: { ...params } }),
@@ -71,7 +80,7 @@ export class Gateway {
     return this.request('GET', '/v1/balances');
   }
 
-  private async request<T>(method: 'GET' | 'POST', path: string, o: { body?: unknown; query?: Query; idempotencyKey?: string; csv?: boolean } = {}): Promise<T> {
+  private async request<T>(method: 'GET' | 'POST' | 'PATCH', path: string, o: { body?: unknown; query?: Query; idempotencyKey?: string; csv?: boolean } = {}): Promise<T> {
     const url = new URL(this.base + path);
     for (const [k, v] of Object.entries(o.query ?? {})) if (v !== undefined) url.searchParams.set(k, String(v));
     const headers: Record<string, string> = { authorization: `Bearer ${this.opts.apiKey}`, accept: o.csv ? 'text/csv, application/json' : 'application/json' };

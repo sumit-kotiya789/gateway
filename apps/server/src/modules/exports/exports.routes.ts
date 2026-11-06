@@ -63,7 +63,7 @@ async function invoicesCsv(tx: Tx, sc: Scope, r: { from: Date; to: Date }): Prom
   tooMany(rows.length);
   let csv = csvRow([
     'id', 'created_at', 'status', 'status_changed_at', 'token', 'symbol', 'chain', 'amount', 'amount_received', 'fee_amount',
-    'external_order_id', 'description', 'deposit_address', 'payment_link_id', 'expires_at', 'metadata',
+    'external_order_id', 'description', 'deposit_address', 'payment_link_id', 'expires_at', 'metadata', 'sub_merchant_id',
   ]);
   for (const { inv, decimals, symbol } of rows) {
     csv += csvRow([
@@ -71,6 +71,7 @@ async function invoicesCsv(tx: Tx, sc: Scope, r: { from: Date; to: Date }): Prom
       fromMinorUnits(inv.amountExpected, decimals), fromMinorUnits(inv.amountReceived, decimals),
       inv.feeAmount === null ? null : fromMinorUnits(inv.feeAmount, decimals),
       inv.externalOrderId, inv.description, inv.depositAddress, inv.paymentLinkId, inv.expiresAt.toISOString(), JSON.stringify(inv.metadata),
+      inv.subMerchantId,
     ]);
   }
   return { csv, rows: rows.length };

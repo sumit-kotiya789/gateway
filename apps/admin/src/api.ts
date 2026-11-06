@@ -108,6 +108,7 @@ export interface Invoice {
   network: string;
   deposit_address: string;
   external_order_id: string | null;
+  sub_merchant_id?: string | null;
   expires_at: string;
   created_at: string;
   merchant_id: string;

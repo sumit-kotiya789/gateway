@@ -29,6 +29,8 @@ export interface Invoice {
   success_url: string | null;
   cancel_url: string | null;
   payment_link_id: string | null;
+  /** Marketplace seller this invoice was made for, if any. */
+  sub_merchant_id: string | null;
   expires_at: string;
   status_changed_at: string;
   created_at: string;
@@ -44,6 +46,8 @@ export interface CreateInvoiceParams {
   expires_in?: number;
   success_url?: string;
   cancel_url?: string;
+  /** Marketplace seller id (an active sub-merchant of the same mode). */
+  sub_merchant?: string;
 }
 
 export interface ListInvoicesParams {
@@ -51,6 +55,20 @@ export interface ListInvoicesParams {
   starting_after?: string;
   status?: InvoiceStatus;
   external_order_id?: string;
+  sub_merchant?: string;
+}
+
+/** Marketplace seller (sub-account). Its invoices pay into your wallet; `totals` only on retrieve. */
+export interface SubMerchant {
+  id: string;
+  object: 'sub_merchant';
+  livemode: boolean;
+  name: string;
+  reference: string | null;
+  active: boolean;
+  metadata: Record<string, string>;
+  created_at: string;
+  totals?: { token: string; symbol: string; invoices: number; received: string }[];
 }
 
 export interface PaymentLink {
@@ -88,6 +106,7 @@ export interface GatewayEvent {
     amount_received: string;
     fee_amount: string | null;
     external_order_id: string | null;
+    sub_merchant_id: string | null;
     reason: string;
   };
 }

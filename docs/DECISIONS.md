@@ -582,3 +582,17 @@ Owner chose a payer blocklist and per-merchant limits (no external screening pro
   is dropped and recreated around the type change.
 - Alert `GatewayInvoiceHeldForReview` (oldest held > 1 h); RUNBOOK "Risk review".
 
+## D-095 Marketplace mode: sellers as sub-merchants, funds to the platform (M9) (2026-11-06, owner)
+Owner chose: a platform merchant keeps its sellers as sub-merchants and every payment goes to the platform's own
+wallet (its xpub). Paying sellers is the platform's business, outside the gateway: non-custodial, the gateway cannot
+split funds on chain, and a commission that is only a receivable is not worth building.
+- `sub_merchants` (per merchant and mode; name, optional unique `reference`, `active`, metadata; deactivated, never
+  deleted). API with secret keys (`read` / `invoices:write`, no new scope) and dashboard (Sellers page).
+- `invoices.sub_merchant_id` and `webhook_endpoints.sub_merchant_id` reference `(merchant_id, livemode, id)`: the DB
+  itself keeps a seller inside its merchant and mode. The invoice's seller is immutable (update guard).
+- Events carry `sub_merchant_id`; an endpoint scoped to a seller gets only that seller's invoice events (fan-out
+  trigger). Unscoped endpoints get everything, as before.
+- Per-seller totals (accepted invoices per token) on retrieve; invoices list filter `sub_merchant`; CSV exports gain a
+  `sub_merchant_id` column (appended). Fees, limits and risk holds stay per platform merchant.
+- Not built: payment links per seller, seller logins, payouts. Add when a marketplace asks.
+

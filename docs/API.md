@@ -68,6 +68,9 @@ verified email (`403`, `details.reason = "email_unverified"`). `GET /auth/me` re
 | GET | `/v1/payment-links`, `/v1/payment-links/:id` | API key | `read` | M3 |
 | PATCH | `/v1/payment-links/:id` | API key | `invoices:write` (affects future invoices only) | M3 |
 | DELETE | `/v1/payment-links/:id` | API key | `invoices:write` (deactivates) | M3 |
+| POST | `/v1/sub-merchants` | API key | `invoices:write` (`name`, `reference` unique per mode, `metadata`; marketplace sellers, D-095) | M9 |
+| GET | `/v1/sub-merchants`, `/v1/sub-merchants/:id` | API key | `read` (`reference` filter; retrieve adds `totals` per token of paid invoices) | M9 |
+| PATCH | `/v1/sub-merchants/:id` | API key | `invoices:write` (`name`, `active`, `metadata`) | M9 |
 | GET | `/v1/balances` | API key | `read` (per token: `received`, `fees_charged`, `fees_owed` (charged, not covered by top-ups), `prepaid_fees` (signed), `fee_status` ok / low / blocked / not_enforced; custodial: `pending` (not swept yet), `available` (withdrawable), `withdrawing`; top-level `custody_mode`; live keys also list every usable live token) | M5/M8/M7 |
 | GET | `/v1/events`, `/v1/events/:id` | API key | `read` (`limit`, `starting_after`, `type`; newest first) | M5 |
 | POST | `/v1/withdrawals` | API key | `withdrawals:write` (`token`, `amount`; custodial; to the current payout address; Idempotency-Key; held at once) | M7 |

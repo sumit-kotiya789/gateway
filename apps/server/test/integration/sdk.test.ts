@@ -42,6 +42,18 @@ describe('Node SDK against the real API', () => {
     await expect(new Gateway({ apiKey: 'sk_test_wrong', baseUrl }).balances()).rejects.toMatchObject({ status: 401 });
   });
 
+  it('sub-merchants: create, update (PATCH), retrieve with totals, list; invoices for a seller', async () => {
+    const m = await merchantWithKey(app, clock, owner);
+    const gw = new Gateway({ apiKey: m.key, baseUrl });
+    const s = await gw.subMerchants.create({ name: 'Seller', reference: 'sdk-1' });
+    expect(await gw.subMerchants.update(s.id, { name: 'Seller One' })).toMatchObject({ id: s.id, name: 'Seller One', active: true });
+    expect(await gw.subMerchants.retrieve(s.id)).toMatchObject({ reference: 'sdk-1', totals: [] });
+    expect((await gw.subMerchants.list({ reference: 'sdk-1' })).data.map((x) => x.id)).toEqual([s.id]);
+    const inv = await gw.invoices.create({ amount: '2', token: 'evm-local:usdt', sub_merchant: s.id });
+    expect(inv.sub_merchant_id).toBe(s.id);
+    expect((await gw.invoices.list({ sub_merchant: s.id })).data.map((x) => x.id)).toEqual([inv.id]);
+  });
+
   it('verifies exactly what the gateway signs (including during secret rotation)', () => {
     const body = JSON.stringify({ id: 'evt_x', object: 'event', type: 'invoice.paid' });
     const ts = Math.floor(Date.now() / 1000);

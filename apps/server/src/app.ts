@@ -32,6 +32,7 @@ import { inviteAuthRoutes, teamDashboardRoutes } from './modules/team/team.route
 import { exportDashboardRoutes, exportRoutes } from './modules/exports/exports.routes.js';
 import { settingsDashboardRoutes } from './modules/settings/settings.routes.js';
 import { paymentLinkRoutes, publicPayRoutes } from './modules/payment-links/payment-links.routes.js';
+import { subMerchantDashboardRoutes, subMerchantRoutes } from './modules/sub-merchants/sub-merchants.routes.js';
 import { adminUserRoutes } from './modules/admin/admins.routes.js';
 import { adminRoutes } from './modules/admin/admin.routes.js';
 import { adminAuthRoutes } from './modules/auth/admin-auth.routes.js';
@@ -156,11 +157,13 @@ export function buildApp(logger: FastifyBaseLogger, deps?: Deps) {
   void app.register(exportDashboardRoutes(deps), { prefix: '/v1/dashboard/exports' });
   void app.register(withdrawalDashboardRoutes(deps), { prefix: '/v1/dashboard/withdrawals' });
   void app.register(settingsDashboardRoutes(deps), { prefix: '/v1/dashboard/settings' });
+  void app.register(subMerchantDashboardRoutes(deps), { prefix: '/v1/dashboard/sub-merchants' });
   void app.register(inviteAuthRoutes(deps), { prefix: '/v1/dashboard/auth/invite' });
   void app.register(accountRoutes(deps), { prefix: '/v1' });
   void app.register(registryRoutes(deps), { prefix: '/v1' });
   void app.register(invoiceRoutes(deps), { prefix: '/v1' });
   void app.register(paymentLinkRoutes(deps), { prefix: '/v1' });
+  void app.register(subMerchantRoutes(deps), { prefix: '/v1' });
   void app.register(ledgerRoutes(deps), { prefix: '/v1' });
   void app.register(exportRoutes(deps), { prefix: '/v1' });
   void app.register(withdrawalRoutes(deps), { prefix: '/v1' });

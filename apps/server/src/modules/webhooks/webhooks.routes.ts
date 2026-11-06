@@ -10,6 +10,7 @@ import { outboxEvents, webhookDeliveries, webhookEndpoints } from '../../db/sche
 import type { Deps } from '../../deps.js';
 import { requirePermission, requireTotp, requireUser, requireVerifiedEmailForLive } from '../auth/guards.js';
 import { redirectUrl } from '../invoices/invoices.routes.js';
+import { loadSubMerchant } from '../sub-merchants/sub-merchants.routes.js';
 
 export const MAX_ENDPOINTS_PER_MODE = 16;
 export const secretAad = (id: string) => `webhook_endpoints.secret:${id}`;
@@ -20,6 +21,7 @@ const view = (w: EndpointRow) => ({
   livemode: w.livemode,
   url: w.url,
   description: w.description,
+  sub_merchant_id: w.subMerchantId,
   previous_secret_expires_at: w.previousSecretExpiresAt?.toISOString() ?? null,
   created_at: w.createdAt.toISOString(),
 });
@@ -65,7 +67,7 @@ export function webhookDashboardRoutes(deps: Deps): FastifyPluginAsyncZod {
       '/',
       {
         preHandler: [requirePermission('webhooks:manage'), requireVerifiedEmailForLive(deps), requireTotp(deps)],
-        schema: { body: z.strictObject({ livemode: z.boolean(), url: Url, description: z.string().trim().max(200).optional() }) },
+        schema: { body: z.strictObject({ livemode: z.boolean(), url: Url, description: z.string().trim().max(200).optional(), sub_merchant_id: z.uuid().optional() }) },
       },
       async (req, reply) => {
         const user = req.user;
@@ -79,6 +81,8 @@ export function webhookDashboardRoutes(deps: Deps): FastifyPluginAsyncZod {
             .from(webhookEndpoints)
             .where(and(eq(webhookEndpoints.merchantId, user.merchantId), eq(webhookEndpoints.livemode, b.livemode)));
           if ((n?.n ?? 0) >= MAX_ENDPOINTS_PER_MODE) throw new AppError('conflict', `at most ${MAX_ENDPOINTS_PER_MODE} webhook endpoints per mode`);
+          // Seller-scoped endpoint (D-095): only that seller's invoice events are delivered to it.
+          if (b.sub_merchant_id) await loadSubMerchant(tx, user.merchantId, b.livemode, b.sub_merchant_id);
           const id = uuidv7();
           const [w] = await tx
             .insert(webhookEndpoints)
@@ -88,6 +92,7 @@ export function webhookDashboardRoutes(deps: Deps): FastifyPluginAsyncZod {
               livemode: b.livemode,
               url: b.url,
               description: b.description || null,
+              subMerchantId: b.sub_merchant_id ?? null,
               // AAD binds the ciphertext to this row.
               secretEnc: await deps.envelope.seal(secret, secretAad(id)),
               createdBy: user.id,

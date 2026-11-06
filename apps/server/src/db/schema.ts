@@ -528,6 +528,37 @@ export const invoiceStatus = pgEnum('invoice_status', [
   'held',
 ]);
 
+/**
+ * Marketplace sellers (M9, D-095): sub-accounts of a platform merchant. Their invoices pay into the platform's own
+ * wallet; the platform settles with its sellers itself. Per mode, like everything else; deactivated, never deleted.
+ */
+export const subMerchants = pgTable(
+  'sub_merchants',
+  {
+    id: id(),
+    merchantId: uuid('merchant_id')
+      .notNull()
+      .references(() => merchants.id),
+    livemode: boolean('livemode').notNull(),
+    name: text('name').notNull(),
+    // The platform's own id for the seller (optional, unique per merchant and mode).
+    reference: text('reference'),
+    active: boolean('active').notNull().default(true),
+    metadata: jsonb('metadata').notNull().default({}),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    // Target of the (merchant, mode, id) foreign keys: a seller is only ever used by its own merchant, in its mode.
+    uniqueIndex('sub_merchants_scope_uq').on(t.merchantId, t.livemode, t.id),
+    uniqueIndex('sub_merchants_reference_uq')
+      .on(t.merchantId, t.livemode, t.reference)
+      .where(sql`${t.reference} is not null`),
+    check('sub_merchants_name_len', sql`char_length(${t.name}) between 1 and 200`),
+    check('sub_merchants_reference_len', sql`${t.reference} is null or char_length(${t.reference}) between 1 and 200`),
+    check('sub_merchants_metadata_size', sql`octet_length(${t.metadata}::text) <= 4096`),
+  ],
+);
+
 export const paymentLinks = pgTable(
   'payment_links',
   {
@@ -591,6 +622,7 @@ export const invoices = pgTable(
     successUrl: text('success_url'),
     cancelUrl: text('cancel_url'),
     paymentLinkId: uuid('payment_link_id').references(() => paymentLinks.id),
+    subMerchantId: uuid('sub_merchant_id'),
     feeAmount: money('fee_amount'),
     expiresAt: tstz('expires_at').notNull(),
     statusChangedAt: tstz('status_changed_at').notNull().defaultNow(),
@@ -604,6 +636,14 @@ export const invoices = pgTable(
     index('invoices_merchant_list_idx').on(t.merchantId, t.livemode, t.id),
     index('invoices_status_expiry_idx').on(t.status, t.expiresAt),
     index('invoices_payment_link_idx').on(t.paymentLinkId, t.status),
+    index('invoices_sub_merchant_idx')
+      .on(t.subMerchantId, t.id)
+      .where(sql`${t.subMerchantId} is not null`),
+    foreignKey({
+      name: 'invoices_sub_merchant_fk',
+      columns: [t.merchantId, t.livemode, t.subMerchantId],
+      foreignColumns: [subMerchants.merchantId, subMerchants.livemode, subMerchants.id],
+    }),
     check('invoices_amounts', sql`${t.amountExpected} > 0 and ${t.amountReceived} >= 0 and (${t.feeAmount} is null or ${t.feeAmount} >= 0)`),
     check('invoices_tolerance', sql`${t.underpayToleranceBps} between 0 and 500`),
     check('invoices_fee_bps', sql`${t.feeBps} between 0 and 10000`),
@@ -649,11 +689,18 @@ export const webhookEndpoints = pgTable(
     // After a rotation the old secret also signs until it expires, so receivers can switch without dropping events.
     previousSecretEnc: text('previous_secret_enc'),
     previousSecretExpiresAt: tstz('previous_secret_expires_at'),
+    // Set: only events of this seller's invoices are delivered here (marketplace, D-095).
+    subMerchantId: uuid('sub_merchant_id'),
     createdBy: uuid('created_by').references(() => merchantUsers.id),
     createdAt: createdAt(),
   },
   (t) => [
     index('webhook_endpoints_merchant_idx').on(t.merchantId, t.livemode),
+    foreignKey({
+      name: 'webhook_endpoints_sub_merchant_fk',
+      columns: [t.merchantId, t.livemode, t.subMerchantId],
+      foreignColumns: [subMerchants.merchantId, subMerchants.livemode, subMerchants.id],
+    }),
     check('webhook_endpoints_url_len', sql`char_length(${t.url}) between 8 and 2000`),
     check('webhook_endpoints_description_len', sql`${t.description} is null or char_length(${t.description}) <= 200`),
   ],

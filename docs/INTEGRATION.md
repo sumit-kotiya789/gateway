@@ -160,6 +160,13 @@ func VerifyGatewayWebhook(rawBody []byte, header, secret string, tolerance time.
 }
 ```
 
+## Marketplaces (sellers)
+Platforms that sell for others can keep each seller as a sub-merchant: `POST /v1/sub-merchants` with `name` and your
+own `reference`. Create invoices with `"sub_merchant": "<id>"`; the invoice, its events (`data.sub_merchant_id`) and
+CSV exports carry it, `GET /v1/invoices?sub_merchant=<id>` lists them, and `GET /v1/sub-merchants/:id` returns what
+was received per token. Every payment still goes to your wallet: you pay your sellers. A webhook endpoint can be
+limited to one seller (dashboard, Webhooks). Deactivated sellers cannot get new invoices.
+
 ## Payment links (no code)
 `POST /v1/payment-links` with `amount` and `token` returns a `url` you can share. Each customer who clicks
 "Continue to payment" gets their own invoice and deposit address.

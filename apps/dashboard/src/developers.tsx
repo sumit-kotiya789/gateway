@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { SellerSelect } from './sellers';
 import { api, totpHeader, type ApiKey, type Page, type WebhookDelivery, type WebhookEndpoint } from './api';
 import { Alert, ConfirmButton, EmptyState, ErrorBox, Field, Icon, SecretOnce, Skeleton, StatusBadge, Submit, TotpInput, fmtDate, short, toast, useAction, useLoad } from './ui';
 
@@ -213,7 +214,7 @@ function RotateSecret(props: { endpoint: WebhookEndpoint; totp: boolean; onDone:
 export function Webhooks(props: { livemode: boolean; totp: boolean }) {
   const list = useLoad(() => api<{ data: WebhookEndpoint[] }>('GET', `/webhooks/?livemode=${String(props.livemode)}`), [props.livemode]);
   const [secret, setSecret] = useState<{ label: string; value: string }>();
-  const [form, setForm] = useState({ url: '', description: '', code: '' });
+  const [form, setForm] = useState({ url: '', description: '', code: '', seller: '' });
   const [open, setOpen] = useState<string>();
   const [rotating, setRotating] = useState<WebhookEndpoint>();
   const a = useAction();
@@ -286,12 +287,17 @@ export function Webhooks(props: { livemode: boolean; totp: boolean }) {
             const r = await api<{ secret: string }>(
               'POST',
               '/webhooks/',
-              { livemode: props.livemode, url: form.url.trim(), ...(form.description.trim() ? { description: form.description.trim() } : {}) },
+              {
+                livemode: props.livemode,
+                url: form.url.trim(),
+                ...(form.description.trim() ? { description: form.description.trim() } : {}),
+                ...(form.seller ? { sub_merchant_id: form.seller } : {}),
+              },
               totpHeader(form.code),
             );
             setSecret({ label: 'Signing secret', value: r.secret });
             toast.success('Endpoint added', 'Copy the signing secret now: it is shown only once.');
-            setForm({ url: '', description: '', code: '' });
+            setForm({ url: '', description: '', code: '', seller: '' });
             list.reload();
           });
         }}
@@ -304,6 +310,7 @@ export function Webhooks(props: { livemode: boolean; totp: boolean }) {
         <Field label="Description (optional)">
           <input value={form.description} onChange={(e) => { setForm({ ...form, description: e.target.value }); }} maxLength={200} />
         </Field>
+        <SellerSelect livemode={props.livemode} value={form.seller} onChange={(seller) => { setForm({ ...form, seller }); }} emptyLabel="All events" />
         <TotpInput value={form.code} onChange={(code) => { setForm({ ...form, code }); }} />
         <ErrorBox error={a.error} />
         <Submit busy={a.busy} disabled={!props.totp}>

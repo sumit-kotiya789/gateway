@@ -660,6 +660,19 @@ describe('ledger, fees, outbox', () => {
     expect((await auditor.agent.req('GET', `/admin/v1/invoices/${inv.id}`)).json()).toMatchObject({ id: inv.id, history: expect.arrayContaining([expect.objectContaining({ to: 'paid', reason: 'manual: merchant accepts the shortfall' })]) });
   });
 
+  it('sub-merchant totals count only invoices the merchant accepted (marketplace, D-095)', async () => {
+    const m = await merchantWithKey(app, clock, owner);
+    const s = (await m.api('POST', '/v1/sub-merchants', { name: 'Seller' })).json<{ id: string }>();
+    const paid = (await m.api('POST', '/v1/invoices', { amount: '10', token: 'evm-fake:usdt', sub_merchant: s.id })).json<Inv>();
+    await m.api('POST', '/v1/invoices', { amount: '3', token: 'evm-fake:usdt', sub_merchant: s.id }); // still pending
+    chain.pay(paid.deposit_address, units(10));
+    chain.mine(3);
+    await settle();
+    expect((await m.api('GET', `/v1/sub-merchants/${s.id}`)).json()).toMatchObject({ totals: [{ token: 'evm-fake:usdt', symbol: 'USDT', invoices: 1, received: '10' }] });
+    const ev = (await m.api('GET', '/v1/events?limit=1')).json<{ data: { type: string; data: { sub_merchant_id: string } }[] }>().data[0];
+    expect(ev).toMatchObject({ type: 'invoice.settled', data: { sub_merchant_id: s.id } });
+  });
+
   // ---------------------------------------------------------------- M9: risk hooks (D-094)
 
   it('risk: a blocked payer holds the invoice; an admin releases (settles) or rejects (fails) it', async () => {

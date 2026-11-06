@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { api, download, type Balance, type FeeTopup, type Invoice, type Page, type Token } from './api';
+import { SellerSelect } from './sellers';
 import { ConfirmButton, CopyField, EmptyState, ErrorBox, Field, Icon, Skeleton, Stat, StatusBadge, Submit, fmtDate, short, toast, useAction, useLoad } from './ui';
 
 const STATUSES = ['pending', 'detected', 'confirming', 'paid', 'underpaid', 'overpaid', 'settled', 'expired', 'cancelled', 'failed', 'late_payment', 'held'];
@@ -122,7 +123,7 @@ export function Invoices(props: { livemode: boolean; canWrite: boolean; canExpor
 
 function NewInvoice(props: { livemode: boolean; onCancel: () => void; onCreated: (inv: Invoice) => void }) {
   const tokens = useLoad(() => api<{ data: Token[] }>('GET', `/tokens/?livemode=${String(props.livemode)}`), [props.livemode]);
-  const [form, setForm] = useState({ token: '', amount: '', description: '', external_order_id: '', minutes: '30' });
+  const [form, setForm] = useState({ token: '', amount: '', description: '', external_order_id: '', minutes: '30', seller: '' });
   const a = useAction();
   const list = tokens.data?.data ?? [];
   const token = form.token || list[0]?.id || '';
@@ -141,6 +142,7 @@ function NewInvoice(props: { livemode: boolean; onCancel: () => void; onCreated:
             expires_in: Number(form.minutes) * 60,
             ...(form.description.trim() ? { description: form.description.trim() } : {}),
             ...(form.external_order_id.trim() ? { external_order_id: form.external_order_id.trim() } : {}),
+            ...(form.seller ? { sub_merchant: form.seller } : {}),
           });
           toast.success('Invoice created', `${inv.amount} ${inv.symbol} · share the checkout link with your customer.`);
           props.onCreated(inv);
@@ -171,6 +173,7 @@ function NewInvoice(props: { livemode: boolean; onCancel: () => void; onCreated:
       <Field label="Description (optional)">
         <input value={form.description} onChange={(e) => { setForm({ ...form, description: e.target.value }); }} maxLength={500} />
       </Field>
+      <SellerSelect livemode={props.livemode} value={form.seller} onChange={(seller) => { setForm({ ...form, seller }); }} emptyLabel="None (your own sale)" />
       <ErrorBox error={a.error} />
       <div className="row">
         <Submit busy={a.busy} disabled={!token}>Create invoice</Submit>
@@ -215,6 +218,7 @@ export function InvoiceDetail(props: { id: string; canWrite: boolean }) {
               <CopyField value={i.checkout_url} />
             </dd>
             <dt>Order id</dt><dd>{i.external_order_id ?? '—'}</dd>
+            {i.sub_merchant_id && <><dt>Seller</dt><dd><code>{i.sub_merchant_id}</code></dd></>}
             <dt>Description</dt><dd>{i.description ?? '—'}</dd>
             <dt>Expires</dt><dd>{fmtDate(i.expires_at)}</dd>
             <dt>Created</dt><dd>{fmtDate(i.created_at)}</dd>
