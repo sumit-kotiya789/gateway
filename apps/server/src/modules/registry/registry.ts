@@ -53,6 +53,9 @@ export function expectedNetworkId(chain: ChainConfig): string {
   throw new Error(`no network id rule for family ${chain.family}`);
 }
 
+/** Independent providers that must each see a payment, deep enough, before it is confirmed (SECURITY.md "Lying RPC"). */
+export const RPC_QUORUM = 2;
+
 type MakeAdapter = (chain: ChainConfig, urls: readonly string[]) => ChainAdapter;
 
 /**
@@ -73,6 +76,8 @@ export async function verifyRegistry(
       problems.push(`${chain.id}: no usable RPC URL`);
       continue;
     }
+    // Confirmation needs two providers to agree (scanner RPC_QUORUM): one lying provider cannot credit a payment.
+    if (!chain.testnet && urls.length < RPC_QUORUM) problems.push(`${chain.id}: mainnet needs at least ${String(RPC_QUORUM)} RPC providers (confirmation quorum)`);
     const expected = expectedNetworkId(chain);
     for (const [i, url] of urls.entries()) {
       const label = `${chain.id} rpc #${String(i + 1)}`;

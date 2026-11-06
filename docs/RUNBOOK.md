@@ -13,8 +13,7 @@ Each procedure is written when the component it covers ships. Headings are fixed
 - Alert rules: `infra/prometheus/alerts.yml`; each links to a heading in this runbook. Health gauges (scanner, worker,
   reconciliation, webhooks, email) are read from the database, so scraping one api process covers every process.
 - `NaN` for `gw_scanner_cursor_age_seconds` = an enabled chain no watcher has scanned yet.
-- Not covered yet: RPC provider disagreement (needs the quorum check, D-085), audit-chain verification (run
-  `select audit_verify();` on a schedule).
+- Not covered yet: audit-chain verification (run `select audit_verify();` on a schedule).
 
 ## Database roles and migrations
 - Migrations run as the schema owner: `DATABASE_MIGRATION_URL=… pnpm migrate` (compose: the one-shot `migrate` service runs before `api`).
@@ -109,6 +108,16 @@ and cancel any still `pending`. Funds already paid there are only spendable by w
 ## RPC outage
 - Providers in `rpc_urls` are tried in order (failover). All down = ticks fail and are retried; nothing is credited from
   partial data. Payments are confirmed only after a receipt re-check, so a lying or lagging RPC cannot credit on its own.
+
+## RPC disagreement
+- Alert `GatewayPaymentNotConfirming`; watcher logs `RPC QUORUM not reached` with `votes` and `providers`. With two
+  or more providers, a payment is confirmed only when two of them, each on its own, return its receipt in the same
+  block and report enough depth (D-092). Until then it stays `detected` and the invoice `confirming`; nothing is lost.
+- Find the odd one out: ask each provider in `rpc_urls` for the receipt (`eth_getTransactionReceipt`) and the head
+  (`eth_blockNumber`). Lagging or down = wait, or replace it. Says the tx does not exist while others show it (or the
+  reverse) = treat that provider as compromised: remove it from `rpc_urls`, add another, restart the watcher.
+- Never "fix" by dropping to one provider on mainnet: `chains:verify` and the watcher refuse fewer than two.
+- `deep payment failed receipt re-check` (warn) is the primary provider disagreeing with its own logs: same steps.
 
 ## Deep reorg
 Log line `DEEP REORG: cursor block replaced beyond reorgDepth` means a reorg deeper than configured. Confirmed payments are

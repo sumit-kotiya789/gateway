@@ -92,7 +92,7 @@ Status: `planned` until the mitigation's milestone lands, then the test that pro
 | Cross-merchant address attribution | Composite FK (xpub id, merchant, mode, family); key fingerprint unique across ALL merchants and the platform wallet (xpub/tpub encodings of one key collide) | `custody.test.ts` | M2 |
 | Non-custodial merchant on platform keys | DB guard: address source must match custody mode; strategy selection exhaustive; custodial behind feature flag | `custody.test.ts` | M2 |
 | Reorg double-credit | Block-hash ring per chain; unique `(chain_id, tx_hash, log_index)`; credit only after finality + confirmations | planned | M4 |
-| Lying RPC | Multi-provider failover; quorum of two providers above value threshold; fresh re-verify at confirmation | planned | M4 |
+| Lying RPC | Multi-provider failover; confirmation needs two providers to each see the receipt and the depth (D-092); mainnet refuses fewer than two providers; fresh re-verify at confirmation | `watcher.test.ts`, `custody.test.ts` | M11 |
 | Webhook spoof (merchant side) | HMAC-SHA256 over `timestamp.rawBody`; constant-time compare; tested verification snippets (Node, PHP, Python, Go) | `webhooks.test.ts`, `ssrf.test.ts` | M6 |
 | Webhook replay | Signed timestamp, receivers reject > 5 min skew; stable event id (`gateway-event-id`) for dedup | `webhooks.test.ts` | M6 |
 | SSRF via webhook URL | All resolved addresses must be public (IANA special-purpose v4/v6 ranges, metadata, NAT64, 6to4, mapped); connect to the vetted address (DNS rebinding); no redirects; 10 s, 64 KiB caps; dev override refused in production | `ssrf.test.ts`, `webhooks.test.ts` | M6 |

@@ -6,14 +6,14 @@ Every item needs an owner and a date before launch.
 - [ ] Independent security audit completed; findings resolved or accepted in writing
 - [ ] Human review of every file in SECURITY.md "Money-critical files"
 - [ ] Token contract addresses verified against issuer + explorer; `pnpm chains:verify` passing in production config
-- [ ] At least two independent mainnet RPC providers configured (`BSC_RPC_URL` + public fallback), each verified
+- [ ] At least two independent mainnet RPC providers configured (`BSC_RPC_URL` + public fallback), each verified; confirmation needs two to agree (D-092), so a third is advised
 - [ ] `bsc` chain enabled deliberately (seeded disabled, D-036)
 - [ ] Custodial feature flag OFF unless legal clearance for custodial operation is documented
 - [ ] Node upgraded to 24 LTS (D-004)
 - [ ] GitHub Actions pinned by commit SHA (D-021)
 - [ ] Container base images pinned by digest
 - [ ] Backups + PITR configured and a restore tested
-- [ ] Alerts wired and test-fired (`METRICS_TOKEN` set, Prometheus loads `infra/prometheus/alerts.yml`, Alertmanager routes to on-call); RPC disagreement alert still to build
+- [ ] Alerts wired and test-fired (`METRICS_TOKEN` set, Prometheus loads `infra/prometheus/alerts.yml`, Alertmanager routes to on-call)
 - [ ] Runbook procedures rehearsed
 - [ ] Secrets in secret manager; none in env files on hosts
 - [ ] TLS, HSTS, Origin allowlists, CSP verified in production config

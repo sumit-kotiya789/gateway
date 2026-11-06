@@ -4,7 +4,8 @@
 //   1. eth_getLogs for [cursor - reorgDepth + 1, min(latest, cursor + MAX_RANGE)], filtered by token AND recipient.
 //      The rescan window re-finds transfers re-mined in replacement blocks after a reorg.
 //   2. Every unconfirmed payment: is its block still canonical? If not, find the tx again (moved) or orphan it.
-//      If canonical and deep enough (tiers + finality, D-008/D-035), re-check the receipt, then confirm.
+//      If canonical and deep enough (tiers + finality, D-008/D-035), re-check the receipt, then confirm. With several
+//      providers, RPC_QUORUM of them must each see the receipt AND the depth on their own (lying RPC, D-092).
 //   3. Write payments, advance the cursor, re-plan every touched invoice (core planInvoice).
 import type { BlockInfo, ChainAdapter, ChainConfig, Receipt, TokenConfig, Transfer } from '@gw/core';
 import { isConfirmed, planInvoice, requiredConfirmations, type InvoiceStatus } from '@gw/core';
@@ -13,6 +14,7 @@ import { withSystem, type Tx } from '../../common/db.js';
 import { chainCursors, depositAddresses, invoices, payments } from '../../db/schema.js';
 import type { Deps } from '../../deps.js';
 import { transitionInvoice } from '../invoices/invoices.js';
+import { RPC_QUORUM } from '../registry/registry.js';
 import { postPayment, settleInvoice } from '../ledger/ledger.js';
 
 /** A newer leader owns this chain: the tick wrote nothing and this process must stop scanning. */
@@ -34,6 +36,8 @@ export interface Scanner {
   chain: ChainConfig;
   tokens: readonly TokenConfig[];
   epoch: number;
+  /** One adapter per RPC provider (no failover). Two or more: confirmations need RPC_QUORUM of them to agree. */
+  witnesses?: readonly ChainAdapter[];
 }
 
 type PaymentRow = typeof payments.$inferSelect;
@@ -90,6 +94,21 @@ function receiptHasPayment(r: Receipt, p: PaymentRow, token: TokenConfig): boole
         t.amount === p.amount,
     )
   );
+}
+
+/** Providers that each, on their own view, see the payment's receipt in its block and deep enough. Errors = no vote. */
+async function quorumVotes(witnesses: readonly ChainAdapter[], p: PaymentRow, token: TokenConfig): Promise<number> {
+  const votes = await Promise.all(
+    witnesses.map(async (w) => {
+      try {
+        const [r, latest] = await Promise.all([w.getTransactionReceipt(p.txHash), w.getLatestBlock()]);
+        return r?.blockHash === p.blockHash && receiptHasPayment(r, p, token) && isConfirmed({ txBlock: p.blockNumber, latest, finalized: null, required: p.requiredConfirmations });
+      } catch {
+        return false;
+      }
+    }),
+  );
+  return votes.filter(Boolean).length;
 }
 
 const blockTime = (b: BlockInfo) => new Date(Number(b.timestamp) * 1000);
@@ -181,8 +200,19 @@ export async function scanTick(s: Scanner) {
     }
     if (!isConfirmed({ txBlock: p.blockNumber, latest, finalized, required: p.requiredConfirmations })) continue;
     const r = await adapter.getTransactionReceipt(p.txHash);
-    if (r?.blockHash === p.blockHash && receiptHasPayment(r, p, token)) decisions.push({ kind: 'confirm', id: p.id });
-    else deps.log.warn({ chain: chain.id, payment: p.id }, 'deep payment failed receipt re-check; not confirming');
+    if (!(r?.blockHash === p.blockHash && receiptHasPayment(r, p, token))) {
+      deps.log.warn({ chain: chain.id, payment: p.id }, 'deep payment failed receipt re-check; not confirming');
+      continue;
+    }
+    const witnesses = s.witnesses ?? [];
+    if (witnesses.length > 1) {
+      const votes = await quorumVotes(witnesses, p, token);
+      if (votes < RPC_QUORUM) {
+        deps.log.error({ chain: chain.id, payment: p.id, votes, providers: witnesses.length }, 'RPC QUORUM not reached; not confirming');
+        continue;
+      }
+    }
+    decisions.push({ kind: 'confirm', id: p.id });
   }
 
   const toBlock = await block(to);

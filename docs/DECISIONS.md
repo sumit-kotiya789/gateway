@@ -453,8 +453,7 @@ configured the route does not exist. No client library: a few gauges and counter
 - **HTTP counters** per api process: requests and total seconds by method, route template and status class (never the
   raw URL, so label cardinality stays bounded).
 - Partial indexes keep the "failed in the last 24 h" counts cheap.
-- Alert rules in `infra/prometheus/alerts.yml` link to runbook headings. An RPC-disagreement alert waits for the quorum
-  check (SECURITY.md "Lying RPC", still planned).
+- Alert rules in `infra/prometheus/alerts.yml` link to runbook headings. RPC disagreement: D-092.
 
 ## D-086 Admin accounts managed in the console (M9) (2026-10-27)
 `/admin/v1/admins` for superadmins (`admins:manage`); `pnpm admin:create` stays for the first one. Creating, role
@@ -541,3 +540,12 @@ ledger. Unsolicited extra tokens on an address are not swept (they are not booke
 - **Cap.** No hard cap in code: `gw_custody_balance` and the `GatewayHotWalletAboveCap` alert carry the treasury
   policy, and moving the excess is a two-person decision.
 
+## D-092 Confirmation quorum across RPC providers (M11) (2026-11-06)
+Closes SECURITY.md "Lying RPC". The watcher keeps one failover client for scanning, plus one client per provider.
+When a chain has two or more providers, a payment is confirmed only when `RPC_QUORUM` (2) of them, each on its own,
+return its receipt in the recorded block with the payment in it AND report enough depth from their own head. A
+provider that errors, lags or does not know the tx is not a vote; nothing is confirmed until two agree. No value
+threshold: one extra receipt and head call per confirmation is cheap, and every amount gets the same guarantee.
+Mainnet chains (`testnet = false`) need at least two resolved providers: `chains:verify` and the watcher refuse to
+start otherwise. Testnets may run on one (no quorum). Detection still uses one provider: a fake log can show
+`detected`/`confirming`, never `paid`. Alert: `GatewayPaymentNotConfirming` (oldest detected payment > 30 min).

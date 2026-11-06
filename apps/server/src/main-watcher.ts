@@ -33,7 +33,9 @@ export async function runChain(deps: Deps, chain: ChainConfig, tokens: TokenConf
     await sleep(VERIFY_RETRY_MS, signal);
     if (signal.aborted) return;
   }
-  const adapter = adapterFor(chain, resolveRpcUrls(chain.rpcUrls, env).urls);
+  const urls = resolveRpcUrls(chain.rpcUrls, env).urls;
+  const adapter = adapterFor(chain, urls);
+  const witnesses = urls.map((u) => adapterFor(chain, [u]));
   const lock = new AdvisoryLock(deps.config.DATABASE_URL, `watcher:${chain.id}`);
   let epoch: number | null = null;
 
@@ -51,7 +53,7 @@ export async function runChain(deps: Deps, chain: ChainConfig, tokens: TokenConf
         epoch = null;
         continue;
       }
-      const r = await scanTick({ deps, adapter, chain, tokens, epoch });
+      const r = await scanTick({ deps, adapter, chain, tokens, epoch, witnesses });
       const lag = r.latest - r.to;
       if (lag > BigInt(chain.reorgDepth)) log.warn({ lag: lag.toString() }, 'scanner behind chain head');
       if (r.found > 0 || r.decisions > 0) log.info({ to: r.to.toString(), found: r.found, decisions: r.decisions }, 'scan tick');

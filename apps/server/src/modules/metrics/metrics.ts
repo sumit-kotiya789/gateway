@@ -6,7 +6,7 @@ import { AppError, fromMinorUnits } from '@gw/core';
 import { and, count, desc, eq, gt, inArray, lt, lte, min, sql } from 'drizzle-orm';
 import type { FastifyPluginAsync } from 'fastify';
 import { withSystem } from '../../common/db.js';
-import { chainCursors, chains, emailOutbox, invoices, ledgerAccounts, ledgerEntries, reconciliationRuns, sweeps, tokens, webhookDeliveries } from '../../db/schema.js';
+import { chainCursors, chains, emailOutbox, invoices, ledgerAccounts, ledgerEntries, payments, reconciliationRuns, sweeps, tokens, webhookDeliveries } from '../../db/schema.js';
 import type { Deps } from '../../deps.js';
 
 /** A pending invoice this long past its deadline means the expiry job is not running. */
@@ -101,6 +101,14 @@ export async function collectHealth(deps: Deps): Promise<Metric[]> {
       .from(invoices)
       .where(and(eq(invoices.status, 'pending'), lt(invoices.expiresAt, new Date(now - OVERDUE_GRACE_MS))));
 
+    // Detected but not confirmed: normal for minutes; for long = RPC quorum not reached, receipt re-check failing.
+    const unconfirmed = await tx
+      .select({ chain: payments.chainId, oldest: min(payments.createdAt) })
+      .from(payments)
+      .where(eq(payments.status, 'detected'))
+      .groupBy(payments.chainId)
+      .orderBy(payments.chainId);
+
     const [sweepsOpen] = await tx
       .select({ n: count(), oldest: min(sweeps.createdAt) })
       .from(sweeps)
@@ -125,6 +133,12 @@ export async function collectHealth(deps: Deps): Promise<Metric[]> {
       { name: 'gw_scanner_cursor_age_seconds', help: 'Seconds since the chain scanner last advanced its cursor (NaN: never ran).', type: 'gauge', samples: perChain((c) => seconds(now, c.updatedAt)) },
       { name: 'gw_scanner_block_age_seconds', help: 'Age of the newest scanned block (how far behind the chain the scanner is).', type: 'gauge', samples: perChain((c) => seconds(now, c.blockTime)) },
       { name: 'gw_scanner_cursor_block', help: 'Newest scanned block number.', type: 'gauge', samples: perChain((c) => (c.block === null ? NaN : Number(c.block))) },
+      {
+        name: 'gw_payment_oldest_unconfirmed_seconds',
+        help: 'Age of the oldest detected, not yet confirmed payment per chain (no sample: none).',
+        type: 'gauge',
+        samples: unconfirmed.map((u) => ({ labels: { chain: u.chain }, value: seconds(now, u.oldest) })),
+      },
       { name: 'gw_reconciliation_last_run_age_seconds', help: 'Seconds since the last reconciliation run started (NaN: never ran).', type: 'gauge', samples: [{ value: seconds(now, recon?.startedAt) }] },
       { name: 'gw_reconciliation_last_ok', help: '1 when the last reconciliation run found no issue.', type: 'gauge', samples: [{ value: recon ? Number(recon.ok) : NaN }] },
       {

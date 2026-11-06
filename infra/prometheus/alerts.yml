@@ -37,6 +37,15 @@ groups:
           summary: "Scanner for {{ $labels.chain }} is {{ $value | humanizeDuration }} behind the chain"
           runbook: "docs/RUNBOOK.md#rpc-outage"
 
+      - alert: GatewayPaymentNotConfirming
+        # Deepest tier on BSC is minutes. Longer = RPC providers disagree (quorum), or the receipt re-check fails.
+        expr: gw_payment_oldest_unconfirmed_seconds > 1800
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "A payment on {{ $labels.chain }} has waited {{ $value | humanizeDuration }} for confirmation"
+          runbook: "docs/RUNBOOK.md#rpc-disagreement"
+
       - alert: GatewayReconciliationMismatch
         expr: gw_reconciliation_last_ok == 0
         labels: { severity: critical }

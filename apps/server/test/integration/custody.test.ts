@@ -108,6 +108,7 @@ describe('registry verification (RPC network id + on-chain decimals)', () => {
     const mislabeled = { ...bsc, rpcUrls: ['${EVM_LOCAL_RPC_URL}'] };
     const problems = await verifyRegistry({ chains: [mislabeled], tokens: [] }, seedEnv);
     expect(problems.join()).toMatch(/network id 31337, expected 56/);
+    expect(problems.join()).toMatch(/mainnet needs at least 2 RPC providers/);
     expect(problems.join()).not.toContain(anvilUrl);
   });
 

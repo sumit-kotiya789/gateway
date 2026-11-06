@@ -300,6 +300,24 @@ describe('watcher on a fake chain', () => {
     expect(await get()).toMatchObject({ status: 'confirming', payments: [{ status: 'detected' }] });
   });
 
+  it('lying RPC: with several providers, confirmation needs RPC_QUORUM of them to see the receipt deep enough', async () => {
+    const { inv, get } = await newInvoice('10');
+    chain.pay(inv.deposit_address, units(10));
+    await tick();
+    chain.mine(5);
+    const honest = chain.adapter();
+    const blind: ChainAdapter = { ...chain.adapter(), getTransactionReceipt: async () => null };
+    const down: ChainAdapter = { ...chain.adapter(), getLatestBlock: () => Promise.reject(new Error('down')) };
+    const behind: ChainAdapter = { ...chain.adapter(), getLatestBlock: async () => chain.latest - 4n }; // depth 1 < 3
+    const quorumTick = (witnesses: ChainAdapter[]) => scanTick({ deps, adapter: chain.adapter(), chain: fakeChainCfg, tokens: fakeTokens, epoch, witnesses });
+    for (const w of [[honest, blind], [honest, down], [honest, behind], [honest, blind, down]]) {
+      await quorumTick(w);
+      expect(await get()).toMatchObject({ status: 'confirming', payments: [{ status: 'detected' }] });
+    }
+    await quorumTick([blind, honest, chain.adapter()]);
+    expect(await get()).toMatchObject({ status: 'settled', payments: [{ status: 'confirmed' }] });
+  });
+
   it('payment after the deadline: invoice expires and becomes late_payment once confirmed', async () => {
     const { inv, get } = await newInvoice('10', { expires_in: 300 });
     chain.mine(1, Number(BigInt(Math.floor(Date.parse(inv.expires_at) / 1000)) - chain.time + 10n));
