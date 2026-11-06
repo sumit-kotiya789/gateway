@@ -200,6 +200,16 @@ class GW_Crypto_Gateway extends WC_Payment_Gateway {
 					$this->hold( $order, sprintf( __( 'Crypto invoice is %1$s (%2$s of %3$s received). Resolve it in the gateway dashboard.', 'gateway-crypto' ), $inv['status'], $inv['amount_received'], $inv['amount'] ) );
 				}
 				return;
+			case 'held':
+				if ( $open ) {
+					$this->hold( $order, __( 'Crypto payment received but held for review by the payment gateway. Do not ship until it is released.', 'gateway-crypto' ) );
+				}
+				return;
+			case 'failed':
+				if ( $current && $open ) {
+					$order->update_status( 'failed', __( 'Crypto payment rejected by the payment gateway review. Any refund is handled outside the gateway.', 'gateway-crypto' ) );
+				}
+				return;
 			case 'expired':
 			case 'cancelled':
 				if ( $current && $order->has_status( 'pending' ) ) {

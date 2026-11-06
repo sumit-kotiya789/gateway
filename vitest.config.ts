@@ -18,6 +18,7 @@ const MONEY_CRITICAL = [
   'packages/core/src/fees.ts',
   'apps/server/src/modules/ledger/ledger.ts',
   'apps/server/src/modules/ledger/fee-balance.ts',
+  'apps/server/src/modules/risk/risk.ts',
   // Custodial (M7)
   'apps/signer/src/signer.ts',
   'apps/signer/src/keys.ts',

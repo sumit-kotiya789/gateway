@@ -274,6 +274,20 @@
       "when": 1793096317481,
       "tag": "0038_treasury_security",
       "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1793956899539,
+      "tag": "0039_risk",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1793956940461,
+      "tag": "0040_risk_security",
+      "breakpoints": true
     }
   ]
 }

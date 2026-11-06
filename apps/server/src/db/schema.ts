@@ -524,6 +524,8 @@ export const invoiceStatus = pgEnum('invoice_status', [
   'cancelled',
   'failed',
   'late_payment',
+  // Payments confirmed but a risk rule tripped (blocked payer, merchant limit): an admin releases or rejects (M9).
+  'held',
 ]);
 
 export const paymentLinks = pgTable(
@@ -765,6 +767,50 @@ export const feeTopups = pgTable(
     index('fee_topups_merchant_idx').on(t.merchantId, t.livemode),
     check('fee_topups_amount', sql`${t.amount} > 0`),
     check('fee_topups_reference_len', sql`char_length(${t.reference}) between 3 and 200`),
+  ],
+);
+
+/** Payer addresses whose payments are held for review instead of crediting (M9, D-094). Platform-wide. */
+export const riskBlockedAddresses = pgTable(
+  'risk_blocked_addresses',
+  {
+    id: id(),
+    family: chainFamily('family').notNull(),
+    address: text('address').notNull(), // lowercase
+    reason: text('reason').notNull(),
+    createdBy: uuid('created_by')
+      .notNull()
+      .references(() => adminUsers.id),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('risk_blocked_addresses_uq').on(t.family, t.address),
+    check('risk_blocked_addresses_lower', sql`${t.address} = lower(${t.address})`),
+    check('risk_blocked_addresses_reason_len', sql`char_length(${t.reason}) between 3 and 500`),
+  ],
+);
+
+/** Live-mode limits per merchant and token, minor units; null = no limit. Above a limit: held (M9, D-094). */
+export const merchantRiskLimits = pgTable(
+  'merchant_risk_limits',
+  {
+    id: id(),
+    merchantId: uuid('merchant_id')
+      .notNull()
+      .references(() => merchants.id),
+    tokenId: text('token_id')
+      .notNull()
+      .references(() => tokens.id),
+    perInvoice: money('per_invoice'),
+    perDay: money('per_day'),
+    updatedBy: uuid('updated_by')
+      .notNull()
+      .references(() => adminUsers.id),
+    updatedAt: tstz('updated_at').notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('merchant_risk_limits_uq').on(t.merchantId, t.tokenId),
+    check('merchant_risk_limits_positive', sql`coalesce(${t.perInvoice}, 1) > 0 and coalesce(${t.perDay}, 1) > 0`),
   ],
 );
 

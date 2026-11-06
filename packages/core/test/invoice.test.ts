@@ -7,6 +7,7 @@ import {
   canTransition,
   WATCHER_TRANSITIONS,
   classifyPayment,
+  holdPlan,
   planInvoice,
   type InvoiceStatus,
   type PaymentTotals,
@@ -32,9 +33,15 @@ describe('invoice state machine', () => {
     ['expired', 'late_payment'],
     ['cancelled', 'late_payment'],
     ['late_payment', 'paid'],
+    // Risk review (D-094): entered from confirming only; left by an admin decision only.
+    ['confirming', 'held'],
+    ['held', 'paid'],
+    ['held', 'overpaid'],
+    ['held', 'underpaid'],
+    ['held', 'failed'],
   ];
 
-  it('allows exactly the documented transitions (all 144 pairs checked)', () => {
+  it('allows exactly the documented transitions (all 169 pairs checked)', () => {
     const allowed = new Set(legal.map(([a, b]) => `${a}>${b}`));
     for (const from of INVOICE_STATUSES) {
       for (const to of INVOICE_STATUSES) {
@@ -60,6 +67,16 @@ describe('invoice state machine', () => {
   it('terminal states have no exits', () => {
     expect(INVOICE_TRANSITIONS.settled).toEqual([]);
     expect(INVOICE_TRANSITIONS.failed).toEqual([]);
+  });
+
+  it('holdPlan: a plan ending in a classification ends held instead; any other plan is unchanged', () => {
+    expect(holdPlan(['confirming', 'paid'])).toEqual(['confirming', 'held']);
+    expect(holdPlan(['detected', 'confirming', 'overpaid'])).toEqual(['detected', 'confirming', 'held']);
+    expect(holdPlan(['underpaid'])).toEqual(['held']);
+    for (const plan of [[], ['detected'], ['confirming'], ['expired', 'late_payment'], ['pending']] as InvoiceStatus[][]) expect(holdPlan(plan)).toEqual(plan);
+    // The watcher never leaves held on its own.
+    expect(WATCHER_TRANSITIONS.held).toBeUndefined();
+    expect(planInvoice('held', 100n, 0, { confirmed: 200n, outstanding: 0, outstandingMined: false, allLate: false })).toEqual([]);
   });
 });
 

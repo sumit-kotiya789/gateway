@@ -46,6 +46,14 @@ groups:
           summary: "A payment on {{ $labels.chain }} has waited {{ $value | humanizeDuration }} for confirmation"
           runbook: "docs/RUNBOOK.md#rpc-disagreement"
 
+      - alert: GatewayInvoiceHeldForReview
+        # A risk rule held a paid invoice (blocked payer, merchant limit): the merchant waits for an admin decision.
+        expr: gw_invoice_oldest_held_seconds > 3600
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ with query \"gw_invoices_held\" }}{{ . | first | value }}{{ end }} invoice(s) held for risk review, oldest {{ $value | humanizeDuration }}"
+          runbook: "docs/RUNBOOK.md#risk-review"
+
       - alert: GatewayReconciliationMismatch
         expr: gw_reconciliation_last_ok == 0
         labels: { severity: critical }

@@ -656,8 +656,132 @@ describe('ledger, fees, outbox', () => {
       ['invoice.paid', 'manual: merchant accepts the shortfall'],
     ]);
     const a = await owner.query(`select after from audit_logs where action = 'admin.invoice_resolved' and target_id = $1 and actor_id = $2`, [inv.id, op.id]);
-    expect(a.rows).toEqual([{ after: body }]);
+    expect(a.rows).toEqual([{ after: { ...body, action: 'release' } }]);
     expect((await auditor.agent.req('GET', `/admin/v1/invoices/${inv.id}`)).json()).toMatchObject({ id: inv.id, history: expect.arrayContaining([expect.objectContaining({ to: 'paid', reason: 'manual: merchant accepts the shortfall' })]) });
+  });
+
+  // ---------------------------------------------------------------- M9: risk hooks (D-094)
+
+  it('risk: a blocked payer holds the invoice; an admin releases (settles) or rejects (fails) it', async () => {
+    const op = await adminAgent(t, owner);
+    const auditor = await adminAgent(t, owner, 'auditor');
+    const block = { family: 'evm', address: PAYER, reason: 'sanctions screening hit' };
+    expect((await auditor.agent.req('POST', '/admin/v1/risk/blocked-addresses', block)).statusCode).toBe(403);
+    const created = await op.agent.req('POST', '/admin/v1/risk/blocked-addresses', block);
+    expect(created.statusCode).toBe(201);
+    const blocked = created.json<{ id: string; address: string }>();
+    try {
+      expect(blocked.address).toBe(PAYER.toLowerCase());
+      expect((await op.agent.req('POST', '/admin/v1/risk/blocked-addresses', block)).statusCode).toBe(409);
+      expect((await op.agent.req('POST', '/admin/v1/risk/blocked-addresses', { ...block, address: '0x123' })).statusCode).toBe(400);
+      expect((await auditor.agent.req('GET', '/admin/v1/risk/blocked-addresses?q=3333')).json()).toMatchObject({ data: [{ id: blocked.id }] });
+
+      const one = await newInvoice('10');
+      chain.pay(one.inv.deposit_address, units(10));
+      chain.mine(3);
+      await settle();
+      expect(await one.get()).toMatchObject({ status: 'held', amount_received: '10', payments: [{ status: 'confirmed' }] });
+      // The money arrived, so the payment is booked; no fee and no settlement until a decision.
+      expect((await journals(one.inv.id)).rows.map((x) => x.kind)).toEqual(['payment', 'payment']);
+      await settle(); // the watcher never moves a held invoice
+      expect((await one.get()).status).toBe('held');
+
+      const url = (id: string) => `/admin/v1/invoices/${id}/resolve`;
+      const listed = (await auditor.agent.req('GET', `/admin/v1/invoices?merchant_id=${one.m.merchantId}&livemode=false`)).json<{ data: { status: string }[] }>();
+      expect(listed.data.map((x) => x.status)).toEqual(['held']);
+      expect((await op.agent.req('POST', url(one.inv.id), { reason: 'cleared by compliance' })).statusCode).toBe(403); // step-up
+      expect((await op.agent.req('POST', url(one.inv.id), { reason: 'cleared by compliance' }, op.stepUp())).json()).toMatchObject({ status: 'settled', fee_amount: '0.1' });
+      const ev = (await one.m.api('GET', '/v1/events?limit=3')).json<{ data: { type: string; data: { reason: string } }[] }>().data;
+      expect(ev.map((e) => [e.type, e.data.reason])).toEqual([
+        ['invoice.settled', 'platform fee charged'],
+        ['invoice.paid', 'manual: released: cleared by compliance'],
+        ['invoice.held', `risk: payer ${PAYER.toLowerCase()} is blocked`],
+      ]);
+      expect((await op.agent.req('POST', url(one.inv.id), { reason: 'too late now', action: 'reject' }, op.stepUp())).statusCode).toBe(409);
+
+      const two = await newInvoice('10');
+      chain.pay(two.inv.deposit_address, units(10));
+      chain.mine(3);
+      await settle();
+      expect((await op.agent.req('POST', url(two.inv.id), { reason: 'confirmed fraud', action: 'reject' }, op.stepUp())).json()).toMatchObject({ status: 'failed' });
+      expect((await journals(two.inv.id)).rows.map((x) => x.kind)).toEqual(['payment', 'payment']); // no fee on a rejected invoice
+      const a = await owner.query(`select after from audit_logs where action = 'admin.invoice_resolved' and target_id = $1`, [two.inv.id]);
+      expect(a.rows).toEqual([{ after: { action: 'reject', reason: 'confirmed fraud' } }]);
+    } finally {
+      // Unblocking loosens a control: step-up. Always runs so later tests pay from PAYER normally.
+      expect((await op.agent.req('POST', `/admin/v1/risk/blocked-addresses/${blocked.id}/remove`, { reason: 'test cleanup' })).statusCode).toBe(403);
+      expect((await op.agent.req('POST', `/admin/v1/risk/blocked-addresses/${blocked.id}/remove`, { reason: 'test cleanup' }, op.stepUp())).statusCode).toBe(204);
+    }
+    expect((await op.agent.req('POST', `/admin/v1/risk/blocked-addresses/${blocked.id}/remove`, { reason: 'test cleanup' }, op.stepUp())).statusCode).toBe(404);
+    const unblock = await owner.query(`select before, after from audit_logs where action = 'admin.risk_address_unblocked' and target_id = $1`, [blocked.id]);
+    expect(unblock.rows).toEqual([{ before: expect.objectContaining({ address: PAYER.toLowerCase() }), after: { reason: 'test cleanup' } }]);
+  });
+
+  it('risk: live limits per invoice and per UTC day hold invoices above them; only admins with step-up set them', async () => {
+    // A live (non-testnet) fake chain: limits apply to real money only.
+    await owner.query(`insert into chains (id, family, name, evm_chain_id, rpc_urls, native_symbol, native_decimals, block_time_ms,
+        default_confirmations, reorg_depth, finality, testnet, enabled)
+      values ('evm-fakelive', 'evm', 'Fake live EVM', 999998, '{}', 'ETH', 18, 1000, 3, 8, 'confirmations', false, true) on conflict do nothing`);
+    await owner.query(
+      `insert into tokens (id, chain_id, symbol, name, contract_address, decimals, min_confirmations, confirmation_tiers, min_amount, enabled)
+       values ('evm-fakelive:usdt', 'evm-fakelive', 'USDT', 'evm-fakelive:usdt', $1, 6, 3, '[]', 10000, true) on conflict do nothing`,
+      [USDT],
+    );
+    const liveCfg: ChainConfig = { ...fakeChainCfg, id: 'evm-fakelive', evmChainId: 999998, testnet: false };
+    const liveTokens = [{ ...tok('evm-fakelive:usdt', USDT), chainId: 'evm-fakelive', confirmationTiers: [] }];
+    const liveChain = new FakeChain();
+    const liveEpoch = await becomeLeader(deps, liveChain.adapter(), liveCfg);
+    const liveTick = () => scanTick({ deps, adapter: liveChain.adapter(), chain: liveCfg, tokens: liveTokens, epoch: liveEpoch });
+
+    const m = await merchantWithKey(app, clock, owner, { livemode: true });
+    const op = await adminAgent(t, owner);
+    const B = `/admin/v1/merchants/${m.merchantId}`;
+    // No fee here, so the fee balance never blocks the next live invoice.
+    expect((await op.agent.req('PUT', `${B}/fees`, { fee_bps: 0, fee_fixed: '0', fee_grace: '1', reason: 'risk limits test' }, op.stepUp())).statusCode).toBe(200);
+    const put = (body: Record<string, unknown>, headers = op.stepUp()) =>
+      op.agent.req('PUT', `${B}/risk-limits`, { asset: 'evm-fakelive:usdt', per_invoice: '100', per_day: '120', reason: 'new merchant limits', ...body }, headers);
+    // Before any limit: a live invoice of any size goes through.
+    const pay0 = await m.api('POST', '/v1/invoices', { amount: '5', token: 'evm-fakelive:usdt' });
+    const first = pay0.json<Inv>();
+    liveChain.pay(first.deposit_address, units(5));
+    liveChain.mine(3);
+    await liveTick();
+    await liveTick();
+    expect((await m.api('GET', `/v1/invoices/${first.id}`)).json<Inv>().status).toBe('settled');
+    expect((await put({}, {})).statusCode).toBe(403);
+    expect((await put({ asset: 'evm-fake:usdt' })).statusCode).toBe(400); // a test token: limits are live only
+    expect((await put({ per_invoice: '0' })).statusCode).toBe(400);
+    expect((await put({})).json()).toMatchObject({ data: [{ asset: 'evm-fakelive:usdt', per_invoice: '100', per_day: '120' }] });
+    expect((await op.agent.req('GET', `${B}/risk-limits`)).json()).toMatchObject({ data: [{ per_invoice: '100', per_day: '120' }] });
+
+    const pay = async (amount: string) => {
+      const inv = (await m.api('POST', '/v1/invoices', { amount, token: 'evm-fakelive:usdt' })).json<Inv>();
+      if (!inv.id) throw new Error(`invoice creation failed: ${JSON.stringify(inv)}`);
+      liveChain.pay(inv.deposit_address, units(Number(amount)));
+      liveChain.mine(3);
+      await liveTick();
+      await liveTick();
+      return (await m.api('GET', `/v1/invoices/${inv.id}`)).json<Inv>();
+    };
+    const reason = async (id: string) =>
+      (await op.agent.req('GET', `/admin/v1/invoices/${id}`)).json<{ history: { to: string; reason: string }[] }>().history.find((h) => h.to === 'held')?.reason;
+    expect((await pay('50')).status).toBe('settled');
+    expect((await pay('60')).status).toBe('settled'); // 5 + 50 + 60 = 115 today
+    const overDay = await pay('20'); // 135 > 120
+    expect(overDay.status).toBe('held');
+    expect(await reason(overDay.id)).toBe('risk: daily limit reached');
+    const overInvoice = await pay('150');
+    expect(overInvoice.status).toBe('held');
+    expect(await reason(overInvoice.id)).toBe('risk: above the per-invoice limit');
+    // Released invoices count toward the day from then on; removing the limits lets the next one through.
+    expect((await op.agent.req('POST', `/admin/v1/invoices/${overDay.id}/resolve`, { reason: 'merchant verified' }, op.stepUp())).json()).toMatchObject({ status: 'settled' });
+    expect((await put({ per_invoice: null, per_day: null })).statusCode).toBe(200);
+    expect((await pay('500')).status).toBe('settled');
+    const a = await owner.query(`select after from audit_logs where action = 'admin.merchant_risk_limits' and target_id = $1 order by seq`, [m.merchantId]);
+    expect(a.rows.map((r: { after: unknown }) => r.after)).toEqual([
+      { asset: 'evm-fakelive:usdt', per_invoice: '100', per_day: '120', reason: 'new merchant limits' },
+      { asset: 'evm-fakelive:usdt', per_invoice: null, per_day: null, reason: 'new merchant limits' },
+    ]);
   });
 
   // ---------------------------------------------------------------- M8: fixed fee, prepaid top-ups

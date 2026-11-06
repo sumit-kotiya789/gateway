@@ -15,6 +15,7 @@ export const INVOICE_STATUSES = [
   'cancelled',
   'failed',
   'late_payment',
+  'held',
 ] as const;
 export type InvoiceStatus = (typeof INVOICE_STATUSES)[number];
 
@@ -23,7 +24,8 @@ export const INVOICE_TRANSITIONS: Readonly<Record<InvoiceStatus, readonly Invoic
   pending: ['detected', 'expired', 'cancelled'],
   // Back to pending = the only transfer was reorged away before confirmation.
   detected: ['confirming', 'pending'],
-  confirming: ['paid', 'underpaid', 'overpaid', 'pending'],
+  // held: a risk rule tripped once every payment was confirmed (blocked payer, merchant limit; D-094).
+  confirming: ['paid', 'underpaid', 'overpaid', 'pending', 'held'],
   // Top-up seen (detected), or merchant accepts the shortfall (paid).
   underpaid: ['detected', 'paid'],
   paid: ['settled'],
@@ -33,6 +35,8 @@ export const INVOICE_TRANSITIONS: Readonly<Record<InvoiceStatus, readonly Invoic
   cancelled: ['late_payment'],
   // Manual resolution only (admin / merchant decision).
   late_payment: ['paid'],
+  // Admin decision only: release (to what the confirmed total classifies as) or reject.
+  held: ['paid', 'overpaid', 'underpaid', 'failed'],
   settled: [],
   failed: [],
 };
@@ -137,6 +141,15 @@ function watcherPath(from: InvoiceStatus, to: InvoiceStatus): InvoiceStatus[] {
  * The ordered status changes that bring an invoice in line with its payments. Empty = nothing to do.
  * A pending invoice whose only payments arrived after its deadline is expired first, so they end up as late_payment.
  */
+/**
+ * Risk hold (D-094): when a plan would end in a classification (paid / overpaid / underpaid), it ends in `held` instead.
+ * Every such plan reaches the classification from `confirming`, and confirming -> held is allowed.
+ */
+export function holdPlan(plan: readonly InvoiceStatus[]): InvoiceStatus[] {
+  const last = plan.at(-1);
+  return last === 'paid' || last === 'overpaid' || last === 'underpaid' ? [...plan.slice(0, -1), 'held'] : [...plan];
+}
+
 export function planInvoice(status: InvoiceStatus, expected: bigint, toleranceBps: number, t: PaymentTotals): InvoiceStatus[] {
   const seen = t.outstanding > 0 || t.confirmed > 0n;
   if (status === 'pending' && seen && t.allLate) return ['expired', ...watcherPath('expired', watcherTarget('expired', expected, toleranceBps, t))];

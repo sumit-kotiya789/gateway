@@ -17,7 +17,7 @@
 //   invoice settled  (R received, F fee, after the funds were swept):
 //                           Dr merchant_pending R / Cr merchant_available R-F / Cr platform_fee_revenue F
 // The database allows each journal kind only its own account kinds (ledger_entry_guard).
-import { AppError, computeFee, feeBase } from '@gw/core';
+import { AppError, classifyPayment, computeFee, feeBase } from '@gw/core';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import type { Tx } from '../../common/db.js';
 import { feeTopups, ledgerAccounts, ledgerEntries, ledgerJournals, invoices, payments, sweeps } from '../../db/schema.js';
@@ -206,14 +206,23 @@ export async function settleIfSwept(deps: Deps, tx: Tx, invoiceId: string): Prom
  * Manual resolution (admin, M5b): an underpaid or late_payment invoice is accepted as paid, then settled like any other
  * paid invoice (fee on what arrived, capped at expected). Only these two edges; everything else is a conflict.
  */
-export async function resolveInvoice(deps: Deps, tx: Tx, invoiceId: string, reason: string): Promise<void> {
-  const [inv] = await tx.select({ status: invoices.status }).from(invoices).where(eq(invoices.id, invoiceId)).for('update');
+/**
+ * Admin decision on an invoice that waits for one. underpaid / late_payment: accept (-> paid). held (risk review,
+ * D-094): release (-> what its confirmed total classifies as) or reject (-> failed; the funds stay where they are and
+ * any refund is handled outside the gateway).
+ */
+export async function resolveInvoice(deps: Deps, tx: Tx, invoiceId: string, reason: string, action: 'release' | 'reject' = 'release'): Promise<void> {
+  const [inv] = await tx.select().from(invoices).where(eq(invoices.id, invoiceId)).for('update');
   if (!inv) throw new AppError('not_found', 'invoice not found');
-  if (inv.status !== 'underpaid' && inv.status !== 'late_payment') {
-    throw new AppError('conflict', `only underpaid or late_payment invoices can be resolved (status: ${inv.status})`);
+  if (inv.status === 'held') {
+    const to = action === 'reject' ? 'failed' : classifyPayment(inv.amountExpected, inv.amountReceived, inv.underpayToleranceBps);
+    await transitionInvoice(deps, tx, invoiceId, to, `manual: ${action === 'reject' ? 'rejected' : 'released'}: ${reason}`);
+  } else if ((inv.status === 'underpaid' || inv.status === 'late_payment') && action === 'release') {
+    await transitionInvoice(deps, tx, invoiceId, 'paid', `manual: ${reason}`);
+  } else {
+    throw new AppError('conflict', `cannot ${action} an invoice in status ${inv.status}`);
   }
-  await transitionInvoice(deps, tx, invoiceId, 'paid', `manual: ${reason}`);
-  await settleInvoice(deps, tx, invoiceId);
+  await settleInvoice(deps, tx, invoiceId); // no-op unless paid / overpaid
 }
 
 export interface TopupInput {

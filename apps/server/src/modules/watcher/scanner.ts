@@ -6,15 +6,17 @@
 //   2. Every unconfirmed payment: is its block still canonical? If not, find the tx again (moved) or orphan it.
 //      If canonical and deep enough (tiers + finality, D-008/D-035), re-check the receipt, then confirm. With several
 //      providers, RPC_QUORUM of them must each see the receipt AND the depth on their own (lying RPC, D-092).
-//   3. Write payments, advance the cursor, re-plan every touched invoice (core planInvoice).
+//   3. Write payments, advance the cursor, re-plan every touched invoice (core planInvoice). A plan that would end
+//      paid / overpaid / underpaid ends `held` instead when a risk rule trips (D-094).
 import type { BlockInfo, ChainAdapter, ChainConfig, Receipt, TokenConfig, Transfer } from '@gw/core';
-import { isConfirmed, planInvoice, requiredConfirmations, type InvoiceStatus } from '@gw/core';
+import { holdPlan, isConfirmed, planInvoice, requiredConfirmations, type InvoiceStatus } from '@gw/core';
 import { and, eq, gt, ne, or, sql } from 'drizzle-orm';
 import { withSystem, type Tx } from '../../common/db.js';
 import { chainCursors, depositAddresses, invoices, payments } from '../../db/schema.js';
 import type { Deps } from '../../deps.js';
 import { transitionInvoice } from '../invoices/invoices.js';
 import { RPC_QUORUM } from '../registry/registry.js';
+import { riskHoldReason } from '../risk/risk.js';
 import { postPayment, settleInvoice } from '../ledger/ledger.js';
 
 /** A newer leader owns this chain: the tick wrote nothing and this process must stop scanning. */
@@ -55,6 +57,7 @@ const REASON: Record<InvoiceStatus, string> = {
   overpaid: 'payments confirmed: amount exceeded',
   expired: 'payment arrived after the deadline',
   late_payment: 'payment confirmed after expiry or cancellation',
+  held: 'payments confirmed: held for risk review',
   // Never reached by the watcher (not in WATCHER_TRANSITIONS); listed so every status has a reason.
   created: 'watcher: created',
   settled: 'watcher: settled',
@@ -308,8 +311,18 @@ export async function reconcileInvoice(deps: Deps, tx: Tx, invoiceId: string, la
   if (inv.amountReceived !== confirmed) {
     await tx.update(invoices).set({ amountReceived: confirmed }).where(eq(invoices.id, invoiceId));
   }
-  for (const step of planInvoice(inv.status, inv.amountExpected, inv.underpayToleranceBps, totals)) {
-    await transitionInvoice(deps, tx, invoiceId, step, REASON[step]);
+  const plan = planInvoice(inv.status, inv.amountExpected, inv.underpayToleranceBps, totals);
+  const risk =
+    holdPlan(plan).at(-1) === 'held'
+      ? await riskHoldReason(
+          tx,
+          inv,
+          live.filter((p) => p.status === 'confirmed'),
+          confirmed,
+        )
+      : null;
+  for (const step of risk ? holdPlan(plan) : plan) {
+    await transitionInvoice(deps, tx, invoiceId, step, step === 'held' && risk ? risk : REASON[step]);
   }
   await settleInvoice(deps, tx, invoiceId); // non-custodial paid/overpaid -> fee -> settled; no-op otherwise
 }

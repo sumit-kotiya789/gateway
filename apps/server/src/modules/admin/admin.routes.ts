@@ -1,7 +1,7 @@
 // Admin console API (M5b), mounted under /admin/v1 behind the admin network guard. Every route needs an admin session
 // (separate auth domain, D-025) and a permission; actions that lower a safety control also need step-up TOTP (D-064).
 // Every change is audited with the admin's reason, in the same transaction as the change.
-import { AppError, INVOICE_STATUSES, UUID_RE, toMinorUnits } from '@gw/core';
+import { AppError, INVOICE_STATUSES, UUID_RE, fromMinorUnits, toMinorUnits } from '@gw/core';
 import { and, arrayContains, asc, desc, eq, ilike, inArray, isNull, lt, or, sql } from 'drizzle-orm';
 import type { FastifyRequest } from 'fastify';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
@@ -13,6 +13,8 @@ import {
   chains,
   invoices,
   merchantRiskFlag,
+  merchantRiskLimits,
+  riskBlockedAddresses,
   merchantStatus,
   merchantUsers,
   merchants,
@@ -33,8 +35,8 @@ const Reason = z.string().trim().min(3).max(500);
 const ReasonBody = z.strictObject({ reason: Reason });
 const IdParams = z.strictObject({ id: z.uuid() });
 const Page = { limit: z.coerce.number().int().min(1).max(100).default(50), starting_after: z.uuid().optional() };
-/** Invoices an admin may need to act on (manual resolve). */
-const ATTENTION = ['underpaid', 'late_payment'] as const;
+/** Invoices an admin may need to act on (manual resolve; held = risk review, D-094). */
+const ATTENTION = ['held', 'underpaid', 'late_payment'] as const;
 
 const like = (s: string) => `%${s.replace(/[\\%_]/g, '\\$&')}%`;
 /** Token-unit setting (stablecoin units, up to 6 decimals), bounded like the DB check. */
@@ -190,6 +192,147 @@ export function adminRoutes(deps: Deps): FastifyPluginAsyncZod {
           });
           return merchantView(next);
         }),
+    );
+
+    // ---------------------------------------------------------------- risk hooks (M9, D-094)
+
+    const limitsView = async (tx: Tx, merchantId: string) => ({
+      data: (
+        await tx
+          .select({ l: merchantRiskLimits, decimals: tokens.decimals })
+          .from(merchantRiskLimits)
+          .innerJoin(tokens, eq(tokens.id, merchantRiskLimits.tokenId))
+          .where(eq(merchantRiskLimits.merchantId, merchantId))
+          .orderBy(asc(merchantRiskLimits.tokenId))
+      ).map(({ l, decimals }) => ({
+        // `asset`: the audit redaction treats any key containing "token" as a secret; views and audit use the same name.
+        asset: l.tokenId,
+        per_invoice: l.perInvoice === null ? null : fromMinorUnits(l.perInvoice, decimals),
+        per_day: l.perDay === null ? null : fromMinorUnits(l.perDay, decimals),
+        updated_at: l.updatedAt.toISOString(),
+      })),
+    });
+
+    app.get('/merchants/:id/risk-limits', { preHandler: requireAdmin(deps, 'admin:read'), schema: { params: IdParams } }, async (req) =>
+      withSystem(deps.db, (tx) => limitsView(tx, req.params.id)),
+    );
+
+    /** Live-mode limits per token (null = none). Payments above them are held for review. Step-up: may loosen a control. */
+    app.put(
+      '/merchants/:id/risk-limits',
+      {
+        preHandler: [requireAdmin(deps, 'risk:manage'), requireAdminTotp(deps)],
+        schema: {
+          params: IdParams,
+          body: z.strictObject({
+            asset: z.string().min(1).max(100),
+            per_invoice: z.string().max(100).nullable(),
+            per_day: z.string().max(100).nullable(),
+            reason: Reason,
+          }),
+        },
+      },
+      async (req) =>
+        withSystem(deps.db, async (tx) => {
+          const b = req.body;
+          const m = await lockedMerchant(tx, req.params.id);
+          const [tk] = await tx.select({ token: tokens, chain: chains }).from(tokens).innerJoin(chains, eq(chains.id, tokens.chainId)).where(eq(tokens.id, b.asset));
+          if (!tk || tk.chain.testnet) throw new AppError('validation_error', `${b.asset} is not a live token`, { field: 'asset' });
+          const minor = (v: string | null, field: string) => {
+            if (v === null) return null;
+            const n = toMinorUnits(v, tk.token.decimals);
+            if (n <= 0n) throw new AppError('validation_error', 'a limit must be greater than zero (null removes it)', { field });
+            return n;
+          };
+          const perInvoice = minor(b.per_invoice, 'per_invoice');
+          const perDay = minor(b.per_day, 'per_day');
+          const before = (await limitsView(tx, m.id)).data.find((l) => l.asset === b.asset) ?? null;
+          await tx
+            .insert(merchantRiskLimits)
+            .values({ merchantId: m.id, tokenId: b.asset, perInvoice, perDay, updatedBy: adminOf(req).id })
+            .onConflictDoUpdate({
+              target: [merchantRiskLimits.merchantId, merchantRiskLimits.tokenId],
+              set: { perInvoice, perDay, updatedBy: adminOf(req).id, updatedAt: new Date(deps.clock()) },
+            });
+          await record(tx, req, {
+            merchantId: m.id,
+            action: 'admin.merchant_risk_limits',
+            targetType: 'merchant',
+            targetId: m.id,
+            before,
+            after: { asset: b.asset, per_invoice: b.per_invoice, per_day: b.per_day, reason: b.reason },
+          });
+          return limitsView(tx, m.id);
+        }),
+    );
+
+    const blockedView = (r: typeof riskBlockedAddresses.$inferSelect) => ({
+      id: r.id,
+      family: r.family,
+      address: r.address,
+      reason: r.reason,
+      created_by: r.createdBy,
+      created_at: r.createdAt.toISOString(),
+    });
+
+    app.get(
+      '/risk/blocked-addresses',
+      { preHandler: requireAdmin(deps, 'admin:read'), schema: { querystring: z.strictObject({ q: z.string().trim().max(100).optional() }) } },
+      async (req) =>
+        withSystem(deps.db, async (tx) => ({
+          data: (
+            await tx
+              .select()
+              .from(riskBlockedAddresses)
+              .where(req.query.q ? ilike(riskBlockedAddresses.address, like(req.query.q.toLowerCase())) : undefined)
+              .orderBy(desc(riskBlockedAddresses.createdAt))
+              .limit(200)
+          ).map(blockedView),
+        })),
+    );
+
+    /** Payments from a blocked payer are held for review once confirmed. Adding tightens a control: no step-up. */
+    app.post(
+      '/risk/blocked-addresses',
+      {
+        preHandler: requireAdmin(deps, 'risk:manage'),
+        schema: {
+          body: z.strictObject({ family: z.literal('evm'), address: z.string().trim().regex(/^0x[0-9a-fA-F]{40}$/, 'an EVM address'), reason: Reason }),
+        },
+      },
+      async (req, reply) => {
+        const row = await withSystem(deps.db, async (tx) => {
+          const [r] = await tx
+            .insert(riskBlockedAddresses)
+            .values({ family: req.body.family, address: req.body.address.toLowerCase(), reason: req.body.reason, createdBy: adminOf(req).id })
+            .returning();
+          /* v8 ignore next -- INSERT ... RETURNING yields the row or throws */
+          if (!r) throw new Error('insert failed');
+          await record(tx, req, { action: 'admin.risk_address_blocked', targetType: 'blocked_address', targetId: r.id, after: blockedView(r) });
+          return r;
+        });
+        return reply.status(201).send(blockedView(row));
+      },
+    );
+
+    /** Unblocking loosens a control: step-up TOTP and a reason. Invoices already held stay held. */
+    app.post(
+      '/risk/blocked-addresses/:id/remove',
+      { preHandler: [requireAdmin(deps, 'risk:manage'), requireAdminTotp(deps)], schema: { params: IdParams, body: ReasonBody } },
+      async (req, reply) => {
+        await withSystem(deps.db, async (tx) => {
+          const [r] = await tx.delete(riskBlockedAddresses).where(eq(riskBlockedAddresses.id, req.params.id)).returning();
+          if (!r) throw new AppError('not_found', 'blocked address not found');
+          await record(tx, req, {
+            action: 'admin.risk_address_unblocked',
+            targetType: 'blocked_address',
+            targetId: r.id,
+            before: blockedView(r),
+            after: { reason: req.body.reason },
+          });
+        });
+        return reply.status(204).send();
+      },
     );
 
     // ---------------------------------------------------------------- fees (M8, D-076)
@@ -348,19 +491,23 @@ export function adminRoutes(deps: Deps): FastifyPluginAsyncZod {
 
     app.post(
       '/invoices/:id/resolve',
-      { preHandler: [requireAdmin(deps, 'invoices:resolve'), requireAdminTotp(deps)], schema: { params: IdParams, body: ReasonBody } },
+      {
+        preHandler: [requireAdmin(deps, 'invoices:resolve'), requireAdminTotp(deps)],
+        // release: underpaid / late_payment -> paid; held -> its classification. reject: held -> failed.
+        schema: { params: IdParams, body: z.strictObject({ reason: Reason, action: z.enum(['release', 'reject']).default('release') }) },
+      },
       async (req) =>
         withSystem(deps.db, async (tx) => {
           const [inv] = await tx.select({ merchantId: invoices.merchantId, status: invoices.status }).from(invoices).where(eq(invoices.id, req.params.id)).for('update');
           if (!inv) throw new AppError('not_found', 'invoice not found');
-          await resolveInvoice(deps, tx, req.params.id, req.body.reason);
+          await resolveInvoice(deps, tx, req.params.id, req.body.reason, req.body.action);
           await record(tx, req, {
             merchantId: inv.merchantId,
             action: 'admin.invoice_resolved',
             targetType: 'invoice',
             targetId: req.params.id,
             before: { status: inv.status },
-            after: { reason: req.body.reason },
+            after: { action: req.body.action, reason: req.body.reason },
           });
           return invoiceDetail(tx, eq(invoices.id, req.params.id), base);
         }),

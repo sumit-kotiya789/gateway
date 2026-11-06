@@ -109,6 +109,11 @@ export async function collectHealth(deps: Deps): Promise<Metric[]> {
       .groupBy(payments.chainId)
       .orderBy(payments.chainId);
 
+    const [held] = await tx
+      .select({ n: count(), oldest: min(invoices.statusChangedAt) })
+      .from(invoices)
+      .where(eq(invoices.status, 'held'));
+
     const [sweepsOpen] = await tx
       .select({ n: count(), oldest: min(sweeps.createdAt) })
       .from(sweeps)
@@ -165,6 +170,8 @@ export async function collectHealth(deps: Deps): Promise<Metric[]> {
       { name: 'gw_sweeps_open', help: 'Custodial sweeps not finished yet.', type: 'gauge', samples: [{ value: sweepsOpen?.n ?? 0 }] },
       { name: 'gw_sweep_oldest_open_seconds', help: 'Age of the oldest unfinished sweep (0: none).', type: 'gauge', samples: [{ value: sweepsOpen?.oldest ? seconds(now, sweepsOpen.oldest) : 0 }] },
       { name: 'gw_sweeps_failed_24h', help: 'Sweeps that failed (reverted or refused as inconsistent) in the last 24 h.', type: 'gauge', samples: [{ value: sweepsFailed?.n ?? 0 }] },
+      { name: 'gw_invoices_held', help: 'Invoices held for risk review (blocked payer or merchant limit).', type: 'gauge', samples: [{ value: held?.n ?? 0 }] },
+      { name: 'gw_invoice_oldest_held_seconds', help: 'How long the oldest held invoice has waited for review (0: none).', type: 'gauge', samples: [{ value: held?.oldest ? seconds(now, held.oldest) : 0 }] },
       { name: 'gw_invoices_overdue_pending', help: 'Pending invoices more than 2 minutes past their deadline (expiry job not running).', type: 'gauge', samples: [{ value: overdue?.n ?? 0 }] },
     ] satisfies Metric[];
   });

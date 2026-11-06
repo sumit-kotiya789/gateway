@@ -23,6 +23,8 @@ Requirements: WordPress 6.4+, WooCommerce 8.3+, PHP 7.4+, store currency USD (US
 | detected / confirming | On hold, "do not ship yet" |
 | paid / overpaid / settled | Processing (`payment_complete`, transaction id = invoice id) |
 | underpaid / late_payment | On hold with the amounts; resolve in the gateway dashboard (a manual `paid` then completes the order) |
+| held (gateway risk review) | On hold, "do not ship"; release then completes the order |
+| failed (review rejected) | Failed (current invoice only) |
 | expired / cancelled | Cancelled (only the order's current invoice, only while pending) |
 
 - The plugin never trusts an event body: after verifying the signature it re-reads the invoice from the API and

@@ -85,4 +85,15 @@ expect 'old invoice expiring does not cancel the order' 'status=pending' "$(wp e
 hook "$inv2/paid/25" >/dev/null
 expect 'second invoice paid: processing' "status=processing paid_tx=$inv2" "$(wp eval-file /e2e/status.php "$id")"
 
+# Gateway risk review (D-094): held, then released or rejected.
+read -r id inv < <(order)
+hook "$inv/held/25" >/dev/null
+expect 'held for review: on hold' 'held for review' "$(wp eval-file /e2e/status.php "$id")"
+hook "$inv/paid/25" >/dev/null
+expect 'released: processing' 'status=processing' "$(wp eval-file /e2e/status.php "$id")"
+read -r id inv < <(order)
+hook "$inv/held/25" >/dev/null
+hook "$inv/failed/25" >/dev/null
+expect 'rejected: failed' 'status=failed' "$(wp eval-file /e2e/status.php "$id")"
+
 echo 'e2e ok'

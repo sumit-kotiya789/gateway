@@ -25,6 +25,7 @@ Every file with a `// MONEY-CRITICAL` header is listed here and in the coverage 
 | `apps/server/db/migrations/0016_xpub_security.sql` | pending change immutability, key uniqueness across pending changes, proof immutability | M8 |
 | `apps/server/src/modules/watcher/scanner.ts` | payment detection, reorg handling, confirmation, invoice reconciliation, fencing | M4 |
 | `apps/server/db/migrations/0009_payments_security.sql` | payment/invoice consistency, immutable amounts, confirmed is final | M4 |
+| `apps/server/src/modules/risk/risk.ts` | risk hold decision: blocked payer, live limits (D-094) | M9 |
 | `packages/core/src/fees.ts` | fee base and rounding | M5 |
 | `apps/server/src/modules/ledger/ledger.ts` | ledger postings, fee charge, settlement, manual resolution | M5 |
 | `apps/server/db/migrations/0011_ledger_outbox_security.sql` | balanced append-only ledger, fee immutability, trigger-only outbox | M5 |
@@ -97,6 +98,7 @@ Status: `planned` until the mitigation's milestone lands, then the test that pro
 | Reorg double-credit | Block-hash ring per chain; unique `(chain_id, tx_hash, log_index)`; credit only after finality + confirmations | planned | M4 |
 | Postgres restart / failover | Pool drops dead idle connections instead of crashing the process; next query reconnects | `chaos.test.ts` | M11 |
 | Redis outage | Rate limits fail open (D-031); api client has no offline queue, so requests never wait on Redis | `chaos.test.ts` | M11 |
+| Payment from a sanctioned / fraudulent payer, or a merchant suddenly taking far more than usual | Payer blocklist and live per-invoice / per-day limits hold the invoice for an admin decision (D-094) | `watcher.test.ts` | M9 |
 | Lying RPC | Multi-provider failover; confirmation needs two providers to each see the receipt and the depth (D-092); mainnet refuses fewer than two providers; fresh re-verify at confirmation | `watcher.test.ts`, `custody.test.ts` | M11 |
 | Webhook spoof (merchant side) | HMAC-SHA256 over `timestamp.rawBody`; constant-time compare; tested verification snippets (Node, PHP, Python, Go) | `webhooks.test.ts`, `ssrf.test.ts` | M6 |
 | Webhook replay | Signed timestamp, receivers reject > 5 min skew; stable event id (`gateway-event-id`) for dedup | `webhooks.test.ts` | M6 |

@@ -126,6 +126,14 @@ Prints invoices created per second, p50/p95/p99 latency and status counts; exits
 Each key is limited to 300/min, so use enough keys for the target rate. Watch `gw_http_request_seconds_total`, DB CPU
 and connections (20 per process) while it runs. Record results in the launch checklist.
 
+## Risk review (M9)
+- Alert `GatewayInvoiceHeldForReview`. Admin console → Invoices (default list shows `held` first); the reason is in the
+  invoice history: `risk: payer 0x… is blocked`, `risk: above the per-invoice limit`, `risk: daily limit reached`.
+- Release: the invoice becomes paid (or over/underpaid by the amounts), the fee is charged, the merchant gets the
+  events. Reject: `failed`; tell the merchant, who refunds from their own wallet (non-custodial). Both need TOTP and a
+  reason, and are audited.
+- Blocked payers: Admin console → Blocked payers. Limits: merchant page → Risk limits (live tokens only).
+
 ## Deep reorg
 Log line `DEEP REORG: cursor block replaced beyond reorgDepth` means a reorg deeper than configured. Confirmed payments are
 final in the DB; check each payment confirmed in the affected range against an independent explorer:

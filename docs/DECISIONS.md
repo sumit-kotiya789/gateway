@@ -563,3 +563,22 @@ start otherwise. Testnets may run on one (no quorum). Detection still uses one p
   may cancel or hold it; any of its invoices may pay it, but only for the exact order total (else on hold).
 - Store currency must be USD (USDT 1:1). No price conversion: a non-USD store needs rates we do not provide.
 - Tests: PHP selfcheck in CI (signature vector from the server signer); Docker e2e on real WooCommerce, run by hand.
+
+## D-094 Risk hooks: held invoices, payer blocklist, live limits (M9) (2026-11-06, owner)
+Owner chose a payer blocklist and per-merchant limits (no external screening provider yet).
+- **Held.** New invoice status `held`, entered only from `confirming` when every payment is confirmed and the plan
+  would end paid / overpaid / underpaid but a rule trips. Payments are confirmed and booked (the money did arrive); no
+  fee, no settlement. The watcher never leaves `held`. An admin (`invoices:resolve`, step-up) releases it (to what its
+  confirmed total classifies as, then settles as usual) or rejects it (`failed`; funds stay where they are, refunds
+  happen outside the gateway; custodial: the pending credit stays until a refund flow exists). Event `invoice.held`.
+- **Blocklist.** `risk_blocked_addresses` (platform-wide, family + lowercase address). Any confirmed payment from a
+  listed payer holds the invoice. Adding: `risk:manage`; removing loosens a control: step-up (D-064). Held invoices
+  stay held after an unblock.
+- **Limits.** `merchant_risk_limits` per merchant and live token, minor units, null = none: per invoice (confirmed
+  total) and per UTC day (sum of today's accepted invoices + this one). Test mode is never limited. Changes need
+  `risk:manage` + step-up (they can loosen a control). The day boundary uses the DB clock, like `status_changed_at`;
+  decisions are serialized per merchant with an advisory lock.
+- `invoice_status` was recreated with the new value (one-transaction migrations, as D-075/D-076); the outbox trigger
+  is dropped and recreated around the type change.
+- Alert `GatewayInvoiceHeldForReview` (oldest held > 1 h); RUNBOOK "Risk review".
+

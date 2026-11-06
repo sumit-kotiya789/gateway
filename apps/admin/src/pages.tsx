@@ -351,6 +351,7 @@ export function MerchantDetail(props: { id: string; manage: boolean }) {
       )}
       {props.manage && <RiskFlags merchant={d} onSaved={m.reload} />}
       {props.manage && <FeeSettings merchant={d} onSaved={m.reload} />}
+      <RiskLimits merchantId={d.id} manage={props.manage} />
 
       <h3 className="section-title">Balances</h3>
       {balances.length === 0 ? (
@@ -418,7 +419,7 @@ export function MerchantDetail(props: { id: string; manage: boolean }) {
 
 // ---------------------------------------------------------------- invoices
 
-const STATUSES = ['underpaid', 'late_payment', 'paid', 'overpaid', 'settled', 'pending', 'detected', 'confirming', 'expired', 'cancelled', 'failed'];
+const STATUSES = ['held', 'underpaid', 'late_payment', 'paid', 'overpaid', 'settled', 'pending', 'detected', 'confirming', 'expired', 'cancelled', 'failed'];
 
 export function Invoices(props: { merchantId?: string | undefined }) {
   const [status, setStatus] = useState('');
@@ -487,6 +488,33 @@ export function InvoiceDetail(props: { id: string; manage: boolean }) {
         <dt>Order id</dt><dd>{i.external_order_id ?? '—'}</dd>
         <dt>Expires</dt><dd>{fmtDate(i.expires_at)}</dd>
       </dl>
+      {props.manage && i.status === 'held' && (
+        <div className="card">
+          <h3>Risk review</h3>
+          <Alert tone="warning">
+            Every payment is confirmed ({i.amount_received} of {i.amount} {i.symbol}) but a risk rule held the invoice:{' '}
+            {(i.history ?? []).findLast((h) => h.to === 'held')?.reason ?? 'risk review'}. Release: it becomes paid (or over- / underpaid by
+            the amounts), the fee is charged and the merchant gets the event. Reject: it fails and the merchant gets{' '}
+            <code>invoice.failed</code>; the funds stay where they are and any refund is handled outside the gateway.
+          </Alert>
+          <div className="card-actions">
+            <ReasonAction
+              label="Release"
+              totp
+              primary
+              message="Releases the held payments to the merchant. This cannot be undone."
+              onSubmit={async (reason, h) => { await api('POST', `/invoices/${i.id}/resolve`, { reason, action: 'release' }, h); inv.reload(); }}
+            />
+            <ReasonAction
+              label="Reject"
+              totp
+              danger
+              message="Fails the invoice. Any refund happens outside the gateway. This cannot be undone."
+              onSubmit={async (reason, h) => { await api('POST', `/invoices/${i.id}/resolve`, { reason, action: 'reject' }, h); inv.reload(); }}
+            />
+          </div>
+        </div>
+      )}
       {props.manage && resolvable && (
         <div className="card">
           <h3>Manual resolution</h3>
@@ -1100,6 +1128,152 @@ export function Audit(props: { merchantId?: string | undefined }) {
         </div>
       )}
       <More next={p.next} busy={p.busy} load={p.load} />
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------- risk hooks (M9, D-094)
+
+interface RiskLimit {
+  asset: string;
+  per_invoice: string | null;
+  per_day: string | null;
+  updated_at: string;
+}
+
+/** Live-mode limits per token: a confirmed payment above one is held for review instead of paid. */
+function RiskLimits(props: { merchantId: string; manage: boolean }) {
+  const limits = useLoad(() => api<{ data: RiskLimit[] }>('GET', `/merchants/${props.merchantId}/risk-limits`), [props.merchantId]);
+  const [asset, setAsset] = useState('bsc:usdt');
+  const [perInvoice, setPerInvoice] = useState('');
+  const [perDay, setPerDay] = useState('');
+  return (
+    <fieldset className="card">
+      <legend>Risk limits (live)</legend>
+      <p className="muted">Above a limit, confirmed payments are held for review instead of paying the invoice. Empty = no limit. Days are UTC.</p>
+      {limits.error ? (
+        <ErrorBox error={limits.error} />
+      ) : !limits.data ? (
+        <Skeleton />
+      ) : limits.data.data.length === 0 ? (
+        <p className="muted">No limits set.</p>
+      ) : (
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Token</th><th>Per invoice</th><th>Per day</th><th>Updated</th></tr>
+            </thead>
+            <tbody>
+              {limits.data.data.map((l) => (
+                <tr key={l.asset}>
+                  <td><code>{l.asset}</code></td>
+                  <td className="num">{l.per_invoice ?? '—'}</td>
+                  <td className="num">{l.per_day ?? '—'}</td>
+                  <td>{fmtDate(l.updated_at)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {props.manage && (
+        <>
+          <div className="form-grid">
+            <Field label="Token"><input value={asset} onChange={(e) => { setAsset(e.target.value); }} /></Field>
+            <Field label="Per invoice (token units)"><input value={perInvoice} onChange={(e) => { setPerInvoice(e.target.value); }} inputMode="decimal" placeholder="no limit" /></Field>
+            <Field label="Per day (token units)"><input value={perDay} onChange={(e) => { setPerDay(e.target.value); }} inputMode="decimal" placeholder="no limit" /></Field>
+          </div>
+          <div className="card-actions">
+            <ReasonAction
+              label="Save limits"
+              totp
+              primary
+              onSubmit={async (reason, h) => {
+                await api('PUT', `/merchants/${props.merchantId}/risk-limits`, { asset: asset.trim(), per_invoice: perInvoice.trim() || null, per_day: perDay.trim() || null, reason }, h);
+                limits.reload();
+              }}
+            />
+          </div>
+        </>
+      )}
+    </fieldset>
+  );
+}
+
+interface BlockedAddress {
+  id: string;
+  family: string;
+  address: string;
+  reason: string;
+  created_at: string;
+}
+
+/** Payer blocklist: payments from these addresses are held for review once confirmed. */
+export function BlockedPayers(props: { manage: boolean }) {
+  const [q, setQ] = useState('');
+  const list = useLoad(() => api<{ data: BlockedAddress[] }>('GET', `/risk/blocked-addresses${q ? `?q=${encodeURIComponent(q)}` : ''}`), [q]);
+  const [address, setAddress] = useState('');
+  return (
+    <section>
+      <header className="page-head">
+        <h2>Blocked payers</h2>
+      </header>
+      <p className="muted">Confirmed payments from these addresses hold the invoice for review instead of paying it. Unblocking does not release invoices already held.</p>
+      {props.manage && (
+        <div className="card">
+          <div className="form-grid">
+            <Field label="EVM address"><input value={address} onChange={(e) => { setAddress(e.target.value); }} placeholder="0x…" spellCheck={false} /></Field>
+          </div>
+          <div className="card-actions">
+            <ReasonAction
+              label="Block address"
+              primary
+              onSubmit={async (reason) => {
+                await api('POST', '/risk/blocked-addresses', { family: 'evm', address: address.trim(), reason });
+                setAddress('');
+                list.reload();
+              }}
+            />
+          </div>
+        </div>
+      )}
+      <Field label="Search"><input value={q} onChange={(e) => { setQ(e.target.value.trim()); }} placeholder="0x…" /></Field>
+      {list.error ? (
+        <ErrorBox error={list.error} />
+      ) : !list.data ? (
+        <Skeleton />
+      ) : list.data.data.length === 0 ? (
+        <EmptyState icon="shield" title="No blocked addresses" />
+      ) : (
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Address</th><th>Reason</th><th>Added</th><th /></tr>
+            </thead>
+            <tbody>
+              {list.data.data.map((b) => (
+                <tr key={b.id}>
+                  <td><CopyField value={b.address} /></td>
+                  <td>{b.reason}</td>
+                  <td>{fmtDate(b.created_at)}</td>
+                  <td>
+                    {props.manage && (
+                      <ReasonAction
+                        label="Unblock"
+                        totp
+                        danger
+                        sm
+                        message={`Payments from ${b.address} will pay invoices again.`}
+                        onSubmit={async (reason, h) => { await api('POST', `/risk/blocked-addresses/${b.id}/remove`, { reason }, h); list.reload(); }}
+                      />
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </section>
   );
 }

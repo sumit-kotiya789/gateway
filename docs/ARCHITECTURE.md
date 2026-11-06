@@ -117,6 +117,9 @@ stateDiagram-v2
   detected --> confirming
   detected --> pending: reorg
   confirming --> pending: reorg
+  confirming --> held: risk rule (D-094)
+  held --> paid: admin release
+  held --> failed: admin reject
   confirming --> paid
   confirming --> underpaid
   confirming --> overpaid

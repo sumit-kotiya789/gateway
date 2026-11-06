@@ -103,7 +103,8 @@ Fields: `amount` decimal string (≤ token decimals, ≥ token minimum); `expire
 `metadata` ≤ 50 string keys/values, ≤ 4 KB; URLs http(s), https only in production.
 
 Statuses: `pending → detected → confirming → paid | underpaid | overpaid → settled`; also `expired`, `cancelled`,
-`failed`, `late_payment`. Payments after expiry become `late_payment` and are never auto-fulfilled.
+`failed`, `late_payment`, `held`. Payments after expiry become `late_payment` and are never auto-fulfilled. `held`: payments
+confirmed but held for the platform's risk review; it later becomes `paid` (or over/underpaid) or `failed`.
 | POST | `/v1/dashboard/auth/signup` | none | – | M1 |
 | POST | `/v1/dashboard/auth/login` | none | – (returns `mfa_required` + `mfa_token` when 2FA on) | M1 |
 | POST | `/v1/dashboard/auth/login/2fa` | `mfa_token` | `code` or `recovery_code` | M1 |
@@ -167,8 +168,13 @@ Statuses: `pending → detected → confirming → paid | underpaid | overpaid �
 | GET | `/admin/v1/merchants/:id/fee-topups` | admin session | `admin:read` (`livemode`, default true) | M8 |
 | POST | `/admin/v1/merchants/:id/fee-topups` | admin session + **2FA** | `fees:manage` (`livemode`, `token`, `amount`, `reference`, `reason`; posts a ledger journal; append-only) | M8 |
 | POST | `/admin/v1/merchants/:id/users/:userId/reset-2fa` | admin session + **2FA** | `merchants:manage` (`reason`; revokes sessions, deletes recovery codes) | M5b |
-| GET | `/admin/v1/invoices`, `/admin/v1/invoices/:id` | admin session | `admin:read` (default list: `underpaid` + `late_payment`; `status`, `merchant_id`, `livemode`) | M5b |
-| POST | `/admin/v1/invoices/:id/resolve` | admin session + **2FA** | `invoices:resolve` (`reason`; underpaid/late_payment -> paid -> settled) | M5b |
+| GET | `/admin/v1/invoices`, `/admin/v1/invoices/:id` | admin session | `admin:read` (default list: `held` + `underpaid` + `late_payment`; `status`, `merchant_id`, `livemode`) | M5b |
+| POST | `/admin/v1/invoices/:id/resolve` | admin session + **2FA** | `invoices:resolve` (`reason`, `action` release (default) / reject; underpaid/late_payment -> paid -> settled; held -> its classification, or reject -> failed) | M5b/M9 |
+| GET | `/admin/v1/risk/blocked-addresses` | admin session | `admin:read` (`q` address search) | M9 |
+| POST | `/admin/v1/risk/blocked-addresses` | admin session | `risk:manage` (`family` evm, `address`, `reason`; 409 if listed) | M9 |
+| POST | `/admin/v1/risk/blocked-addresses/:id/remove` | admin session + **2FA** | `risk:manage` (`reason`) | M9 |
+| GET | `/admin/v1/merchants/:id/risk-limits` | admin session | `admin:read` | M9 |
+| PUT | `/admin/v1/merchants/:id/risk-limits` | admin session + **2FA** | `risk:manage` (`asset` live token, `per_invoice`, `per_day` token units or null, `reason`) | M9 |
 | GET | `/admin/v1/registry` | admin session | `admin:read` (chains and tokens with `enabled`) | M5b |
 | POST | `/admin/v1/registry/:kind/:id/disable` | admin session | `kill_switch:manage` (`kind`: chain or token; `reason`) | M5b |
 | POST | `/admin/v1/registry/:kind/:id/enable` | admin session + **2FA** | `registry:enable` (`reason`) | M5b |
