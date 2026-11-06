@@ -551,3 +551,14 @@ threshold: one extra receipt and head call per confirmation is cheap, and every 
 Mainnet chains (`testnet = false`) need at least two resolved providers: `chains:verify` and the watcher refuse to
 start otherwise. Testnets may run on one (no quorum). Detection still uses one provider: a fake log can show
 `detected`/`confirming`, never `paid`. Alert: `GatewayPaymentNotConfirming` (oldest detected payment > 30 min).
+
+## D-093 WooCommerce plugin (M10) (2026-11-06)
+`integrations/woocommerce/gateway-crypto`, plain PHP (no build, no Composer), WordPress HTTP API only.
+- One invoice per order attempt: `external_order_id` = order id, idempotency key `wc-<order>-<attempt>` (attempt saved
+  only on success, so a retry after a timeout gets the same invoice). Returning to the pay page reuses the invoice
+  while it is open with the same token and amount.
+- Orders follow the invoice's current state read from the API (webhook or thank-you page), never an event body; the
+  last applied `invoice:status` is stored on the order so repeats change nothing. Only the order's current invoice
+  may cancel or hold it; any of its invoices may pay it, but only for the exact order total (else on hold).
+- Store currency must be USD (USDT 1:1). No price conversion: a non-USD store needs rates we do not provide.
+- Tests: PHP selfcheck in CI (signature vector from the server signer); Docker e2e on real WooCommerce, run by hand.

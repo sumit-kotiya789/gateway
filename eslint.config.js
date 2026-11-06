@@ -4,7 +4,8 @@ import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
 export default defineConfig(
-  { ignores: ['**/dist/**', '**/coverage/**', '**/node_modules/**'] },
+  // integrations/: WordPress plugin (PHP + browser globals), checked by its own selfcheck and e2e.
+  { ignores: ['**/dist/**', '**/coverage/**', '**/node_modules/**', 'integrations/**'] },
   js.configs.recommended,
   tseslint.configs.strictTypeChecked,
   {

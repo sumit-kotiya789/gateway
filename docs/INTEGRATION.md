@@ -192,5 +192,9 @@ The checkout refuses to be framed by any site not on your list, and only talks t
 Each invoice uses the next address of your xpub (`0/<index>`, shown in the dashboard). Invoices that expire unpaid leave
 unused addresses; set your wallet's gap limit to the value the dashboard shows (Payout wallet → Derived addresses).
 
+## WooCommerce
+Plugin in `integrations/woocommerce/` (install and settings in its README): adds "Pay with USDT" to classic and block
+checkout, creates one invoice per order, verifies webhooks and moves orders from the invoice's current state.
+
 ## Still to come
-WooCommerce plugin (M10); go-live checklist for merchants before launch.
+Go-live checklist for merchants before launch.

@@ -52,6 +52,7 @@ Not money-moving, but a bug here breaks authentication, tenant isolation or audi
 | `apps/server/src/common/logger.ts` | secret redaction | M0 |
 | `apps/server/src/modules/registry/registry.ts` | RPC pre-flight: network id, token decimals, two providers on mainnet (D-092) | M2/M11 |
 | `apps/signer/src/config.ts` | signer limits, cold allowlist, seed KEK only from a file in production (D-010) | M7/M11 |
+| `integrations/woocommerce/gateway-crypto/**` | marks WooCommerce orders paid: webhook signature, invoice re-read, amount check (D-093) | M10 |
 | `apps/server/src/common/idempotency.ts` | Idempotency-Key claim/replay in the work transaction | M3 |
 | `apps/server/src/modules/checkout/*.ts` | public pages: escaping, nonce CSP, data exposure | M3 |
 | `apps/server/src/modules/payment-links/payment-links.routes.ts` | public invoice creation guards | M3 |
