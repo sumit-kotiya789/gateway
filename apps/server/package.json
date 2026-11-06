@@ -19,7 +19,7 @@
   "dependencies": {
     "@fastify/cookie": "11.1.3",
     "@fastify/helmet": "13.2.0",
-    "@fastify/rate-limit": "11.2.1",
+    "@fastify/rate-limit": "11.2.2",
     "@fastify/swagger": "9.9.2",
     "@gw/chains": "workspace:*",
     "@gw/core": "workspace:*",
