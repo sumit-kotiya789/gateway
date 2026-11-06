@@ -45,10 +45,10 @@ export function makeClock(start = Date.now()) {
   return clock;
 }
 
-export function buildTestApp(env: Record<string, string> = {}) {
+export function buildTestApp(env: Record<string, string> = {}, redisOptions: { enableOfflineQueue?: boolean } = {}) {
   const config = loadConfig(testEnv(env));
   const { db, pool } = createDb(config.DATABASE_URL);
-  const redis = new Redis(config.REDIS_URL, { maxRetriesPerRequest: 1 });
+  const redis = new Redis(config.REDIS_URL, { maxRetriesPerRequest: 1, ...redisOptions });
   const clock = makeClock();
   const deps: Deps = {
     config,

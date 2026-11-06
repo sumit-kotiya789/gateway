@@ -9,11 +9,13 @@ Every item needs an owner and a date before launch.
 - [ ] At least two independent mainnet RPC providers configured (`BSC_RPC_URL` + public fallback), each verified; confirmation needs two to agree (D-092), so a third is advised
 - [ ] `bsc` chain enabled deliberately (seeded disabled, D-036)
 - [ ] Custodial feature flag OFF unless legal clearance for custodial operation is documented
-- [ ] Node upgraded to 24 LTS (D-004)
-- [ ] GitHub Actions pinned by commit SHA (D-021)
-- [ ] Container base images pinned by digest
+- [x] Node upgraded to 24 LTS (D-004; images and CI, 2026-11-06)
+- [x] GitHub Actions pinned by commit SHA (D-021)
+- [x] Container base images pinned by digest (Dockerfiles, compose postgres/redis, CI scanners)
 - [ ] Backups + PITR configured and a restore tested
 - [ ] Alerts wired and test-fired (`METRICS_TOKEN` set, Prometheus loads `infra/prometheus/alerts.yml`, Alertmanager routes to on-call)
+- [ ] Load test on staging at 2× expected peak (`scripts/load-test.mjs`, RUNBOOK "Load test"); results recorded
+- [ ] Failover drill: kill a watcher leader, an api and a worker; promote the Postgres replica (ARCHITECTURE "High availability")
 - [ ] Runbook procedures rehearsed
 - [ ] Secrets in secret manager; none in env files on hosts
 - [ ] TLS, HSTS, Origin allowlists, CSP verified in production config

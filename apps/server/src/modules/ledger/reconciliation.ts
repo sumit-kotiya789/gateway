@@ -87,6 +87,9 @@ const CHECKS = {
       where j.kind = 'fee_topup' and j.topup_id = t.id), 0) <> -t.amount`,
   /** Paid non-custodial invoices settle in the same transaction; one left behind is stuck. */
   unsettled: sql`select i.id from invoices i where i.status in ('paid', 'overpaid') and i.custody_mode = ${NC}`,
+  /** Audit log hash chain intact (M11): the first broken seq, if any. */
+  // ponytail: walks the whole chain hourly; add checkpoints when it nears the 15 s statement timeout.
+  audit_chain_broken: sql`select v.seq::text as id from (select audit_verify() as seq) v where v.seq is not null`,
   /** Whole ledger nets to zero per token (holds by construction; guards against disabled triggers). */
   ledger_unbalanced: sql`select a.token_id as id from ledger_entries e join ledger_accounts a on a.id = e.account_id
     group by a.token_id having sum(e.amount) <> 0`,

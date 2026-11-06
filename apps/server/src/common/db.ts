@@ -8,6 +8,9 @@ export type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
 
 export function createDb(url: string): { db: Db; pool: pg.Pool } {
   const pool = new pg.Pool({ connectionString: url, max: 20, statement_timeout: 15_000, idle_in_transaction_session_timeout: 30_000 });
+  // An idle client dropped by the server (DB restart, failover, admin kill) is emitted here. Unhandled, it would crash
+  // the process; pg already discards that client and the next query opens a new one. Query errors surface at callers.
+  pool.on('error', () => {});
   return { pool, db: drizzle(pool, { schema }) };
 }
 

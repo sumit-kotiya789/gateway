@@ -15,6 +15,8 @@ Internal packages export TypeScript source; production images are esbuild bundle
 
 ## D-004 Node 22 LTS (2026-10-20)
 Node 20 reached end-of-life April 2026. Move to Node 24 LTS before mainnet launch (in LAUNCH_CHECKLIST).
+**Done 2026-11-06 (M11):** images and CI run Node 24 (supported to April 2028). `engines` stays `>=22.12` so local
+installs on 22 still work (`engine-strict`); CI is the reference. Node 26 (LTS since Oct 2026) is the next move.
 
 ## D-005 TypeScript 6.0 (2026-10-20)
 TypeScript 7 (native) is not yet supported by typescript-eslint (peer `<6.1`). Revisit when it is.

@@ -13,7 +13,6 @@ Each procedure is written when the component it covers ships. Headings are fixed
 - Alert rules: `infra/prometheus/alerts.yml`; each links to a heading in this runbook. Health gauges (scanner, worker,
   reconciliation, webhooks, email) are read from the database, so scraping one api process covers every process.
 - `NaN` for `gw_scanner_cursor_age_seconds` = an enabled chain no watcher has scanned yet.
-- Not covered yet: audit-chain verification (run `select audit_verify();` on a schedule).
 
 ## Database roles and migrations
 - Migrations run as the schema owner: `DATABASE_MIGRATION_URL=… pnpm migrate` (compose: the one-shot `migrate` service runs before `api`).
@@ -38,6 +37,8 @@ other; the last active superadmin cannot be disabled or demoted (API check + DB 
 
 ## Verify audit log integrity
 As the owner or app role: `select audit_verify();` returns NULL when the chain is intact, otherwise the first bad `seq`.
+Also checked hourly by reconciliation (`audit_chain_broken`, sample = first bad seq): treat as tampering, preserve a
+DB snapshot before anything else.
 A non-NULL result is a security incident: freeze admin access, preserve the DB snapshot, investigate from that `seq`.
 
 ## Team
@@ -118,6 +119,12 @@ and cancel any still `pending`. Funds already paid there are only spendable by w
   reverse) = treat that provider as compromised: remove it from `rpc_urls`, add another, restart the watcher.
 - Never "fix" by dropping to one provider on mainnet: `chains:verify` and the watcher refuse fewer than two.
 - `deep payment failed receipt re-check` (warn) is the primary provider disagreeing with its own logs: same steps.
+
+## Load test (M11)
+Staging only, test-mode keys: `API_URL=… API_KEYS=sk_test_a,sk_test_b CONCURRENCY=20 DURATION_S=60 node scripts/load-test.mjs`.
+Prints invoices created per second, p50/p95/p99 latency and status counts; exits non-zero on anything but 201/429.
+Each key is limited to 300/min, so use enough keys for the target rate. Watch `gw_http_request_seconds_total`, DB CPU
+and connections (20 per process) while it runs. Record results in the launch checklist.
 
 ## Deep reorg
 Log line `DEEP REORG: cursor block replaced beyond reorgDepth` means a reorg deeper than configured. Confirmed payments are
@@ -220,3 +227,23 @@ fail) and continue on resume.
 - Signer keys: a new seed is a key ceremony (D-010): new deposit, hot and gas keys registered with `platform:register` after the old ones are retired; open sweeps finish on the old keys first. Rotate `SIGNER_HMAC_SECRET` on both sides together.
 ## Mass refund (M7)
 ## DB restore (M11)
+Use when data was lost (restore from backup / PITR), not for a clean replica promotion. Postgres is the only durable
+state; Redis is rebuilt on start.
+1. Stop api, worker and watchers. Custodial: pause the signer (`SIGNER_PAUSED=true`).
+2. Restore to a new instance at the chosen point; point `DATABASE_URL` (and the signer's) at it; `pnpm migrate`
+   (nothing should be pending). `select audit_verify();` must pass.
+3. **Before the api starts: no address reuse.** Invoices created after the restore point are gone, but their deposit
+   addresses were handed out. Skip past them:
+   `update merchant_xpubs set next_index = next_index + 1000; update wallet_accounts set next_index = next_index + 1000;`
+   (1000 must exceed the invoices any one key created in the lost window; check `POST /v1/invoices` volume). Skipped
+   indexes cost nothing; merchants see each invoice's derivation path in the dashboard.
+4. Start the watchers. Cursors are back at the restore point, so they rescan forward and re-find every payment to
+   addresses the database still knows. Payments to addresses of lost invoices are not credited: find them with the
+   affected merchants (their records, the explorer) and resolve them by hand.
+5. Custodial, before resuming the signer: list each hot and gas wallet's outgoing transactions on chain since the
+   restore point and match them to `withdrawals`, `sweeps` and treasury transfers. One on chain but not in the
+   database would be paid twice: record it (correction journal, two reviewers) and refuse the duplicate request. Run
+   reconciliation; resume only when it is clean and `hot_wallet_shortfall` is gone.
+6. Start worker and api. Webhooks after the restore point may be sent again (merchants dedupe by event id) or be
+   missing for lost invoices: tell affected merchants.
+7. Record the incident: restore point, data lost, steps taken.

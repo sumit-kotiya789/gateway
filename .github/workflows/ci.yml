@@ -7,15 +7,16 @@ on:
 permissions:
   contents: read
 
-# Third-party actions avoided on purpose: scanners run from pinned container images.
+# Third-party actions avoided on purpose: scanners run from container images pinned by digest; actions by commit SHA
+# (Dependabot bumps both).
 jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 22
+          node-version: 24
           # v5 auto-caches from packageManager, which needs pnpm before corepack is enabled.
           package-manager-cache: false
       - run: corepack enable
@@ -30,39 +31,39 @@ jobs:
   gitleaks:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - run: docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:v8.28.0 git /repo --redact --verbose --config /repo/.gitleaks.toml
+      - run: docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:v8.28.0@sha256:cdbb7c955abce02001a9f6c9f602fb195b7fadc1e812065883f695d1eeaba854 git /repo --redact --verbose --config /repo/.gitleaks.toml
 
   semgrep:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: >
-          docker run --rm -v "$PWD:/src" semgrep/semgrep:latest
+          docker run --rm -v "$PWD:/src" semgrep/semgrep:1.183.0@sha256:2e45517a85e13a9cca14a2a00df6bb48affd66b8ebfae1b0991cd57578362fb0
           semgrep scan --config p/typescript --config p/nodejs --config p/secrets --error --metrics=off
 
   trivy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: docker build -f apps/server/Dockerfile -t gateway-server:ci .
       - run: docker build -f apps/dashboard/Dockerfile -t gateway-dashboard:ci .
       - run: docker build -f apps/admin/Dockerfile -t gateway-admin:ci .
       - run: docker build -f apps/signer/Dockerfile -t gateway-signer:ci .
       - run: >
-          docker run --rm -v "$PWD:/src" -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.67.2
+          docker run --rm -v "$PWD:/src" -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.67.2@sha256:e2b22eac59c02003d8749f5b8d9bd073b62e30fefaef5b7c8371204e0a4b0c08
           fs --scanners vuln,secret,misconfig --skip-dirs "**/node_modules" --severity HIGH,CRITICAL --exit-code 1 /src
       - run: >
-          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.67.2
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.67.2@sha256:e2b22eac59c02003d8749f5b8d9bd073b62e30fefaef5b7c8371204e0a4b0c08
           image --severity HIGH,CRITICAL --exit-code 1 gateway-server:ci
       - run: >
-          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.67.2
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.67.2@sha256:e2b22eac59c02003d8749f5b8d9bd073b62e30fefaef5b7c8371204e0a4b0c08
           image --severity HIGH,CRITICAL --exit-code 1 gateway-dashboard:ci
       - run: >
-          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.67.2
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.67.2@sha256:e2b22eac59c02003d8749f5b8d9bd073b62e30fefaef5b7c8371204e0a4b0c08
           image --severity HIGH,CRITICAL --exit-code 1 gateway-admin:ci
       - run: >
-          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.67.2
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.67.2@sha256:e2b22eac59c02003d8749f5b8d9bd073b62e30fefaef5b7c8371204e0a4b0c08
           image --severity HIGH,CRITICAL --exit-code 1 gateway-signer:ci

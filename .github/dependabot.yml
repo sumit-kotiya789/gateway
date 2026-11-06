@@ -6,12 +6,13 @@ updates:
   - package-ecosystem: github-actions
     directory: /
     schedule: { interval: weekly }
+  # Node stays on the LTS line chosen in D-004: digest and minor bumps only.
   - package-ecosystem: docker
-    directory: /apps/server
+    directories: [/apps/server, /apps/signer, /apps/dashboard, /apps/admin]
     schedule: { interval: weekly }
-  - package-ecosystem: docker
-    directory: /apps/signer
-    schedule: { interval: weekly }
+    ignore:
+      - dependency-name: node
+        update-types: [version-update:semver-major]
   - package-ecosystem: docker-compose
     directory: /
     schedule: { interval: weekly }

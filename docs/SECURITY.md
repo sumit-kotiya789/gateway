@@ -50,6 +50,8 @@ Not money-moving, but a bug here breaks authentication, tenant isolation or audi
 | `apps/server/src/modules/auth/*.ts` | sessions, refresh rotation, CSRF, guards, lockout, admin auth | M1 |
 | `apps/server/src/modules/api-keys/api-keys.ts` | API key format, hashing, authentication | M1 |
 | `apps/server/src/common/logger.ts` | secret redaction | M0 |
+| `apps/server/src/modules/registry/registry.ts` | RPC pre-flight: network id, token decimals, two providers on mainnet (D-092) | M2/M11 |
+| `apps/signer/src/config.ts` | signer limits, cold allowlist, seed KEK only from a file in production (D-010) | M7/M11 |
 | `apps/server/src/common/idempotency.ts` | Idempotency-Key claim/replay in the work transaction | M3 |
 | `apps/server/src/modules/checkout/*.ts` | public pages: escaping, nonce CSP, data exposure | M3 |
 | `apps/server/src/modules/payment-links/payment-links.routes.ts` | public invoice creation guards | M3 |
@@ -92,6 +94,8 @@ Status: `planned` until the mitigation's milestone lands, then the test that pro
 | Cross-merchant address attribution | Composite FK (xpub id, merchant, mode, family); key fingerprint unique across ALL merchants and the platform wallet (xpub/tpub encodings of one key collide) | `custody.test.ts` | M2 |
 | Non-custodial merchant on platform keys | DB guard: address source must match custody mode; strategy selection exhaustive; custodial behind feature flag | `custody.test.ts` | M2 |
 | Reorg double-credit | Block-hash ring per chain; unique `(chain_id, tx_hash, log_index)`; credit only after finality + confirmations | planned | M4 |
+| Postgres restart / failover | Pool drops dead idle connections instead of crashing the process; next query reconnects | `chaos.test.ts` | M11 |
+| Redis outage | Rate limits fail open (D-031); api client has no offline queue, so requests never wait on Redis | `chaos.test.ts` | M11 |
 | Lying RPC | Multi-provider failover; confirmation needs two providers to each see the receipt and the depth (D-092); mainnet refuses fewer than two providers; fresh re-verify at confirmation | `watcher.test.ts`, `custody.test.ts` | M11 |
 | Webhook spoof (merchant side) | HMAC-SHA256 over `timestamp.rawBody`; constant-time compare; tested verification snippets (Node, PHP, Python, Go) | `webhooks.test.ts`, `ssrf.test.ts` | M6 |
 | Webhook replay | Signed timestamp, receivers reject > 5 min skew; stable event id (`gateway-event-id`) for dedup | `webhooks.test.ts` | M6 |

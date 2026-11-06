@@ -22,6 +22,8 @@ async function main(): Promise<void> {
   if (!config.SIGNER_SEED_FILE || !config.SIGNER_SEED_KEK) throw new Error('seed source not configured');
   const keyring = new Keyring(await new LocalFileSeed(config.SIGNER_SEED_FILE, Buffer.from(config.SIGNER_SEED_KEK, 'base64')).load());
   const pool = new pg.Pool({ connectionString: config.SIGNER_DATABASE_URL, max: 5 });
+  // Idle client lost (DB restart/failover): pg discards it; unhandled, the event would crash the signer.
+  pool.on('error', (err) => log.warn({ err: err.message }, 'idle database connection lost'));
   const signer = createSigner({ pool, keyring, config, rpcFor: (c) => rpcFor(c.rpc_urls, process.env) });
   const handler = requestHandler({ secret: config.SIGNER_HMAC_SECRET, sign: signer.sign, log });
   const server =

@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 # Build context: repo root. Same image runs api / worker / watcher / migrate (different CMD).
-FROM node:22-alpine AS build
+FROM node:24-alpine@sha256:a34ab6d7f6f4813f4d0c5469d74685604b962fbdbf5793a7bc7b4998ecb867c8 AS build
 WORKDIR /src
 RUN corepack enable
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc tsconfig.base.json ./
@@ -14,7 +14,7 @@ COPY packages/chains packages/chains
 COPY apps/server apps/server
 RUN pnpm --filter @gw/server build
 
-FROM node:22-alpine
+FROM node:24-alpine@sha256:a34ab6d7f6f4813f4d0c5469d74685604b962fbdbf5793a7bc7b4998ecb867c8
 ENV NODE_ENV=production
 # Runtime never needs a package manager: drop npm/corepack (and their CVE surface) from the final image.
 RUN rm -rf /usr/local/lib/node_modules /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack /opt/yarn* /usr/local/bin/yarn /usr/local/bin/yarnpkg
