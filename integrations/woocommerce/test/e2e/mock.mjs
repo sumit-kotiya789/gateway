@@ -25,6 +25,8 @@ http.createServer(async (req, res) => {
     const idem = req.headers['idempotency-key'];
     if (idem && byIdem.has(idem)) return send(res, 201, invoices.get(byIdem.get(idem)));
     const b = JSON.parse(raw);
+    // Like the real API (invoices_external_order_uq): one invoice per external_order_id.
+    if ([...invoices.values()].some((i) => i.external_order_id === b.external_order_id)) return send(res, 409, { error: { code: 'conflict' } });
     const id = randomUUID();
     const inv = { id, object: 'invoice', status: 'pending', amount: b.amount.replace(/\.?0+$/, ''), amount_received: '0', token: b.token, external_order_id: b.external_order_id,
       checkout_url: `http://mock/checkout/${id}`, success_url: b.success_url, cancel_url: b.cancel_url, expires_in: b.expires_in, description: b.description };

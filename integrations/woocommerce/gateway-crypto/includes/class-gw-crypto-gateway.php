@@ -116,7 +116,7 @@ class GW_Crypto_Gateway extends WC_Payment_Gateway {
 			array(
 				'amount'            => $amount,
 				'token'             => $token,
-				'external_order_id' => (string) $order->get_id(),
+				'external_order_id' => gw_crypto_order_ref( $order->get_id(), $attempt ),
 				/* translators: %s: order number */
 				'description'       => sprintf( __( 'Order #%s', 'gateway-crypto' ), $order->get_order_number() ),
 				'expires_in'        => 60 * max( 5, min( 1440, (int) $this->get_option( 'expires_min', 30 ) ) ),
@@ -160,7 +160,7 @@ class GW_Crypto_Gateway extends WC_Payment_Gateway {
 	 * Only the order's current invoice may cancel or hold it; an earlier invoice of the same order may still pay it.
 	 */
 	public function apply_invoice( WC_Order $order, array $inv ) {
-		if ( ( $inv['external_order_id'] ?? null ) !== (string) $order->get_id() ) {
+		if ( gw_crypto_order_id_from_ref( (string) ( $inv['external_order_id'] ?? '' ) ) !== $order->get_id() ) {
 			return; // not this order's invoice
 		}
 		$state = $inv['id'] . ':' . $inv['status'];

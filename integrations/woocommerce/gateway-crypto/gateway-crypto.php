@@ -83,7 +83,8 @@ function gw_crypto_webhook( WP_REST_Request $request ) {
 	$event      = json_decode( $raw, true );
 	$invoice_id = (string) ( $event['data']['invoice_id'] ?? '' );
 	$order_ref  = (string) ( $event['data']['external_order_id'] ?? '' );
-	$order      = ctype_digit( $order_ref ) ? wc_get_order( (int) $order_ref ) : false;
+	$order_id   = gw_crypto_order_id_from_ref( $order_ref );
+	$order      = null !== $order_id ? wc_get_order( $order_id ) : false;
 	if ( '' === $invoice_id || ! $order || $order->get_payment_method() !== GW_Crypto_Gateway::ID ) {
 		return new WP_REST_Response( array( 'ignored' => true ), 200 ); // not an order paid with this plugin
 	}

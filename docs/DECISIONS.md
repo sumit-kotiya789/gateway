@@ -554,7 +554,8 @@ start otherwise. Testnets may run on one (no quorum). Detection still uses one p
 
 ## D-093 WooCommerce plugin (M10) (2026-11-06)
 `integrations/woocommerce/gateway-crypto`, plain PHP (no build, no Composer), WordPress HTTP API only.
-- One invoice per order attempt: `external_order_id` = order id, idempotency key `wc-<order>-<attempt>` (attempt saved
+- One invoice per order attempt: `external_order_id` = order id, then `<order>-<attempt>` from the second attempt
+  (the API keeps it unique per merchant and mode); idempotency key `wc-<order>-<attempt>` (attempt saved
   only on success, so a retry after a timeout gets the same invoice). Returning to the pay page reuses the invoice
   while it is open with the same token and amount.
 - Orders follow the invoice's current state read from the API (webhook or thank-you page), never an event body; the

@@ -29,7 +29,8 @@ Requirements: WordPress 6.4+, WooCommerce 8.3+, PHP 7.4+, store currency USD (US
   applies its current state, so out-of-order or repeated webhooks are harmless.
 - A paid invoice whose amount differs from the order total (order edited afterwards) puts the order on hold instead.
 - No webhook configured or delivered yet: the thank-you page re-reads the invoice when the customer returns.
-- Returning to the pay page reuses the open invoice (same address) while it is pending and the total is unchanged.
+- Returning to the pay page reuses the open invoice (same address) while it is pending and the total is unchanged;
+  otherwise a new invoice is made with `external_order_id` `<order>-2`, `<order>-3`, … (unique per merchant).
 
 ## Tests
 - `php integrations/woocommerce/test/selfcheck.php`: signature check (vector from the server's own signer) and exact

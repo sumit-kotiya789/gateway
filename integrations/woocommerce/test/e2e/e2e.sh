@@ -74,4 +74,15 @@ hook "$inv/paid/25?secret=whsec_wrong" >/dev/null
 wp eval "do_action('woocommerce_thankyou_gateway_crypto', $id);" >/dev/null
 expect 'no webhook: thank-you page catches up' 'status=processing' "$(wp eval-file /e2e/status.php "$id")"
 
+read -r id inv < <(order)
+hook "$inv/expired/0?secret=whsec_wrong" >/dev/null # expiry webhook lost: the order is still pending
+out="$(wp eval-file /e2e/retry.php "$id")"
+expect 'pay again after expiry: new invoice (order ref gets a suffix, no 409)' '^success ' "$out"
+inv2="${out##* }"
+[ "$inv2" != "$inv" ] && echo 'ok: a different invoice' || { echo 'FAIL: same invoice reused'; exit 1; }
+hook "$inv/expired/0" >/dev/null # the old invoice's webhook arrives late
+expect 'old invoice expiring does not cancel the order' 'status=pending' "$(wp eval-file /e2e/status.php "$id")"
+hook "$inv2/paid/25" >/dev/null
+expect 'second invoice paid: processing' "status=processing paid_tx=$inv2" "$(wp eval-file /e2e/status.php "$id")"
+
 echo 'e2e ok'

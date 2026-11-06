@@ -38,6 +38,19 @@ function gw_crypto_verify_signature( string $raw_body, string $header, string $s
 	return false;
 }
 
+/**
+ * external_order_id of an order's invoice. The gateway keeps it unique per merchant and mode, so a later attempt
+ * (the first invoice expired, or the total changed) gets a suffix: "42", then "42-2", "42-3".
+ */
+function gw_crypto_order_ref( int $order_id, int $attempt ): string {
+	return $attempt <= 1 ? (string) $order_id : $order_id . '-' . $attempt;
+}
+
+/** Order id from an external_order_id written by gw_crypto_order_ref, or null. */
+function gw_crypto_order_id_from_ref( string $ref ): ?int {
+	return preg_match( '/^([1-9]\d{0,18})(?:-[1-9]\d{0,5})?$/', $ref, $m ) ? (int) $m[1] : null;
+}
+
 /** Canonical decimal string ("025.50" -> "25.5", "10.00" -> "10"), or null if not a plain non-negative decimal. */
 function gw_crypto_canonical_amount( string $amount ): ?string {
 	if ( ! preg_match( '/^(\d+)(?:\.(\d+))?$/', trim( $amount ), $m ) ) {

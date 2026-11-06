@@ -35,4 +35,10 @@ check( ! gw_crypto_same_amount( '-1', '-1' ), 'negative refused' );
 check( ! gw_crypto_same_amount( '1e3', '1000' ), 'exponent refused' );
 check( '0' === gw_crypto_canonical_amount( '000.000' ), 'zero canonical' );
 
+check( '42' === gw_crypto_order_ref( 42, 1 ) && '42-2' === gw_crypto_order_ref( 42, 2 ), 'order ref per attempt' );
+check( 42 === gw_crypto_order_id_from_ref( '42' ) && 42 === gw_crypto_order_id_from_ref( '42-3' ), 'order id from ref' );
+foreach ( array( '', '0', '042', '42-', '42-0', '42-2-3', 'x42', '42 ', '-42' ) as $bad ) {
+	check( null === gw_crypto_order_id_from_ref( $bad ), "ref refused: '$bad'" );
+}
+
 echo "selfcheck ok\n";
