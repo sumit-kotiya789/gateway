@@ -15,7 +15,7 @@
     "@noble/hashes": "2.4.0",
     "@scure/base": "2.4.0",
     "@scure/bip32": "2.4.0",
-    "viem": "2.57.7"
+    "viem": "2.57.16"
   },
   "devDependencies": {
     "@scure/bip39": "2.4.0",
