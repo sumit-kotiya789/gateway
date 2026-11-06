@@ -98,7 +98,7 @@ Status: `planned` until the mitigation's milestone lands, then the test that pro
 | SSRF via webhook URL | All resolved addresses must be public (IANA special-purpose v4/v6 ranges, metadata, NAT64, 6to4, mapped); connect to the vetted address (DNS rebinding); no redirects; 10 s, 64 KiB caps; dev override refused in production | `ssrf.test.ts`, `webhooks.test.ts` | M6 |
 | Insider tampering with audit trail | App role has no UPDATE/DELETE/TRUNCATE on `audit_logs`; trigger blocks even the owner; SHA-256 hash chain verified by `audit_verify()` | `db-security.test.ts` | M1 |
 | Insider misuse (approvals) | Admin RBAC; reason on every change, audited in the same transaction; step-up TOTP for actions that lower a control (D-064); withdrawals need an admin approval with TOTP, two different admins at or above `WITHDRAWAL_TWO_PERSON_MIN` (DB guard: approvals only grow, one per admin) | `admin.test.ts`, `watcher.test.ts` | M5b/M7 |
-| Key theft | Seed only in the signer process (sealed file in dev; KMS required in production, refused otherwise); signer takes intents not transactions, re-reads every record and re-derives every address from its own seed; hot/gas wallets must derive from that seed; per-token limits and cold allowlist in the signer's own env; kill switch (env + DB); HMAC on every request + mTLS in production, the HMAC secret held by the worker only (api and watcher never get it); seed file sealed with a pinned 16-byte GCM tag; signatures written only by the signer's DB role, append-only | `signer.test.ts`, `signer-unit.test.ts` | M7b |
+| Key theft | Seed only in the signer process (sealed file; in production its KEK only from a secret-manager file on tmpfs, never an env var; no KMS, D-010); signer takes intents not transactions, re-reads every record and re-derives every address from its own seed; hot/gas wallets must derive from that seed; per-token limits and cold allowlist in the signer's own env; kill switch (env + DB); HMAC on every request + mTLS in production, the HMAC secret held by the worker only (api and watcher never get it); seed file sealed with a pinned 16-byte GCM tag; signatures written only by the signer's DB role, append-only | `signer.test.ts`, `signer-unit.test.ts` | M7b |
 | Dust / address poisoning | Ignore below `min_amount`; never display unsolicited transfers | planned | M4 |
 | Invoice / index race | Atomic index allocation; unique `(family, address)`; one address per invoice (unique FK) | `custody.test.ts`, `invoices.test.ts` | M2/M3 |
 | Duplicate invoice from client retries | Idempotency-Key claimed in the same transaction as the invoice; concurrent duplicates block on the unique index and replay; different body → 409 | `invoices.test.ts` (20 parallel same-key requests → 1 invoice) | M3 |
@@ -161,8 +161,9 @@ Status: `planned` until the mitigation's milestone lands, then the test that pro
 
 ## Key management
 
-Key ceremony, backup, rotation, recovery and the multisig/cold-wallet treasury policy are written in M7, after the KMS
-decision (D-010). Non-custodial mode (M8) involves no private keys.
+No KMS (D-010): the signer's seed is a sealed file and its KEK (`SIGNER_SEED_KEK_FILE`) is written to tmpfs by the
+secret manager at boot. Root on the signer host can read the seed, so the hot wallet holds only what payouts need and
+the rest sits in the cold multisig. Non-custodial mode (M8) involves no private keys.
 
 Data KEK (envelope encryption): `DATA_KEK` + `DATA_KEK_ID` from the secret manager. Rotation: add the new KEK first in the
 list, keep the old one for decryption, re-seal rows in the background, then remove the old KEK.

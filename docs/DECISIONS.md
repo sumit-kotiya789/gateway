@@ -35,6 +35,11 @@ At zero prepaid fee balance: block new invoices. Low-balance alerts. Optional sm
 
 ## D-010 Key custody (2026-10-20, owner)
 KMS provider undecided. Dev KEK behind a `KeyEncryptionKey` interface. Decision required before M7.
+**Decided 2026-11-06 (owner): no KMS for now.** The signer seed stays a sealed file; in production its KEK is read
+from `SIGNER_SEED_KEK_FILE`, a file the secret manager (or systemd credentials) writes to tmpfs at boot, never an env
+var, the persistent disk, backups or the image. Both sources set, or an env KEK in production, is refused. Accepted
+risk: root on the signer host can read the seed. Main control is the money at risk: small hot wallet (cap alert),
+per-token `SIGNER_LIMITS`, cold multisig. A KMS `SeedSource` can replace it later without other changes.
 
 ## D-011 Fees default 1% + 0, rounded down (2026-10-20)
 `fee = floor(amount * bps / 10000) + fixed`. Rounding favors the merchant. Platform fee wallet is separate and multisig-ready by config.
@@ -475,7 +480,7 @@ a merchant's RLS context.
 ## D-088 Signer service (M7b) (2026-10-27)
 `apps/signer` is its own process and deployment; it is the only code that holds keys. Extends D-019.
 - **Seed.** `SeedSource` interface. `local-file` (24-word mnemonic sealed with AES-256-GCM under `SIGNER_SEED_KEK`) is
-  for development and tests; the signer refuses it in production until a KMS-backed source exists (D-010 still open).
+  also used in production, with the KEK from `SIGNER_SEED_KEK_FILE` only (D-010, decided 2026-11-06: no KMS).
   `init-seed` creates the file and prints only public values (deposit xpubs, hot and gas addresses); the mnemonic is
   printed only with `--show-mnemonic`, for an offline backup.
 - **Paths.** Deposits `m/44'/60'/0'` (live) and `1'` (test) via `wallet_accounts`; hot `10'/0/0` and `11'/0/0`; gas

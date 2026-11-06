@@ -84,12 +84,28 @@ describe('request authentication', () => {
 });
 
 describe('signer config', () => {
-  it('development defaults; production refuses the local seed file and plain HTTP', () => {
+  it('development defaults; production refuses the KEK from an env var and plain HTTP', () => {
     const c = loadSignerConfig(base);
     expect(c).toMatchObject({ SIGNER_PORT: 3100, SIGNER_PAUSED: false, SIGNER_LIMITS: {} });
     const prod = () => loadSignerConfig({ ...base, NODE_ENV: 'production' });
-    expect(prod).toThrow(/KMS seed source is required/);
+    expect(prod).toThrow(/SIGNER_SEED_KEK_FILE: required in production/);
     expect(prod).toThrow(/mTLS/);
+  });
+  it('production takes the KEK from a file; both sources, an unreadable file or a bad KEK are refused', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'kek-'));
+    const kekFile = join(dir, 'kek');
+    await writeFile(kekFile, `${base.SIGNER_SEED_KEK}
+`);
+    const { SIGNER_SEED_KEK, ...noKek } = base;
+    const tls = { SIGNER_TLS_CERT_FILE: 'c', SIGNER_TLS_KEY_FILE: 'k', SIGNER_TLS_CLIENT_CA_FILE: 'ca' };
+    const c = loadSignerConfig({ ...noKek, ...tls, NODE_ENV: 'production', SIGNER_SEED_KEK_FILE: kekFile });
+    expect(c.SIGNER_SEED_KEK).toBe(SIGNER_SEED_KEK);
+    expect(() => loadSignerConfig({ ...base, SIGNER_SEED_KEK_FILE: kekFile })).toThrow(/not both/);
+    expect(() => loadSignerConfig({ ...noKek, SIGNER_SEED_KEK_FILE: join(dir, 'missing') })).toThrow(/SIGNER_SEED_KEK_FILE: cannot be read/);
+    await writeFile(join(dir, 'short'), 'c2hvcnQta2Vr');
+    const bad = () => loadSignerConfig({ ...noKek, SIGNER_SEED_KEK_FILE: join(dir, 'short') });
+    expect(bad).toThrow(/SIGNER_SEED_KEK: must be 32 bytes/);
+    expect(bad).not.toThrow(/c2hvcnQta2Vr/);
   });
   it('limits and cold addresses are validated; errors never echo values', () => {
     const c = loadSignerConfig({ ...base, SIGNER_LIMITS: '{"bsc:usdt":{"per_tx":"5000","per_day":"20000"}}', SIGNER_COLD_ADDRESSES: '0x' + 'A'.repeat(40) });

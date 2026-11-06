@@ -1,4 +1,4 @@
-// Creates the signer's seed (development and test only; production needs a KMS, D-010) and prints the public values
+// Creates the signer's seed (production: KEK from SIGNER_SEED_KEK_FILE, no KMS, D-010) and prints the public values
 // to register in the app: platform deposit xpubs and the hot and gas wallet addresses. `--show-mnemonic` also shows
 // the 24 words once, for an offline backup. Only the JSON goes to stdout (`> custody.json`); notes and the words go to
 // stderr, so the mnemonic never lands in that file.

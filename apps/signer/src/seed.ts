@@ -1,7 +1,7 @@
 // MONEY-CRITICAL
 // Where the platform seed comes from (D-010, D-088). Only this file and keys.ts ever see key material, and only
 // inside the signer process. `local-file` is for development and tests: the mnemonic sealed with AES-256-GCM under
-// SIGNER_SEED_KEK. Production refuses it (config.ts) until a KMS-backed source is implemented.
+// SIGNER_SEED_KEK. No KMS (D-010): in production the KEK is read from SIGNER_SEED_KEK_FILE (config.ts).
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
 import { generateMnemonic, mnemonicToSeedSync, validateMnemonic } from '@scure/bip39';

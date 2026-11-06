@@ -92,7 +92,7 @@ services:
     depends_on:
       api: { condition: service_started }
 
-  # Custodial only (profile `custodial`). Production runs it on its own host with mTLS and a KMS seed (D-088, D-010);
+  # Custodial only (profile `custodial`). Production runs it on its own host with mTLS and SIGNER_SEED_KEK_FILE (D-088, D-010);
   # here: plain HTTP on the compose network, no host port, the dev seed sealed in the signerdata volume.
   # First run: `docker compose --profile custodial run --rm -T signer node cli/init-seed.cjs` (prints what to register).
   # Needs SIGNER_DB_PASSWORD, SIGNER_HMAC_SECRET and SIGNER_SEED_KEK in .env; the signer refuses to start without them.

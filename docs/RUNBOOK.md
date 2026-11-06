@@ -141,7 +141,10 @@ Custodial mode is off unless `FEATURE_CUSTODIAL=true`. The worker then also need
 and refuses to start without them; the api and watcher never get the secret.
 1. Signer (its own host, its own DB login in `gw_signer`: `CREATE ROLE gateway_signer LOGIN PASSWORD '…' IN ROLE gw_signer;`).
    Dev/test: `pnpm -s --filter @gw/signer init-seed > custody.json` (add `--show-mnemonic` once, for the offline
-   backup: the words go to the terminal, never into the file). Production: refused until a KMS seed source exists (D-010).
+   backup: the words go to the terminal, never into the file). Production (no KMS, D-010): generate the KEK
+   (`openssl rand -base64 32`) into the secret manager; at boot its agent (or systemd `LoadCredential`) writes it to
+   tmpfs, e.g. `/run/secrets/signer_seed_kek`, mounted read-only into the signer as `SIGNER_SEED_KEK_FILE`. Never set
+   `SIGNER_SEED_KEK` in production (refused). Run `init-seed` once on the signer host with the same file.
 2. Add the cold multisig to `custody.json` as `"cold_wallets": [{"livemode": true, "address": "0x…"}]` (and in the
    signer's `SIGNER_COLD_ADDRESSES`), then `pnpm platform:register custody.json`: deposit xpubs, hot/gas/cold wallets.
    It refuses to replace different keys.
