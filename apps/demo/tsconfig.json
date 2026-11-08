@@ -1,0 +1,8 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // The SDK from source (esbuild and tsx both honor this; its package "import" entry is a build output).
+    "paths": { "@gw/sdk-node": ["../../packages/sdk-node/src/index.ts"] }
+  },
+  "include": ["src"]
+}

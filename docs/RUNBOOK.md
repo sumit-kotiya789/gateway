@@ -220,6 +220,14 @@ Operations:
 - `status = failed`, `last_error = sweep_reverted`: the next round plans a new sweep automatically. Any other failed
   sweep (`over_booked`, `not_our_address`, `wrong_destination`, `wallet_mismatch`) is an incident: data and keys
   disagree. Pause the signer and investigate before anything else moves.
+## Website and demo (D-102)
+- Public site (`website`, :8082): static; its buttons point at `WEBSITE_DASHBOARD_URL` / `WEBSITE_DEMO_URL` (build args).
+- Demo (`demo`, profile `demo`, :8083): runs as one merchant with `DEMO_API_KEY` (test key: `read`, `invoices:write`,
+  `payouts:write`). Webhooks: add an endpoint `http://demo:8083/webhooks/gateway` in that merchant's dashboard and put
+  its secret in `DEMO_WEBHOOK_SECRET` (local only: `WEBHOOK_ALLOW_PRIVATE_NETWORKS=true`); without it the demo syncs
+  deposits when a page loads. Withdrawals in the demo need the merchant on custody on, with limits set. Its data is a
+  JSON file in the `demodata` volume (demo only: the login is a name).
+
 ## Payouts to users (D-100)
 - Failed with `merchant_limit`: the merchant lowered its limits after the request (or live limits are missing); the
   hold was released. Nothing to do; the merchant's app may retry within the limits.

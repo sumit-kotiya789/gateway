@@ -1,0 +1,19 @@
+{
+  "name": "@gw/demo",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Demo web3 app (a game wallet) integrating the gateway: per-user deposit addresses, webhooks, payouts",
+  "scripts": {
+    "dev": "tsx watch --env-file-if-exists=../../.env src/server.ts",
+    "build": "esbuild src/server.ts --bundle --platform=node --target=node22 --format=cjs --sourcemap --outfile=dist/server.cjs",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@gw/sdk-node": "workspace:*"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "tsx": "4.23.15"
+  }
+}

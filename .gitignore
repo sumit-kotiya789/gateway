@@ -11,3 +11,5 @@ secrets/
 dump.rdb
 # Signer seed files (sealed mnemonics): never commit, even in dev
 signer-seed*.json
+# Demo app data (local runs)
+.demo-data/

@@ -176,6 +176,8 @@ For games, dApps and apps where users keep a balance:
 3. **Payouts (custody on)**: `POST /v1/payouts` with a `payouts:write` key, the user id and their wallet. Set your
    withdrawal limits first (dashboard, Withdrawals); live payouts need them. A flat payout fee is charged on top.
    Debit the user in your app before calling, and refund them on `payout.failed`. Use an Idempotency-Key per request.
+4. **A working example**: `apps/demo` (a game wallet, ~300 lines on the Node SDK: `gateway.depositAccounts.create`,
+   webhook verification with `constructEvent`, `gateway.payouts.create`). Run it with `docker compose --profile demo up`.
 
 ## Marketplaces (sellers)
 Platforms that sell for others can keep each seller as a sub-merchant: `POST /v1/sub-merchants` with `name` and your

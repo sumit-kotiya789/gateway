@@ -50,4 +50,32 @@ describe('Gateway client', () => {
     await new Gateway({ apiKey: 'sk_live_abc', baseUrl: 'http://gw', fetch: f.fn }).invoices.list({ limit: 5, status: 'paid' });
     expect(f.calls[0]?.url).toBe('http://gw/v1/invoices?limit=5&status=paid');
   });
+
+  it('deposit accounts and payouts (D-100, D-101) call their endpoints; a payout keeps the caller idempotency key', async () => {
+    const f = fakeFetch([
+      json(201, { id: 'da_1' }),
+      json(200, { id: 'da_1' }),
+      json(200, { data: [] }),
+      json(201, { id: 'po_1' }),
+      json(200, { id: 'po_1' }),
+      json(200, { data: [] }),
+    ]);
+    const gw = new Gateway({ apiKey: 'sk_test_abc', baseUrl: 'http://gw', fetch: f.fn });
+    await gw.depositAccounts.create({ customer_ref: 'user-1', token: 'bsc-testnet:usdt' });
+    await gw.depositAccounts.retrieve('da_1');
+    await gw.depositAccounts.list({ customer_ref: 'user-1' });
+    await gw.payouts.create({ customer_ref: 'user-1', to_address: '0xabc', token: 'bsc-testnet:usdt', amount: '5' }, { idempotencyKey: 'wd-42' });
+    await gw.payouts.retrieve('po_1');
+    await gw.payouts.list({ customer_ref: 'user-1', limit: 10 });
+    expect(f.calls.map((c) => `${c.method} ${c.url}`)).toEqual([
+      'POST http://gw/v1/deposit-accounts',
+      'GET http://gw/v1/deposit-accounts/da_1',
+      'GET http://gw/v1/deposit-accounts?customer_ref=user-1',
+      'POST http://gw/v1/payouts',
+      'GET http://gw/v1/payouts/po_1',
+      'GET http://gw/v1/payouts?customer_ref=user-1&limit=10',
+    ]);
+    expect(f.calls[3]?.headers['idempotency-key']).toBe('wd-42');
+    expect(JSON.parse(f.calls[0]?.body ?? '{}')).toEqual({ customer_ref: 'user-1', token: 'bsc-testnet:usdt' });
+  });
 });

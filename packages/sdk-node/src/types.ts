@@ -23,7 +23,13 @@ export interface Invoice {
   network: string;
   deposit_address: string;
   payment_uri: string | null;
-  checkout_url: string;
+  /** null for deposits (D-101). */
+  checkout_url: string | null;
+  /** payment: an invoice you created; deposit: one transfer to a user's permanent address (D-101). */
+  kind: 'payment' | 'deposit';
+  /** Deposits: the account and your user id. */
+  deposit_account_id: string | null;
+  customer_ref: string | null;
   external_order_id: string | null;
   description: string | null;
   metadata: Record<string, string>;
@@ -108,6 +114,52 @@ export interface GatewayEvent {
     fee_amount: string | null;
     external_order_id: string | null;
     sub_merchant_id: string | null;
+    /** payment or deposit (D-101); deposits name your user. */
+    kind?: 'payment' | 'deposit';
+    deposit_account_id?: string | null;
+    customer_ref?: string | null;
     reason: string;
   };
 }
+
+/** A user's permanent deposit address for one token (D-101). */
+export interface DepositAccount {
+  id: string;
+  object: 'deposit_account';
+  livemode: boolean;
+  customer_ref: string;
+  token: string;
+  symbol: string;
+  chain: string;
+  address: string;
+  custody_mode: 'custodial' | 'non_custodial_xpub' | 'non_custodial_forwarder';
+  /** Confirmed deposits so far, token units. */
+  received: string;
+  retired_at: string | null;
+  created_at: string;
+  /** retrieve() only, newest first. */
+  deposits?: { invoice_id: string; status: InvoiceStatus; amount: string; fee: string | null; deposit_ref: string; created_at: string }[];
+}
+
+export type PayoutStatus = 'approved' | 'sent' | 'confirmed' | 'failed';
+
+/** A payout to one of your users (custody on, D-100). */
+export interface Payout {
+  id: string;
+  object: 'payout';
+  livemode: boolean;
+  kind: 'customer';
+  customer_ref: string;
+  status: PayoutStatus;
+  token: string;
+  symbol: string;
+  amount: string;
+  /** The flat payout fee, charged on top of the amount. */
+  fee: string;
+  to_address: string;
+  tx_hash: string | null;
+  reason: string | null;
+  created_at: string;
+  confirmed_at: string | null;
+}
+

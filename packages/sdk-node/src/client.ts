@@ -1,7 +1,7 @@
 // Merchant API client. Zero dependencies (global fetch, Node >= 18). POSTs that create something send an
 // Idempotency-Key (generated unless given), so retries after a timeout or 5xx never create duplicates.
 import { randomUUID } from 'node:crypto';
-import type { Balance, CreateInvoiceParams, GatewayEvent, Invoice, ListInvoicesParams, Page, PaymentLink, SubMerchant } from './types.js';
+import type { Balance, CreateInvoiceParams, DepositAccount, GatewayEvent, Invoice, ListInvoicesParams, Page, PaymentLink, Payout, SubMerchant } from './types.js';
 
 export class GatewayError extends Error {
   override readonly name = 'GatewayError';
@@ -37,6 +37,8 @@ export class Gateway {
   readonly subMerchants;
   readonly events;
   readonly exports;
+  readonly depositAccounts;
+  readonly payouts;
   private readonly base: string;
   private readonly fetchFn: typeof fetch;
 
@@ -68,6 +70,20 @@ export class Gateway {
     this.events = {
       retrieve: (id: string) => r<GatewayEvent>('GET', `/v1/events/${encodeURIComponent(id)}`),
       list: (params: { limit?: number; starting_after?: string; type?: string } = {}) => r<Page<GatewayEvent>>('GET', '/v1/events', { query: { ...params } }),
+    };
+    // A permanent deposit address per user and token (D-101): same user + token = same address.
+    this.depositAccounts = {
+      create: (params: { customer_ref: string; token: string }) => r<DepositAccount>('POST', '/v1/deposit-accounts', { body: params, idempotencyKey: randomUUID() }),
+      retrieve: (id: string) => r<DepositAccount>('GET', `/v1/deposit-accounts/${encodeURIComponent(id)}`),
+      list: (params: { customer_ref?: string; limit?: number; starting_after?: string } = {}) => r<Page<DepositAccount>>('GET', '/v1/deposit-accounts', { query: { ...params } }),
+    };
+    // Payouts to your users (custody on, D-100); needs a `payouts:write` key. Pass your own idempotency key (e.g. your
+    // withdrawal request id) so a retry never pays twice.
+    this.payouts = {
+      create: (params: { customer_ref: string; to_address: string; token: string; amount: string }, o: { idempotencyKey?: string } = {}) =>
+        r<Payout>('POST', '/v1/payouts', { body: params, idempotencyKey: o.idempotencyKey ?? randomUUID() }),
+      retrieve: (id: string) => r<Payout>('GET', `/v1/payouts/${encodeURIComponent(id)}`),
+      list: (params: { customer_ref?: string; limit?: number; starting_after?: string } = {}) => r<Page<Payout>>('GET', '/v1/payouts', { query: { ...params } }),
     };
     // CSV text for the key's mode; `from` / `to` are inclusive UTC dates (YYYY-MM-DD), default the last 31 days.
     this.exports = {

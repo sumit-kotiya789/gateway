@@ -34,6 +34,16 @@ funds are forwarded to the wallet automatically, fee split on-chain (`docs/CUSTO
 `fee_wallets` entry, fund the signer gas wallet (`pnpm testnet:token send-bnb <gas-wallet> 0.05`),
 `FEATURE_FORWARDER=true`, `docker compose --profile forwarder up -d --build`. Details: `docs/RUNBOOK.md`.
 
+### Web3 projects: deposits per user, payouts, website and demo (D-100..D-102)
+Each user of a merchant's app gets a permanent deposit address (`POST /v1/deposit-accounts`); with custody on the app
+also pays users out (`POST /v1/payouts`, within the merchant's own limits). Local URLs:
+| URL | What |
+|---|---|
+| http://localhost:8080 | merchant dashboard |
+| http://localhost:8081/admin/ | admin console |
+| http://localhost:8082 | public site: product, pricing, developer docs (`apps/website`) |
+| http://localhost:8083 | demo game wallet (`apps/demo`, profile `demo`): set `DEMO_API_KEY` (test key with `read`, `invoices:write`, `payouts:write`), then `docker compose --profile demo up -d --build demo` |
+
 ## Scripts
 | Script | Does |
 |---|---|

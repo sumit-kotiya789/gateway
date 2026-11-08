@@ -96,6 +96,35 @@ services:
     depends_on:
       api: { condition: service_started }
 
+  # Public site: landing, pricing, developer docs (D-102). http://localhost:${WEBSITE_HOST_PORT:-8082}/
+  website:
+    <<: *hardened
+    build:
+      context: .
+      dockerfile: apps/website/Dockerfile
+      args:
+        VITE_DASHBOARD_URL: ${WEBSITE_DASHBOARD_URL:-http://localhost:8080}
+        VITE_DEMO_URL: ${WEBSITE_DEMO_URL:-http://localhost:8083}
+    ports: ["127.0.0.1:${WEBSITE_HOST_PORT:-8082}:8080"]
+
+  # Demo web3 app (profile `demo`, D-102): a game wallet on the gateway. Needs DEMO_API_KEY (a test secret key with
+  # read, invoices:write and payouts:write) and, for webhooks, DEMO_WEBHOOK_SECRET from a webhook endpoint pointing at
+  # http://demo:8083/webhooks/gateway (local only: WEBHOOK_ALLOW_PRIVATE_NETWORKS=true). http://localhost:8083/
+  demo:
+    <<: *hardened
+    profiles: [demo]
+    build: { context: ., dockerfile: apps/demo/Dockerfile }
+    environment:
+      DEMO_GATEWAY_URL: http://api:3000
+      DEMO_API_KEY: ${DEMO_API_KEY:-}
+      DEMO_WEBHOOK_SECRET: ${DEMO_WEBHOOK_SECRET:-}
+      DEMO_TOKEN: ${DEMO_TOKEN:-bsc-testnet:usdt}
+      DEMO_TOKEN_DECIMALS: ${DEMO_TOKEN_DECIMALS:-18}
+    volumes: ["demodata:/data"]
+    ports: ["127.0.0.1:${DEMO_HOST_PORT:-8083}:8083"]
+    depends_on:
+      api: { condition: service_started }
+
   # Custodial only (profile `custodial`). Production runs it on its own host with mTLS and SIGNER_SEED_KEK_FILE (D-088, D-010);
   # here: plain HTTP on the compose network, no host port, the dev seed sealed in the signerdata volume.
   # First run: `docker compose --profile custodial run --rm -T signer node cli/init-seed.cjs` (prints what to register).
@@ -162,6 +191,7 @@ services:
     ports: ["127.0.0.1:8025:8025", "127.0.0.1:1025:1025"]
 
 volumes:
+  demodata:
   pgdata:
   redisdata:
   signerdata:

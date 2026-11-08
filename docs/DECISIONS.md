@@ -686,3 +686,13 @@ Web3 projects give each user one address to deposit to, any amount, any time; it
   minus earlier confirmed sweeps) already assumed.
 - **Not built.** Rotating an account on demand; per-user totals beyond the account's deposits list.
 
+## D-102 Public website and a demo web3 app; SDK for deposits and payouts (2026-11-08, owner)
+- **Website** (`apps/website`, static Vite/React on the dashboard styles, nginx, :8082): product, how it works, pricing,
+  developer docs (deposit addresses, webhooks, payouts, limits, test mode). No API calls; sign-up and log-in go to the
+  dashboard (`#/signup` opens the sign-up form).
+- **Demo** (`apps/demo`, compose profile `demo`, :8083): a "game wallet" on the Node SDK: per-player deposit address,
+  deposits credited once from verified webhooks (fallback: sync on page load), withdrawals as payouts (debit first,
+  refund on failure). The secret key stays on its server. Demo-grade login (a name) and a JSON-file store.
+- **SDK**: `depositAccounts.create/retrieve/list`, `payouts.create/retrieve/list`; invoice and event types carry `kind`
+  and `customer_ref`.
+

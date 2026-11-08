@@ -25,6 +25,8 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm --filter @gw/dashboard build
       - run: pnpm --filter @gw/admin build
+      - run: pnpm --filter @gw/website build
+      - run: pnpm --filter @gw/demo build
       - run: pnpm test:coverage
       - run: php integrations/woocommerce/test/selfcheck.php
       - run: pnpm audit --audit-level=high

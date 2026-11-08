@@ -58,7 +58,8 @@ export function Login(props: { onDone: () => void }) {
   const [mfaToken, setMfaToken] = useState<string>();
   const [code, setCode] = useState('');
   const [useRecovery, setUseRecovery] = useState(false);
-  const [signup, setSignup] = useState(false);
+  // The public site links straight to sign-up (#/signup).
+  const [signup, setSignup] = useState(() => window.location.hash.startsWith('#/signup'));
   const [forgot, setForgot] = useState(false);
   const a = useAction();
 
