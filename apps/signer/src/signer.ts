@@ -190,7 +190,9 @@ export function createSigner(deps: SignerDeps) {
         token_id: string;
         amount: string;
         to_address: string;
-        payout_address_id: string;
+        payout_address_id: string | null;
+        kind: 'merchant' | 'customer';
+        fee: string;
         approvals_required: number;
         approvals: number;
         contract_address: string;
@@ -199,7 +201,7 @@ export function createSigner(deps: SignerDeps) {
         frozen: boolean;
       }>(
         `select w.status, w.livemode, w.merchant_id, w.chain_id, w.token_id, w.amount::text, w.to_address, w.payout_address_id,
-                w.approvals_required, cardinality(w.approved_by) as approvals, t.contract_address,
+                w.kind, w.fee::text, w.approvals_required, cardinality(w.approved_by) as approvals, t.contract_address,
                 m.status as merchant_status, m.custody_mode, 'payouts_frozen' = any (m.risk_flags) as frozen
          from withdrawals w join tokens t on t.id = w.token_id join merchants m on m.id = w.merchant_id where w.id = $1`,
         [id],
@@ -211,14 +213,33 @@ export function createSigner(deps: SignerDeps) {
       if (w.merchant_status !== 'active' || w.custody_mode !== 'custodial') throw new Refusal('merchant_inactive', 'merchant is not an active custodial account');
       if (w.frozen) throw new Refusal('payouts_frozen', 'payouts are frozen for this merchant');
       const { chain, rpc, gasPrice } = await chainOf(w.chain_id);
-      // Still the merchant's current payout address (a newer one, or a cancellation, stops older requests).
-      const cur = await one<{ id: string; address: string }>(
-        `select id, address from payout_addresses where merchant_id = $1 and livemode = $2 and family = $3 and cancelled_at is null and activates_at <= now()
-         order by activates_at desc, created_at desc limit 1`,
-        [w.merchant_id, w.livemode, chain.family],
+      if (w.kind === 'merchant') {
+        // Still the merchant's current payout address (a newer one, or a cancellation, stops older requests).
+        const cur = await one<{ id: string; address: string }>(
+          `select id, address from payout_addresses where merchant_id = $1 and livemode = $2 and family = $3 and cancelled_at is null and activates_at <= now()
+           order by activates_at desc, created_at desc limit 1`,
+          [w.merchant_id, w.livemode, chain.family],
+        );
+        if (cur?.id !== w.payout_address_id || !sameAddress(cur.address, w.to_address)) throw new Refusal('payout_address_changed', 'payout address is no longer current');
+      } else {
+        // A payout to one of the merchant's users (D-100): never into a platform wallet, a deposit address or a blocked one.
+        const d = await one<{ allowed: boolean }>('select payout_destination_allowed($1) as allowed', [w.to_address]);
+        if (!d?.allowed) throw new Refusal('bad_destination', 'payout destination is a gateway or blocked address');
+      }
+      // The merchant's own limits (D-100), as they are now: a lowered limit stops requests already queued.
+      const lim = await one<{ per_tx: string | null; per_day: string | null; used: string }>(
+        `select l.per_tx::text, l.per_day::text,
+                (select coalesce(sum(x.amount), 0) from withdrawals x where x.merchant_id = l.merchant_id and x.livemode = l.livemode and x.token_id = l.token_id
+                   and x.id <> $4 and x.status not in ('failed', 'rejected', 'cancelled') and x.created_at > now() - interval '24 hours')::text as used
+         from merchant_withdrawal_limits l where l.merchant_id = $1 and l.livemode = $2 and l.token_id = $3`,
+        [w.merchant_id, w.livemode, w.token_id, id],
       );
-      if (cur?.id !== w.payout_address_id || !sameAddress(cur.address, w.to_address)) throw new Refusal('payout_address_changed', 'payout address is no longer current');
-      // The amount is held for exactly this withdrawal, and nothing has released or paid it yet.
+      const perTx = lim?.per_tx ?? null;
+      const perDay = lim?.per_day ?? null;
+      if (w.kind === 'customer' && w.livemode && (perTx === null || perDay === null)) throw new Refusal('merchant_limit', 'live payouts to users need the merchant limits');
+      if (perTx !== null && BigInt(w.amount) > BigInt(perTx)) throw new Refusal('merchant_limit', 'amount above the merchant one-time limit');
+      if (perDay !== null && BigInt(lim?.used ?? '0') + BigInt(w.amount) > BigInt(perDay)) throw new Refusal('merchant_limit', 'amount above the merchant daily limit');
+      // The amount (plus a user payout's fee) is held for exactly this withdrawal, and nothing has released or paid it yet.
       const j = await one<{ hold: string; other: string }>(
         `select coalesce(sum(e.amount) filter (where j.kind = 'withdrawal_hold'), 0)::text as hold, count(*) filter (where j.kind <> 'withdrawal_hold')::text as other
          from ledger_journals j join ledger_entries e on e.journal_id = j.id join ledger_accounts a on a.id = e.account_id and a.kind = 'merchant_withdrawing'
@@ -227,7 +248,7 @@ export function createSigner(deps: SignerDeps) {
       );
       const amount = BigInt(w.amount);
       /* v8 ignore next -- the hold is posted in the request's own transaction; releases only follow final states */
-      if (BigInt(j?.hold ?? '0') !== -amount || j?.other !== '0') throw new Refusal('hold_mismatch', 'withdrawal hold does not match');
+      if (BigInt(j?.hold ?? '0') !== -(amount + BigInt(w.fee)) || j?.other !== '0') throw new Refusal('hold_mismatch', 'withdrawal hold does not match');
       const hot = await platformWallet('hot', chain.family, w.livemode);
       if ((await rpc.tokenBalance(w.contract_address, hot.address)) < amount) throw new Refusal('insufficient_funds', 'hot wallet holds less than the withdrawal');
       if ((await rpc.nativeBalance(hot.address)) < tokenGas * gasPrice) throw new Refusal('needs_gas', 'hot wallet cannot pay the network fee');

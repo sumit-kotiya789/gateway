@@ -330,6 +330,20 @@
       "when": 1794150619207,
       "tag": "0046_partial_payments_security",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1794153434167,
+      "tag": "0047_withdrawal_limits_payouts",
+      "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1794153443060,
+      "tag": "0048_withdrawal_limits_payouts_security",
+      "breakpoints": true
     }
   ]
 }

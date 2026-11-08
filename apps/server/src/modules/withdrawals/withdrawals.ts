@@ -3,11 +3,13 @@
 // amount at once, admin approval (two different admins above WITHDRAWAL_TWO_PERSON_MIN), and the merchant's or an
 // admin's cancel / reject that releases it. Sending happens in the worker (payouts.ts) through the signer.
 // Payout-address timing uses the database clock: the guards that enforce it run in the database.
-import { AppError, fromMinorUnits, toMinorUnits } from '@gw/core';
-import { and, desc, eq, isNull, sql } from 'drizzle-orm';
+// D-100: payouts to the merchant's users (any wallet, auto-approved, flat payout fee) and the merchant's own
+// withdrawal limits (one-time and daily per token), enforced here, in the database guard and again by the signer.
+import { AppError, feeUnitsToMinor, fromMinorUnits, toMinorUnits } from '@gw/core';
+import { and, desc, eq, isNull, notInArray, sql } from 'drizzle-orm';
 import { getAddress, isAddress } from 'viem';
 import type { Tx } from '../../common/db.js';
-import { ledgerAccounts, ledgerEntries, merchants, payoutAddresses, tokens, withdrawals } from '../../db/schema.js';
+import { ledgerAccounts, ledgerEntries, merchantWithdrawalLimits, merchants, payoutAddresses, tokens, withdrawals } from '../../db/schema.js';
 import type { Deps } from '../../deps.js';
 import { notifyOwners } from '../email/outbox.js';
 import { templates } from '../email/templates.js';
@@ -20,6 +22,8 @@ export const PAYOUT_ADDRESS_COOLDOWN_H = 24;
 
 type PayoutRow = typeof payoutAddresses.$inferSelect;
 type WithdrawalRow = typeof withdrawals.$inferSelect;
+type LimitsRow = typeof merchantWithdrawalLimits.$inferSelect;
+type TokenMeta = { id: string; decimals: number; symbol: string };
 
 /** The address withdrawals (and forwarders, D-097) of this mode and family go to now. */
 export { currentPayoutAddress };
@@ -94,6 +98,53 @@ async function availableBalance(tx: Tx, merchantId: string, livemode: boolean, t
   return -BigInt(r.total);
 }
 
+/** The merchant's own withdrawal limits for a mode and token (D-100), or null when none are set. */
+export async function withdrawalLimits(tx: Tx, merchantId: string, livemode: boolean, tokenId: string): Promise<LimitsRow | null> {
+  const [l] = await tx
+    .select()
+    .from(merchantWithdrawalLimits)
+    .where(and(eq(merchantWithdrawalLimits.merchantId, merchantId), eq(merchantWithdrawalLimits.livemode, livemode), eq(merchantWithdrawalLimits.tokenId, tokenId)));
+  return l ?? null;
+}
+
+/** What the merchant withdrew (or holds for withdrawals) in a token over the last 24 hours, by the database clock. */
+export async function withdrawnToday(tx: Tx, merchantId: string, livemode: boolean, tokenId: string): Promise<bigint> {
+  const [r] = await tx
+    .select({ total: sql<string>`coalesce(sum(${withdrawals.amount}), 0)::text` })
+    .from(withdrawals)
+    .where(
+      and(
+        eq(withdrawals.merchantId, merchantId),
+        eq(withdrawals.livemode, livemode),
+        eq(withdrawals.tokenId, tokenId),
+        notInArray(withdrawals.status, ['failed', 'rejected', 'cancelled']),
+        sql`${withdrawals.createdAt} > now() - interval '24 hours'`,
+      ),
+    );
+  /* v8 ignore next -- an aggregate without GROUP BY returns exactly one row */
+  if (!r) throw new Error('daily total query returned no row');
+  return BigInt(r.total);
+}
+
+/** Refuses a withdrawal above the merchant's limits. Callers hold the merchant row lock (one request at a time). */
+async function assertWithinLimits(tx: Tx, p: { merchantId: string; livemode: boolean; token: TokenMeta; amount: bigint; requireBoth: boolean }): Promise<void> {
+  const l = await withdrawalLimits(tx, p.merchantId, p.livemode, p.token.id);
+  const perTx = l?.perTx ?? null;
+  const perDay = l?.perDay ?? null;
+  const units = (v: bigint) => `${fromMinorUnits(v, p.token.decimals)} ${p.token.symbol}`;
+  if (p.requireBoth && (perTx === null || perDay === null)) {
+    throw new AppError('conflict', `set a one-time and a daily withdrawal limit for ${p.token.symbol} before paying users in live mode`, { reason: 'limits_required' });
+  }
+  if (perTx !== null && p.amount > perTx) throw new AppError('conflict', `amount above your one-time withdrawal limit (${units(perTx)})`, { reason: 'over_tx_limit' });
+  if (perDay !== null) {
+    const used = await withdrawnToday(tx, p.merchantId, p.livemode, p.token.id);
+    if (used + p.amount > perDay) {
+      const left = perDay > used ? perDay - used : 0n;
+      throw new AppError('conflict', `amount above your daily withdrawal limit (${units(left)} left for the next 24 hours)`, { reason: 'over_day_limit' });
+    }
+  }
+}
+
 export async function requestWithdrawal(
   deps: Deps,
   tx: Tx,
@@ -113,6 +164,7 @@ export async function requestWithdrawal(
   if (amount > available) {
     throw new AppError('conflict', `amount exceeds the available balance (${fromMinorUnits(available, token.decimals)} ${token.symbol})`, { reason: 'insufficient_balance' });
   }
+  await assertWithinLimits(tx, { merchantId: p.merchantId, livemode: p.livemode, token, amount, requireBoth: false });
   // Test mode moves testnet tokens only: no approval. Live: one admin, two at or above the threshold.
   const approvalsRequired = !p.livemode ? 0 : amount >= toMinorUnits(deps.config.WITHDRAWAL_TWO_PERSON_MIN, token.decimals) ? 2 : 1;
   const [w] = await tx
@@ -136,6 +188,111 @@ export async function requestWithdrawal(
   await holdWithdrawal(tx, w);
   await notifyOwners(deps, tx, p.merchantId, 'withdrawal_requested', templates.withdrawalRequested({ livemode: p.livemode, amount: p.amount, symbol: token.symbol, address: to.address }));
   return w;
+}
+
+/**
+ * A payout to one of the merchant's users (D-100): any wallet the user gives, sent automatically (no approval) within
+ * the merchant's limits, which live mode requires. The amount plus the merchant's flat payout fee is held at once.
+ * Never to a platform wallet, a deposit address or a blocked address (checked again by the database and the signer).
+ */
+export async function requestPayout(
+  deps: Deps,
+  tx: Tx,
+  p: { merchantId: string; livemode: boolean; tokenId: string; amount: string; toAddress: string; customerRef: string; requestedBy: string },
+): Promise<WithdrawalRow> {
+  assertCustodyOn(deps);
+  const m = await custodialMerchant(tx, p.merchantId, true);
+  if (m.status !== 'active') throw new AppError('forbidden', 'account is suspended');
+  if (m.riskFlags.includes('payouts_frozen')) throw new AppError('forbidden', 'payouts are frozen on this account; contact support', { reason: 'payouts_frozen' });
+  const { token } = await resolveToken(tx, p.tokenId, p.livemode);
+  const amount = toMinorUnits(p.amount, token.decimals);
+  if (amount <= 0n) throw new AppError('invalid_amount', 'amount must be greater than zero');
+  if (!isAddress(p.toAddress, { strict: true })) throw new AppError('validation_error', 'address checksum does not match: check for a typo', { field: 'to_address' });
+  const to = getAddress(p.toAddress);
+  const [ok] = await tx.execute<{ allowed: boolean }>(sql`select payout_destination_allowed(${to}) as allowed`).then((r) => r.rows);
+  if (!ok?.allowed) throw new AppError('validation_error', 'this address cannot receive payouts (a gateway address or a blocked address)', { field: 'to_address', reason: 'bad_destination' });
+  await assertWithinLimits(tx, { merchantId: p.merchantId, livemode: p.livemode, token, amount, requireBoth: p.livemode });
+  const fee = feeUnitsToMinor(m.payoutFee, token.decimals);
+  const available = await availableBalance(tx, p.merchantId, p.livemode, token.id);
+  if (amount + fee > available) {
+    const extra = fee > 0n ? ` for the amount plus the ${fromMinorUnits(fee, token.decimals)} ${token.symbol} payout fee` : '';
+    throw new AppError('conflict', `available balance (${fromMinorUnits(available, token.decimals)} ${token.symbol}) is not enough${extra}`, { reason: 'insufficient_balance' });
+  }
+  const [w] = await tx
+    .insert(withdrawals)
+    .values({
+      merchantId: p.merchantId,
+      livemode: p.livemode,
+      chainId: token.chainId,
+      tokenId: token.id,
+      amount,
+      kind: 'customer',
+      payoutAddressId: null,
+      customerRef: p.customerRef,
+      toAddress: to,
+      fee,
+      status: 'approved',
+      approvalsRequired: 0,
+      requestedBy: p.requestedBy,
+      nextAttemptAt: new Date(deps.clock()),
+    })
+    .returning();
+  /* v8 ignore next -- INSERT ... RETURNING yields the row or throws */
+  if (!w) throw new Error('payout insert failed');
+  await holdWithdrawal(tx, w);
+  return w;
+}
+
+/** Sets (or clears, with null) the merchant's one-time and daily limits for a mode and token. Applies at once. */
+export async function setWithdrawalLimits(
+  tx: Tx,
+  p: { merchantId: string; livemode: boolean; tokenId: string; perTx: string | null; perDay: string | null; userId: string },
+): Promise<{ before: LimitsRow | null; after: LimitsRow }> {
+  const { token } = await resolveToken(tx, p.tokenId, p.livemode);
+  const parse = (v: string | null, field: string) => {
+    if (v === null) return null;
+    const minor = toMinorUnits(v, token.decimals);
+    if (minor <= 0n) throw new AppError('validation_error', 'a limit must be greater than zero (or empty for no limit)', { field });
+    return minor;
+  };
+  const perTx = parse(p.perTx, 'per_tx');
+  const perDay = parse(p.perDay, 'per_day');
+  if (perTx !== null && perDay !== null && perTx > perDay) throw new AppError('validation_error', 'the one-time limit cannot be above the daily limit', { field: 'per_tx' });
+  const before = await withdrawalLimits(tx, p.merchantId, p.livemode, token.id);
+  const [after] = await tx
+    .insert(merchantWithdrawalLimits)
+    .values({ merchantId: p.merchantId, livemode: p.livemode, tokenId: token.id, perTx, perDay, updatedBy: p.userId })
+    .onConflictDoUpdate({
+      target: [merchantWithdrawalLimits.merchantId, merchantWithdrawalLimits.livemode, merchantWithdrawalLimits.tokenId],
+      set: { perTx, perDay, updatedBy: p.userId, updatedAt: sql`now()` },
+    })
+    .returning();
+  /* v8 ignore next -- INSERT ... RETURNING yields the row or throws */
+  if (!after) throw new Error('limits upsert failed');
+  return { before, after };
+}
+
+/** Limits of a mode for every token that has them, with what was used over the last 24 hours. */
+export async function listWithdrawalLimits(tx: Tx, merchantId: string, livemode: boolean) {
+  const rows = await tx
+    .select({ l: merchantWithdrawalLimits, decimals: tokens.decimals, symbol: tokens.symbol })
+    .from(merchantWithdrawalLimits)
+    .innerJoin(tokens, eq(tokens.id, merchantWithdrawalLimits.tokenId))
+    .where(and(eq(merchantWithdrawalLimits.merchantId, merchantId), eq(merchantWithdrawalLimits.livemode, livemode)))
+    .orderBy(merchantWithdrawalLimits.tokenId);
+  return Promise.all(rows.map(async ({ l, decimals, symbol }) => limitsView(l, { decimals, symbol }, await withdrawnToday(tx, merchantId, livemode, l.tokenId))));
+}
+
+export function limitsView(l: LimitsRow, t: { decimals: number; symbol: string }, used: bigint) {
+  return {
+    token: l.tokenId,
+    symbol: t.symbol,
+    livemode: l.livemode,
+    per_tx: l.perTx === null ? null : fromMinorUnits(l.perTx, t.decimals),
+    per_day: l.perDay === null ? null : fromMinorUnits(l.perDay, t.decimals),
+    used_24h: fromMinorUnits(used, t.decimals),
+    updated_at: l.updatedAt.toISOString(),
+  };
 }
 
 async function locked(tx: Tx, id: string, merchantId?: string): Promise<WithdrawalRow> {
@@ -190,6 +347,8 @@ export async function rejectWithdrawal(deps: Deps, tx: Tx, id: string, reason: s
 
 /** Emails the owners how a withdrawal ended. Callers pass a confirmed, failed or rejected withdrawal. */
 export async function noticeDone(deps: Deps, tx: Tx, w: WithdrawalRow, reason: string | null): Promise<void> {
+  // Payouts to users are many and automatic: the merchant follows them by webhook (payout.*), not by email.
+  if (w.kind === 'customer') return;
   const status = w.status as 'confirmed' | 'failed' | 'rejected';
   const [t] = await tx.select({ decimals: tokens.decimals, symbol: tokens.symbol }).from(tokens).where(eq(tokens.id, w.tokenId));
   /* v8 ignore next -- FK */
@@ -230,12 +389,15 @@ export function payoutAddressView(a: PayoutRow, status: 'current' | 'pending' | 
 export function withdrawalView(w: WithdrawalRow, t: { decimals: number; symbol: string }) {
   return {
     id: w.id,
-    object: 'withdrawal' as const,
+    object: w.kind === 'customer' ? ('payout' as const) : ('withdrawal' as const),
     livemode: w.livemode,
+    kind: w.kind,
+    customer_ref: w.customerRef,
     status: w.status,
     token: w.tokenId,
     symbol: t.symbol,
     amount: fromMinorUnits(w.amount, t.decimals),
+    fee: fromMinorUnits(w.fee, t.decimals),
     to_address: w.toAddress,
     approvals_required: w.approvalsRequired,
     approvals: w.approvedBy.length,

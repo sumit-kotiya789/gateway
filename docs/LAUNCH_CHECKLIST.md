@@ -37,4 +37,11 @@ Every item needs an owner and a date before launch.
 - [ ] Cold wallet multisig set up, signers documented; address registered (`platform:register`) and in `SIGNER_COLD_ADDRESSES`
 - [ ] Gas wallet funded and a low-balance alert agreed; hot wallet cap set in `infra/prometheus/alerts.yml`
 - [ ] `WITHDRAWAL_TWO_PERSON_MIN` agreed; at least two superadmins and two operators for approvals
+- [ ] Payout fee per merchant agreed (covers payout gas); merchants told that live user payouts need their limits (D-100)
+
+## Wallet-address (forwarder) mode only (M12)
+- [ ] Forwarder contracts audited; findings resolved
+- [ ] `ForwarderFactory` deployed on BSC mainnet (`BSC_FORWARDER_FACTORY`), code hash verified (`pnpm chains:verify`)
+- [ ] Live fee wallet registered (`platform:register`, `fee_wallets`) and its keys held outside the platform
+- [ ] Signer gas wallet funded for flushes; `SIGNER_MAX_FORWARDS_PER_DAY` / `SIGNER_MAX_FORWARD_GAS` reviewed
 - [ ] Drill: pause and resume the signer, a sweep, a withdrawal, a hot → cold transfer and a recorded refill on mainnet with small amounts

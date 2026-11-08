@@ -74,6 +74,7 @@ export interface Merchant {
   fee_bps: number;
   fee_fixed: string;
   fee_grace: string;
+  payout_fee: string;
   underpay_tolerance_bps: number;
   risk_flags: string[];
   created_at: string;
@@ -207,9 +208,13 @@ export interface AdminWithdrawal {
   id: string;
   livemode: boolean;
   status: string;
+  /** merchant: to its own payout address; customer: a payout to one of its users (D-100). */
+  kind: 'merchant' | 'customer';
+  customer_ref: string | null;
   token: string;
   symbol: string;
   amount: string;
+  fee: string;
   to_address: string;
   approvals_required: number;
   approvals: number;

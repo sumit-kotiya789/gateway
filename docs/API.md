@@ -74,7 +74,9 @@ verified email (`403`, `details.reason = "email_unverified"`). `GET /auth/me` re
 | GET | `/v1/balances` | API key | `read` (per token: `received`, `fees_charged`, `fees_owed` (charged, not covered by top-ups), `prepaid_fees` (signed), `fee_status` ok / low / blocked / not_enforced; custodial: `pending` (not swept yet), `available` (withdrawable), `withdrawing`; top-level `custody_mode`; live keys also list every usable live token) | M5/M8/M7 |
 | GET | `/v1/events`, `/v1/events/:id` | API key | `read` (`limit`, `starting_after`, `type`; newest first) | M5 |
 | POST | `/v1/withdrawals` | API key | `withdrawals:write` (`token`, `amount`; custodial, and only while custody is on: else 403 `custody_off`; to the current payout address; Idempotency-Key; held at once) | M7 |
-| GET | `/v1/withdrawals`, `/v1/withdrawals/:id` | API key | `read` | M7 |
+| GET | `/v1/withdrawals`, `/v1/withdrawals/:id` | API key | `read` (the merchant's own withdrawals) | M7 |
+| POST | `/v1/payouts` | API key | `payouts:write` (`customer_ref`, `to_address` (EIP-55), `token`, `amount`; custody on; to one of your users: sent automatically within your withdrawal limits, which live mode requires (`limits_required`), refused above (`over_tx_limit`, `over_day_limit`); the flat payout fee is held with the amount (`insufficient_balance`); never to a gateway or blocked address (`bad_destination`); Idempotency-Key; events `payout.<status>`) | D-100 |
+| GET | `/v1/payouts`, `/v1/payouts/:id` | API key | `read` (`customer_ref` filter, `starting_after`, `limit`) | D-100 |
 | GET | `/v1/exports/invoices.csv`, `/v1/exports/payments.csv` | API key | `read` (the key's mode; `from`, `to` as UTC dates, default last 31 days, ≤ 366 days, ≤ 50,000 rows; 10/min per key; audited as the key) | M10 |
 | GET | `/checkout/:id`, `/checkout/:id/status` | public (invoice id) | – | M3 |
 | GET | `/checkout/:id?embed=1&origin=<site>` | public | – (framable only by the merchant's allowlisted `origin`; posts status to it) | M10 |
@@ -153,7 +155,9 @@ credited to the merchant's balance minus the fee on that amount (D-099).
 | GET | `/v1/dashboard/balances/` | session | `account:read` (`livemode`) | M5 |
 | GET | `/v1/dashboard/fee-topups/` | session | `account:read` (`livemode`; newest first) | M8 |
 | GET | `/v1/dashboard/exports/invoices.csv`, `/v1/dashboard/exports/payments.csv` | session | `reports:read` (`livemode`, `from`, `to` as UTC dates, default last 31 days, ≤ 366 days, ≤ 50,000 rows; 10/min; audited) | M10 |
-| GET | `/v1/dashboard/withdrawals/` | session | `account:read` (`livemode`, `starting_after`) | M7 |
+| GET | `/v1/dashboard/withdrawals/` | session | `account:read` (`livemode`, `kind` merchant (default) / customer, `starting_after`) | M7 |
+| GET | `/v1/dashboard/withdrawals/limits` | session | `account:read` (`livemode`; per token `per_tx`, `per_day`, `used_24h`) | D-100 |
+| PUT | `/v1/dashboard/withdrawals/limits` | session + **2FA** | `payouts:manage` (`livemode`, `token`, `per_tx`, `per_day`; null = no limit; one-time ≤ daily; applies at once; audited) | D-100 |
 | POST | `/v1/dashboard/withdrawals/` | session + **2FA** | `withdrawals:request` (`livemode`, `token`, `amount`; verified email for live) | M7 |
 | POST | `/v1/dashboard/withdrawals/:id/cancel` | session | `withdrawals:request` (while awaiting approval) | M7 |
 | GET | `/v1/dashboard/withdrawals/payout-addresses` | session | `account:read` (`livemode`; status current / pending / superseded / cancelled) | M7 |
@@ -170,7 +174,7 @@ credited to the merchant's balance minus the fee on that amount (D-099).
 | POST | `/admin/v1/merchants/:id/suspend` | admin session | `merchants:manage` (`reason`) | M5b |
 | POST | `/admin/v1/merchants/:id/reactivate` | admin session + **2FA** | `merchants:manage` (`reason`) | M5b |
 | PUT | `/admin/v1/merchants/:id/risk-flags` | admin session | `risk:manage` (`flags`, `reason`; replaces the set) | M5b |
-| PUT | `/admin/v1/merchants/:id/fees` | admin session + **2FA** | `fees:manage` (`fee_bps`, `fee_fixed`, `fee_grace` in token units ≤ 6 dp, `reason`; new invoices only) | M8 |
+| PUT | `/admin/v1/merchants/:id/fees` | admin session + **2FA** | `fees:manage` (`fee_bps`, `fee_fixed`, `fee_grace`, optional `payout_fee` (per user payout, D-100) in token units ≤ 6 dp, `reason`; new invoices only) | M8 |
 | GET | `/admin/v1/merchants/:id/fee-topups` | admin session | `admin:read` (`livemode`, default true) | M8 |
 | POST | `/admin/v1/merchants/:id/fee-topups` | admin session + **2FA** | `fees:manage` (`livemode`, `token`, `amount`, `reference`, `reason`; posts a ledger journal; append-only) | M8 |
 | POST | `/admin/v1/merchants/:id/users/:userId/reset-2fa` | admin session + **2FA** | `merchants:manage` (`reason`; revokes sessions, deletes recovery codes) | M5b |

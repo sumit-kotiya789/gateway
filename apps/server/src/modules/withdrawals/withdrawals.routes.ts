@@ -1,5 +1,6 @@
-// Withdrawal routes (M7d, D-090): dashboard (payout addresses, requests), merchant API (requests with a
-// `withdrawals:write` key), admin console (approve / reject). Every change is audited.
+// Withdrawal routes (M7d, D-090): dashboard (payout addresses, requests, own limits), merchant API (requests with a
+// `withdrawals:write` key; payouts to the merchant's users with a `payouts:write` key, D-100), admin console
+// (approve / reject). Every change is audited.
 import { AppError } from '@gw/core';
 import { and, desc, eq, inArray, lt } from 'drizzle-orm';
 import type { FastifyRequest } from 'fastify';
@@ -18,11 +19,16 @@ import {
   approveWithdrawal,
   cancelPayoutAddress,
   cancelWithdrawal,
+  limitsView,
   listPayoutAddresses,
+  listWithdrawalLimits,
   payoutAddressView,
   rejectWithdrawal,
+  requestPayout,
   requestWithdrawal,
+  setWithdrawalLimits,
   withdrawalView,
+  withdrawnToday,
 } from './withdrawals.js';
 
 const Livemode = z.stringbool().default(false);
@@ -31,6 +37,10 @@ const TokenId = z.string().regex(/^[a-z0-9-]+:[a-z0-9-]+$/);
 const Amount = z.string().max(100);
 const IdParams = z.strictObject({ id: z.uuid() });
 const Reason = z.string().trim().min(3).max(500);
+const Kind = z.enum(['merchant', 'customer']);
+/** The merchant's own id for its user: what it shows back in lists and events. */
+const CustomerRef = z.string().trim().min(1).max(200);
+const Limit = z.string().max(100).nullable();
 
 type Row = typeof withdrawals.$inferSelect;
 
@@ -41,11 +51,19 @@ async function viewMany(tx: Tx, rows: Row[]) {
   return rows.map((r) => withdrawalView(r, by.get(r.tokenId) ?? { decimals: 0, symbol: '' }));
 }
 
-async function listFor(tx: Tx, merchantId: string, livemode: boolean, startingAfter?: string, limit = 50) {
+async function listFor(tx: Tx, merchantId: string, livemode: boolean, kind: 'merchant' | 'customer', startingAfter?: string, limit = 50, customerRef?: string) {
   const rows = await tx
     .select()
     .from(withdrawals)
-    .where(and(eq(withdrawals.merchantId, merchantId), eq(withdrawals.livemode, livemode), startingAfter ? lt(withdrawals.id, startingAfter) : undefined))
+    .where(
+      and(
+        eq(withdrawals.merchantId, merchantId),
+        eq(withdrawals.livemode, livemode),
+        eq(withdrawals.kind, kind),
+        customerRef ? eq(withdrawals.customerRef, customerRef) : undefined,
+        startingAfter ? lt(withdrawals.id, startingAfter) : undefined,
+      ),
+    )
     .orderBy(desc(withdrawals.id))
     .limit(limit + 1);
   const page = rows.slice(0, limit);
@@ -56,10 +74,57 @@ export function withdrawalDashboardRoutes(deps: Deps): FastifyPluginAsyncZod {
   return async (app) => {
     app.addHook('preHandler', requireUser(deps));
 
-    app.get('/', { preHandler: requirePermission('account:read'), schema: { querystring: z.strictObject({ livemode: Livemode, starting_after: z.uuid().optional() }) } }, async (req) => {
+    app.get(
+      '/',
+      { preHandler: requirePermission('account:read'), schema: { querystring: z.strictObject({ livemode: Livemode, kind: Kind.default('merchant'), starting_after: z.uuid().optional() }) } },
+      async (req) => {
+        const u = authedUser(req);
+        return withTenant(deps.db, u.merchantId, (tx) => listFor(tx, u.merchantId, req.query.livemode, req.query.kind, req.query.starting_after));
+      },
+    );
+
+    // The merchant's own withdrawal limits (D-100): one-time and daily per token, for its withdrawals and its payouts
+    // to users. Owner + 2FA; raising applies at once (owner decision); null clears a limit.
+    app.get('/limits', { preHandler: requirePermission('account:read'), schema: { querystring: z.strictObject({ livemode: Livemode }) } }, async (req) => {
       const u = authedUser(req);
-      return withTenant(deps.db, u.merchantId, (tx) => listFor(tx, u.merchantId, req.query.livemode, req.query.starting_after));
+      return withTenant(deps.db, u.merchantId, async (tx) => ({ data: await listWithdrawalLimits(tx, u.merchantId, req.query.livemode) }));
     });
+
+    app.put(
+      '/limits',
+      {
+        preHandler: [requirePermission('payouts:manage'), requireVerifiedEmailForLive(deps), requireTotp(deps)],
+        schema: { body: z.strictObject({ livemode: z.boolean().default(false), token: TokenId, per_tx: Limit, per_day: Limit }) },
+      },
+      async (req) => {
+        const u = authedUser(req);
+        const b = req.body;
+        return withTenant(deps.db, u.merchantId, async (tx) => {
+          const { before, after } = await setWithdrawalLimits(tx, { merchantId: u.merchantId, livemode: b.livemode, tokenId: b.token, perTx: b.per_tx, perDay: b.per_day, userId: u.id });
+          const [t] = await tx.select({ decimals: tokens.decimals, symbol: tokens.symbol }).from(tokens).where(eq(tokens.id, after.tokenId));
+          /* v8 ignore next -- the token was just resolved */
+          if (!t) throw new AppError('not_found', 'token not found');
+          const view = limitsView(after, t, await withdrawnToday(tx, u.merchantId, b.livemode, after.tokenId));
+          const old = before ? limitsView(before, t, 0n) : null;
+          await audit(
+            tx,
+            {
+              actorType: 'merchant_user',
+              actorId: u.id,
+              merchantId: u.merchantId,
+              action: 'withdrawal_limits.changed',
+              targetType: 'merchant',
+              targetId: u.merchantId,
+              // `asset`: the audit redaction treats any key containing "token" as a secret.
+              before: old ? { asset: old.token, livemode: b.livemode, per_tx: old.per_tx, per_day: old.per_day } : null,
+              after: { asset: view.token, livemode: b.livemode, per_tx: view.per_tx, per_day: view.per_day },
+            },
+            req,
+          );
+          return view;
+        });
+      },
+    );
 
     app.post(
       '/',
@@ -142,16 +207,75 @@ export function withdrawalRoutes(deps: Deps): FastifyPluginAsyncZod {
     app.get('/withdrawals', { preHandler: requireApiKey(deps, 'read'), schema: { querystring: z.strictObject({ starting_after: z.uuid().optional(), limit: z.coerce.number().int().min(1).max(100).default(20) }) } }, async (req) => {
       const k = req.apiKey;
       if (!k) throw new AppError('unauthorized', 'API key required');
-      return withTenant(deps.db, k.merchantId, (tx) => listFor(tx, k.merchantId, k.livemode, req.query.starting_after, req.query.limit));
+      return withTenant(deps.db, k.merchantId, (tx) => listFor(tx, k.merchantId, k.livemode, 'merchant', req.query.starting_after, req.query.limit));
     });
 
     app.get('/withdrawals/:id', { preHandler: requireApiKey(deps, 'read'), schema: { params: IdParams } }, async (req) => {
       const k = req.apiKey;
       if (!k) throw new AppError('unauthorized', 'API key required');
       return withTenant(deps.db, k.merchantId, async (tx) => {
-        const rows = await tx.select().from(withdrawals).where(and(eq(withdrawals.id, req.params.id), eq(withdrawals.merchantId, k.merchantId), eq(withdrawals.livemode, k.livemode)));
+        const rows = await tx
+          .select()
+          .from(withdrawals)
+          .where(and(eq(withdrawals.id, req.params.id), eq(withdrawals.merchantId, k.merchantId), eq(withdrawals.livemode, k.livemode), eq(withdrawals.kind, 'merchant')));
         const [v] = await viewMany(tx, rows);
         if (!v) throw new AppError('not_found', 'withdrawal not found');
+        return v;
+      });
+    });
+
+    // Payouts to the merchant's users (D-100): custody on, sent automatically within the merchant's limits (live
+    // mode needs them set), minus nothing: the flat payout fee is charged on top, from the merchant's balance.
+    app.post(
+      '/payouts',
+      {
+        preHandler: requireApiKey(deps, 'payouts:write'),
+        schema: { body: z.strictObject({ customer_ref: CustomerRef, to_address: Address, token: TokenId, amount: Amount }) },
+      },
+      async (req, reply) => {
+        const k = req.apiKey;
+        if (!k) throw new AppError('unauthorized', 'API key required');
+        const b = req.body;
+        const res = await withIdempotency(deps, k, idempotencyKeyOf(req), requestHash('POST', '/v1/payouts', b), async (tx) => {
+          const w = await requestPayout(deps, tx, {
+            merchantId: k.merchantId,
+            livemode: k.livemode,
+            tokenId: b.token,
+            amount: b.amount,
+            toAddress: b.to_address,
+            customerRef: b.customer_ref,
+            requestedBy: `api_key:${k.id}`,
+          });
+          await audit(tx, { actorType: 'api_key', actorId: k.id, merchantId: k.merchantId, action: 'payout.requested', targetType: 'withdrawal', targetId: w.id, after: { amount: b.amount, asset: w.tokenId, to: w.toAddress, customer_ref: b.customer_ref, livemode: w.livemode } }, req);
+          return { status: 201, body: (await viewMany(tx, [w]))[0] };
+        });
+        return sendStored(reply, res);
+      },
+    );
+
+    app.get(
+      '/payouts',
+      {
+        preHandler: requireApiKey(deps, 'read'),
+        schema: { querystring: z.strictObject({ customer_ref: CustomerRef.optional(), starting_after: z.uuid().optional(), limit: z.coerce.number().int().min(1).max(100).default(20) }) },
+      },
+      async (req) => {
+        const k = req.apiKey;
+        if (!k) throw new AppError('unauthorized', 'API key required');
+        return withTenant(deps.db, k.merchantId, (tx) => listFor(tx, k.merchantId, k.livemode, 'customer', req.query.starting_after, req.query.limit, req.query.customer_ref));
+      },
+    );
+
+    app.get('/payouts/:id', { preHandler: requireApiKey(deps, 'read'), schema: { params: IdParams } }, async (req) => {
+      const k = req.apiKey;
+      if (!k) throw new AppError('unauthorized', 'API key required');
+      return withTenant(deps.db, k.merchantId, async (tx) => {
+        const rows = await tx
+          .select()
+          .from(withdrawals)
+          .where(and(eq(withdrawals.id, req.params.id), eq(withdrawals.merchantId, k.merchantId), eq(withdrawals.livemode, k.livemode), eq(withdrawals.kind, 'customer')));
+        const [v] = await viewMany(tx, rows);
+        if (!v) throw new AppError('not_found', 'payout not found');
         return v;
       });
     });

@@ -218,6 +218,7 @@ function FeeSettings(props: { merchant: MerchantData; onSaved: () => void }) {
   const [bps, setBps] = useState(String(props.merchant.fee_bps));
   const [fixed, setFixed] = useState(props.merchant.fee_fixed);
   const [grace, setGrace] = useState(props.merchant.fee_grace);
+  const [payoutFee, setPayoutFee] = useState(props.merchant.payout_fee);
   return (
     <fieldset className="card">
       <legend>Fees</legend>
@@ -226,6 +227,7 @@ function FeeSettings(props: { merchant: MerchantData; onSaved: () => void }) {
         <Field label="Rate (bps)"><input type="number" min={0} max={10000} value={bps} onChange={(e) => { setBps(e.target.value); }} /></Field>
         <Field label="Fixed per invoice (token units)"><input value={fixed} onChange={(e) => { setFixed(e.target.value); }} inputMode="decimal" /></Field>
         <Field label="Grace (token units)"><input value={grace} onChange={(e) => { setGrace(e.target.value); }} inputMode="decimal" /></Field>
+        <Field label="Payout fee per user payout (token units)"><input value={payoutFee} onChange={(e) => { setPayoutFee(e.target.value); }} inputMode="decimal" /></Field>
       </div>
       <div className="card-actions">
         <ReasonAction
@@ -233,7 +235,7 @@ function FeeSettings(props: { merchant: MerchantData; onSaved: () => void }) {
           totp
           primary
           onSubmit={async (reason, h) => {
-            await api('PUT', `/merchants/${props.merchant.id}/fees`, { fee_bps: Number(bps), fee_fixed: fixed.trim(), fee_grace: grace.trim(), reason }, h);
+            await api('PUT', `/merchants/${props.merchant.id}/fees`, { fee_bps: Number(bps), fee_fixed: fixed.trim(), fee_grace: grace.trim(), payout_fee: payoutFee.trim(), reason }, h);
             props.onSaved();
           }}
         />
@@ -322,7 +324,7 @@ export function MerchantDetail(props: { id: string; manage: boolean }) {
       <dl className="details card">
         <dt>Merchant id</dt><dd><CopyField value={d.id} /></dd>
         <dt>Custody mode</dt><dd>{label(d.custody_mode)}</dd>
-        <dt>Platform fee</dt><dd>{d.fee_bps} bps + {d.fee_fixed} fixed · grace {d.fee_grace}</dd>
+        <dt>Platform fee</dt><dd>{d.fee_bps} bps + {d.fee_fixed} fixed · grace {d.fee_grace} · payout fee {d.payout_fee}</dd>
         <dt>Underpay tolerance</dt><dd>{d.underpay_tolerance_bps} bps</dd>
         <dt>Risk flags</dt><dd>{d.risk_flags.length > 0 ? d.risk_flags.map((f) => <span key={f} className="badge s-low">{label(f)}</span>) : '—'}</dd>
         <dt>Created</dt><dd>{fmtDate(d.created_at)}</dd>
@@ -680,8 +682,11 @@ export function WithdrawalQueue(props: { selfId: string; canApprove: boolean }) 
                 <tr key={w.id}>
                   <td>{fmtDate(w.created_at)} {w.livemode ? <span className="badge s-active">live</span> : <span className="badge">test</span>}</td>
                   <td><a href={`#/merchants/${w.merchant_id}`}>{w.merchant_name}</a></td>
-                  <td className="num">{w.amount} {w.symbol}</td>
-                  <td><code>{short(w.to_address)}</code></td>
+                  <td className="num">{w.amount} {w.symbol}{w.fee !== '0' && <small className="muted"> + fee {w.fee}</small>}</td>
+                  <td>
+                    <code>{short(w.to_address)}</code>
+                    {w.kind === 'customer' && <small className="muted"> user {w.customer_ref}</small>}
+                  </td>
                   <td>
                     <StatusBadge status={w.status} />
                     {w.status === 'pending_approval' && <small className="muted"> {w.approvals}/{w.approvals_required}</small>}

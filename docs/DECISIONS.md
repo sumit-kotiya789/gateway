@@ -660,3 +660,16 @@ KEK file from the secret manager instead.
   underpaid stays a manual decision for them.
 - Money after an invoice closed (`settled`, `partially_paid`) stays pending and shows in reconciliation for an operator.
 
+## D-100 Payouts to a merchant's users; merchant withdrawal limits; payout fee (2026-11-08, owner)
+For web3 projects with custody on: their users deposit and withdraw, and the project pays users out by API.
+- **Payouts to users** (`withdrawals.kind = customer`): `POST /v1/payouts` with a `payouts:write` key, the project's
+  user id (`customer_ref`) and any wallet. **Automatic within the merchant's limits; above them refused** (owner).
+  Never to a platform wallet, a deposit address or a blocked address. Events `payout.<status>`; no owner emails.
+- **Limits** set by the merchant (owner + 2FA), per mode and token: one-time and daily (any 24 h), over all its
+  withdrawals. Raising applies **immediately** (owner chose convenience over a delay). Live user payouts need both
+  limits. Enforced by the app, the database guard (`withdrawal_guard`) and the signer (which also stops queued
+  payouts when a limit was lowered: `merchant_limit`, fatal, hold released).
+- **Payout fee**: flat per user payout (`merchants.payout_fee`, token units), set by an admin (owner chose a flat fee
+  over absorbing the gas); held with the amount, booked to `platform_fee_revenue` on confirmation. The merchant's own
+  withdrawals keep no fee.
+

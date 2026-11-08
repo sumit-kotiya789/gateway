@@ -29,7 +29,7 @@ export function roleCan(role: MerchantRole, permission: MerchantPermission): boo
 }
 
 /** Scopes for secret keys. Publishable keys always carry exactly ['checkout']. */
-export const SECRET_KEY_SCOPES = ['read', 'invoices:write', 'refunds:write', 'withdrawals:write', 'webhooks:write'] as const;
+export const SECRET_KEY_SCOPES = ['read', 'invoices:write', 'refunds:write', 'withdrawals:write', 'payouts:write', 'webhooks:write'] as const;
 export const PUBLISHABLE_KEY_SCOPES = ['checkout'] as const;
 export type ApiKeyScope = (typeof SECRET_KEY_SCOPES)[number] | (typeof PUBLISHABLE_KEY_SCOPES)[number];
 

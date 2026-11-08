@@ -89,7 +89,7 @@ describe('admin fee management', () => {
     expect(r.json()).toMatchObject({ fee_bps: 150, fee_fixed: '0.3', fee_grace: '5' });
     expect((await op.agent.req('GET', B)).json()).toMatchObject({ fee_bps: 150, fee_fixed: '0.3', fee_grace: '5' });
     const a = await owner.query<{ before: unknown; after: unknown }>("select before, after from audit_logs where action = 'admin.merchant_fees_changed' and merchant_id = $1 order by seq desc limit 1", [m.merchantId]);
-    expect(a.rows[0]).toEqual({ before: { fee_bps: 100, fee_fixed: '0', fee_grace: '0' }, after: { fee_bps: 150, fee_fixed: '0.3', fee_grace: '5', reason: 'volume discount' } });
+    expect(a.rows[0]).toEqual({ before: { fee_bps: 100, fee_fixed: '0', fee_grace: '0', payout_fee: '0' }, after: { fee_bps: 150, fee_fixed: '0.3', fee_grace: '5', payout_fee: '0', reason: 'volume discount' } });
   });
 
   it('top-ups: token must match the mode, amount must be positive; merchants see only their own', async () => {

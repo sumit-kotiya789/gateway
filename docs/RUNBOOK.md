@@ -220,6 +220,13 @@ Operations:
 - `status = failed`, `last_error = sweep_reverted`: the next round plans a new sweep automatically. Any other failed
   sweep (`over_booked`, `not_our_address`, `wrong_destination`, `wallet_mismatch`) is an incident: data and keys
   disagree. Pause the signer and investigate before anything else moves.
+## Payouts to users (D-100)
+- Failed with `merchant_limit`: the merchant lowered its limits after the request (or live limits are missing); the
+  hold was released. Nothing to do; the merchant's app may retry within the limits.
+- Failed with `bad_destination`: the wallet became blocked or is a gateway address; the hold was released.
+- Waiting with `over_limit` / `insufficient_funds` / `needs_gas`: platform signer limits or the hot wallet, as for
+  withdrawals (below). Many small payouts drain the hot wallet's gas faster: watch the gas alert.
+
 ## Withdrawals (M7)
 - Approval queue: admin console → Withdrawals (or `GET /admin/v1/withdrawals`). Check the merchant, the amount
   against its history, and that the payout address was not changed recently (dashboard audit log) before approving.

@@ -51,6 +51,8 @@ export const merchants = pgTable(
     // invoice token's decimals when used (M8, D-076).
     feeFixed: numeric('fee_fixed', { precision: 20, scale: 6 }).notNull().default('0'),
     feeGrace: numeric('fee_grace', { precision: 20, scale: 6 }).notNull().default('0'),
+    // Flat fee per payout to one of the merchant's users (custody on, D-100), token units; set by the platform.
+    payoutFee: numeric('payout_fee', { precision: 20, scale: 6 }).notNull().default('0'),
     underpayToleranceBps: integer('underpay_tolerance_bps').notNull().default(50),
     kyb: jsonb('kyb').notNull().default({}),
     riskFlags: merchantRiskFlag('risk_flags').array().notNull().default(sql`'{}'`),
@@ -63,6 +65,7 @@ export const merchants = pgTable(
     check('merchants_fee_bps_range', sql`${t.feeBps} between 0 and 10000`),
     check('merchants_fee_fixed_range', sql`${t.feeFixed} between 0 and 1000`),
     check('merchants_fee_grace_range', sql`${t.feeGrace} between 0 and 100000`),
+    check('merchants_payout_fee_range', sql`${t.payoutFee} between 0 and 1000`),
     check('merchants_underpay_tolerance', sql`${t.underpayToleranceBps} between 0 and 500`),
     check('merchants_widget_origins', sql`cardinality(${t.widgetOrigins}) <= 10`),
   ],
@@ -868,6 +871,36 @@ export const merchantRiskLimits = pgTable(
   ],
 );
 
+/**
+ * Withdrawal limits the merchant sets for itself (D-100), per mode and token, in minor units: one transaction at most
+ * `per_tx`, and at most `per_day` over any 24 hours, across its own withdrawals and its payouts to users. Live user
+ * payouts need both set. Null = no limit of that kind.
+ */
+export const merchantWithdrawalLimits = pgTable(
+  'merchant_withdrawal_limits',
+  {
+    id: id(),
+    merchantId: uuid('merchant_id')
+      .notNull()
+      .references(() => merchants.id),
+    livemode: boolean('livemode').notNull(),
+    tokenId: text('token_id')
+      .notNull()
+      .references(() => tokens.id),
+    perTx: money('per_tx'),
+    perDay: money('per_day'),
+    updatedBy: uuid('updated_by')
+      .notNull()
+      .references(() => merchantUsers.id),
+    updatedAt: tstz('updated_at').notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('merchant_withdrawal_limits_uq').on(t.merchantId, t.livemode, t.tokenId),
+    check('merchant_withdrawal_limits_positive', sql`coalesce(${t.perTx}, 1) > 0 and coalesce(${t.perDay}, 1) > 0`),
+    check('merchant_withdrawal_limits_order', sql`${t.perTx} is null or ${t.perDay} is null or ${t.perTx} <= ${t.perDay}`),
+  ],
+);
+
 export const ledgerAccountKind = pgEnum('ledger_account_kind', [
   // Non-custodial memo pair: funds received into the merchant's own wallet (asset) / the merchant's sales (income).
   'merchant_received',
@@ -1206,6 +1239,8 @@ export const payoutAddresses = pgTable(
 );
 
 export const withdrawalStatus = pgEnum('withdrawal_status', ['pending_approval', 'approved', 'sent', 'confirmed', 'failed', 'rejected', 'cancelled']);
+/** merchant: to the merchant's own payout address (D-090). customer: a payout to one of the merchant's users (D-100). */
+export const withdrawalKind = pgEnum('withdrawal_kind', ['merchant', 'customer']);
 
 /**
  * A custodial payout (M7d, D-090). The amount is held (merchant_available -> merchant_withdrawing) when requested;
@@ -1226,10 +1261,14 @@ export const withdrawals = pgTable(
       .notNull()
       .references(() => tokens.id),
     amount: money('amount').notNull(),
-    payoutAddressId: uuid('payout_address_id')
-      .notNull()
-      .references(() => payoutAddresses.id),
+    kind: withdrawalKind('kind').notNull().default('merchant'),
+    // merchant: the payout address it goes to. customer: none (any wallet of the merchant's user).
+    payoutAddressId: uuid('payout_address_id').references(() => payoutAddresses.id),
+    // customer: the merchant's own id for its user (shown back in events and lists).
+    customerRef: text('customer_ref'),
     toAddress: text('to_address').notNull(),
+    // Payout fee snapshot (minor units), held with the amount and booked to the platform when it confirms.
+    fee: money('fee').notNull().default(sql`0`),
     status: withdrawalStatus('status').notNull(),
     // How many distinct admins must approve (0: auto-approved, test mode).
     approvalsRequired: integer('approvals_required').notNull(),
@@ -1249,6 +1288,13 @@ export const withdrawals = pgTable(
     index('withdrawals_due_idx').on(t.nextAttemptAt).where(sql`${t.status} in ('approved', 'sent')`),
     index('withdrawals_status_idx').on(t.status),
     check('withdrawals_amount', sql`${t.amount} > 0`),
+    check('withdrawals_fee', sql`${t.fee} >= 0`),
+    check('withdrawals_to_address', sql`${t.toAddress} ~ '^0x[0-9a-fA-F]{40}$'`),
+    check(
+      'withdrawals_kind',
+      sql`(${t.kind} = 'merchant' and ${t.payoutAddressId} is not null and ${t.customerRef} is null and ${t.fee} = 0)
+       or (${t.kind} = 'customer' and ${t.payoutAddressId} is null and char_length(${t.customerRef}) between 1 and 200)`,
+    ),
     check('withdrawals_approvals', sql`${t.approvalsRequired} between 0 and 2 and cardinality(${t.approvedBy}) <= ${t.approvalsRequired}`),
   ],
 );

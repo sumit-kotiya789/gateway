@@ -19,8 +19,19 @@ const BATCH = 20;
 const LEASE_MS = 60_000;
 const POLL_MS = 15_000;
 const MAX_BACKOFF_MS = 30 * 60_000;
-/** Refusals that mean this withdrawal must not be sent at all. */
-const FATAL = new Set(['not_approved', 'payouts_frozen', 'merchant_inactive', 'payout_address_changed', 'hold_mismatch', 'wrong_status', 'not_found', 'wallet_mismatch']);
+/** Refusals that mean this withdrawal must not be sent at all (merchant_limit, bad_destination: D-100). */
+const FATAL = new Set([
+  'not_approved',
+  'payouts_frozen',
+  'merchant_inactive',
+  'payout_address_changed',
+  'hold_mismatch',
+  'wrong_status',
+  'not_found',
+  'wallet_mismatch',
+  'merchant_limit',
+  'bad_destination',
+]);
 
 const later = (deps: Deps, ms: number) => new Date(deps.clock() + ms);
 const backoff = (attempts: number) => Math.min(MAX_BACKOFF_MS, 30_000 * 2 ** Math.min(attempts, 10));

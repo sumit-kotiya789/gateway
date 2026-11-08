@@ -3,7 +3,7 @@ import { SellerSelect } from './sellers';
 import { api, totpHeader, type ApiKey, type Page, type WebhookDelivery, type WebhookEndpoint } from './api';
 import { Alert, ConfirmButton, EmptyState, ErrorBox, Field, Icon, SecretOnce, Skeleton, StatusBadge, Submit, TotpInput, fmtDate, short, toast, useAction, useLoad } from './ui';
 
-const SECRET_SCOPES = ['read', 'invoices:write', 'refunds:write', 'withdrawals:write', 'webhooks:write'];
+const SECRET_SCOPES = ['read', 'invoices:write', 'refunds:write', 'withdrawals:write', 'payouts:write', 'webhooks:write'];
 
 const Needs2fa = () => (
   <Alert tone="warning">

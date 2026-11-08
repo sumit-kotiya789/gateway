@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { api, totpHeader, type Balance, type PayoutAddress, type Withdrawal } from './api';
+import { api, totpHeader, type Balance, type PayoutAddress, type Withdrawal, type WithdrawalLimits } from './api';
 import { Alert, ConfirmButton, CopyField, EmptyState, ErrorBox, Field, Skeleton, Stat, StatusBadge, Submit, TotpInput, fmtDate, short, toast, useAction, useLoad } from './ui';
 
 /** Custodial accounts only: balances held for you, where withdrawals go, and the withdrawals themselves (D-090). */
@@ -39,6 +39,8 @@ export function Withdrawals(props: { livemode: boolean; enabled: boolean; canReq
       <PayoutAddressSection livemode={props.livemode} canManage={props.canManageAddress} totp={props.totp} currentLabel="Withdrawals go to" keepsLabel="The current address keeps receiving withdrawals." onChange={reload} />
 
       {props.enabled && props.canRequest && props.totp && current && <RequestWithdrawal livemode={props.livemode} balances={balances.data?.data ?? []} to={current.address} onDone={reload} />}
+
+      <LimitsSection livemode={props.livemode} tokens={(balances.data?.data ?? []).map((b) => b.token)} canManage={props.canManageAddress} totp={props.totp} />
 
       <h3 className="section-title">History</h3>
       <ErrorBox error={list.error} />
@@ -81,7 +83,125 @@ export function Withdrawals(props: { livemode: boolean; enabled: boolean; canReq
           </table>
         </div>
       )}
+
+      <UserPayouts livemode={props.livemode} />
     </section>
+  );
+}
+
+/**
+ * Your own withdrawal limits per token (D-100): one transaction at most, and at most per 24 hours, across your
+ * withdrawals and your payouts to users. Live payouts to users need both. Owner + 2FA; changes apply at once.
+ */
+function LimitsSection(props: { livemode: boolean; tokens: string[]; canManage: boolean; totp: boolean }) {
+  const q = `livemode=${String(props.livemode)}`;
+  const limits = useLoad(() => api<{ data: WithdrawalLimits[] }>('GET', `/withdrawals/limits?${q}`), [q]);
+  const rows = limits.data?.data ?? [];
+  const tokens = [...new Set([...props.tokens, ...rows.map((r) => r.token)])].sort();
+  const [token, setToken] = useState('');
+  const chosen = token || tokens[0] || '';
+  const cur = rows.find((r) => r.token === chosen);
+  const [perTx, setPerTx] = useState<string | null>(null);
+  const [perDay, setPerDay] = useState<string | null>(null);
+  const [code, setCode] = useState('');
+  const a = useAction();
+  const txValue = perTx ?? cur?.per_tx ?? '';
+  const dayValue = perDay ?? cur?.per_day ?? '';
+  return (
+    <>
+      <h3 className="section-title">Withdrawal limits</h3>
+      <p className="muted">
+        Caps for your withdrawals and your payouts to users, per token. A request above them is refused. Live payouts to users need both limits.
+      </p>
+      <ErrorBox error={limits.error} />
+      {rows.length > 0 && (
+        <div className="table-wrap">
+          <table>
+            <thead><tr><th>Token</th><th className="num">One-time</th><th className="num">Daily</th><th className="num">Used (24 h)</th><th>Changed</th></tr></thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.token}>
+                  <td>{r.token}</td>
+                  <td className="num">{r.per_tx ?? <span className="muted">no limit</span>}</td>
+                  <td className="num">{r.per_day ?? <span className="muted">no limit</span>}</td>
+                  <td className="num">{r.used_24h} {r.symbol}</td>
+                  <td>{fmtDate(r.updated_at)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {props.canManage && props.totp && tokens.length > 0 && (
+        <form
+          className="card"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void a.run(async () => {
+              const blank = (v: string) => (v.trim() === '' ? null : v.trim());
+              await api('PUT', '/withdrawals/limits', { livemode: props.livemode, token: chosen, per_tx: blank(txValue), per_day: blank(dayValue) }, totpHeader(code));
+              toast.success('Limits saved', 'They apply to new requests at once.');
+              setPerTx(null);
+              setPerDay(null);
+              setCode('');
+              limits.reload();
+            });
+          }}
+        >
+          <div className="row">
+            <Field label="Token">
+              <select value={chosen} onChange={(e) => { setToken(e.target.value); setPerTx(null); setPerDay(null); }}>
+                {tokens.map((t) => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </Field>
+            <Field label="One-time limit" hint="Empty = no limit">
+              <input value={txValue} onChange={(e) => { setPerTx(e.target.value); }} inputMode="decimal" pattern="^\d+(\.\d+)?$" />
+            </Field>
+            <Field label="Daily limit (24 h)" hint="Empty = no limit">
+              <input value={dayValue} onChange={(e) => { setPerDay(e.target.value); }} inputMode="decimal" pattern="^\d+(\.\d+)?$" />
+            </Field>
+          </div>
+          <TotpInput value={code} onChange={setCode} />
+          <ErrorBox error={a.error} />
+          <div className="row end">
+            <Submit busy={a.busy}>Save limits</Submit>
+          </div>
+        </form>
+      )}
+    </>
+  );
+}
+
+/** Payouts to your users, requested by your app with a `payouts:write` key (POST /v1/payouts, D-100). */
+function UserPayouts(props: { livemode: boolean }) {
+  const list = useLoad(() => api<{ data: Withdrawal[] }>('GET', `/withdrawals/?livemode=${String(props.livemode)}&kind=customer`), [props.livemode]);
+  const rows = list.data?.data ?? [];
+  return (
+    <>
+      <h3 className="section-title">Payouts to your users</h3>
+      <ErrorBox error={list.error} />
+      {list.data && rows.length === 0 && <p className="muted">None yet. Your app sends them with POST /v1/payouts (key scope payouts:write).</p>}
+      {rows.length > 0 && (
+        <div className="table-wrap">
+          <table>
+            <thead><tr><th>Requested</th><th>User</th><th className="num">Amount</th><th className="num">Fee</th><th>To</th><th>Status</th><th>Transaction</th></tr></thead>
+            <tbody>
+              {rows.map((w) => (
+                <tr key={w.id}>
+                  <td>{fmtDate(w.created_at)}</td>
+                  <td><code>{w.customer_ref}</code></td>
+                  <td className="num">{w.amount} {w.symbol}</td>
+                  <td className="num">{w.fee}</td>
+                  <td><code>{short(w.to_address)}</code></td>
+                  <td><StatusBadge status={w.status} />{w.reason && <small className="muted"> {w.reason}</small>}</td>
+                  <td>{w.tx_hash ? <code>{short(w.tx_hash)}</code> : <span className="muted">—</span>}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </>
   );
 }
 

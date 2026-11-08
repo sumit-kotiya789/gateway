@@ -159,11 +159,16 @@ export interface PayoutAddress {
 
 export interface Withdrawal {
   id: string;
+  object: 'withdrawal' | 'payout';
   livemode: boolean;
+  /** merchant: to your own payout address; customer: a payout to one of your users (D-100). */
+  kind: 'merchant' | 'customer';
+  customer_ref: string | null;
   status: 'pending_approval' | 'approved' | 'sent' | 'confirmed' | 'failed' | 'rejected' | 'cancelled';
   token: string;
   symbol: string;
   amount: string;
+  fee: string;
   to_address: string;
   approvals_required: number;
   approvals: number;
@@ -171,6 +176,17 @@ export interface Withdrawal {
   reason: string | null;
   created_at: string;
   confirmed_at: string | null;
+}
+
+/** The merchant's own withdrawal limits for one token (D-100); null = no limit. */
+export interface WithdrawalLimits {
+  token: string;
+  symbol: string;
+  livemode: boolean;
+  per_tx: string | null;
+  per_day: string | null;
+  used_24h: string;
+  updated_at: string;
 }
 
 export interface FeeTopup {

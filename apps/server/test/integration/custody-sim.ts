@@ -175,15 +175,20 @@ export function custodyEnv(pool: pg.Pool, c: FakeChain, signerEnv: Record<string
 }
 
 let fundIndex = 0;
-/** A custodial merchant (no fee) with `amount` available: paid, swept into the hot wallet the way the worker books it, settled. */
+/**
+ * A custodial merchant (no fee) with `amount` available: paid, swept into the hot wallet the way the worker books it,
+ * settled. `chain`: a test chain of the caller's own (default evm-local / evm-mainsim), so that the signer's 24-hour
+ * totals per token (shared by every test file) do not mix with another file's.
+ */
 export async function fundCustodialMerchant(
   ctx: { app: ReturnType<typeof buildTestApp>['app']; clock: ReturnType<typeof buildTestApp>['clock']; deps: Deps; owner: pg.Pool; custody: { hot: string; liveHot: string } },
   amount: bigint,
   livemode = false,
+  chain?: string,
 ) {
   const { app, clock, deps, owner, custody } = ctx;
-  const tokenOf = (l: boolean) => (l ? 'evm-mainsim:usdt' : 'evm-local:usdt');
-  const chainOf = (l: boolean) => (l ? 'evm-mainsim' : 'evm-local');
+  const chainOf = (l: boolean) => chain ?? (l ? 'evm-mainsim' : 'evm-local');
+  const tokenOf = (l: boolean) => `${chainOf(l)}:usdt`;
   const m = await merchantWithKey(app, clock, owner, { livemode, scopes: ['read', 'invoices:write', 'withdrawals:write'] });
   await owner.query("update merchants set custody_mode = 'custodial', fee_bps = 0 where id = $1", [m.merchantId]);
   const inv = (await m.api('POST', '/v1/invoices', { amount: '1', token: tokenOf(livemode) })).json<{ id: string; deposit_address: string }>();

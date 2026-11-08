@@ -96,6 +96,19 @@ platform has `FEATURE_CUSTODIAL` on. Turning custody off is refused while the pl
 mode change: new invoices only, locked after the first live invoice, audited. With custody on the dashboard also shows
 Withdrawals.
 
+## Payouts to users and withdrawal limits (D-100)
+- **Payouts to users.** A merchant with custody on pays its own users from its balance: `POST /v1/payouts` (key scope
+  `payouts:write`) with the user's id (`customer_ref`) and wallet. Any EIP-55-valid wallet, but never a platform wallet,
+  a deposit address of any merchant or a blocked address (`payout_destination_allowed`, used by the app, the database
+  guard and the signer). Auto-approved: sent at the next custody worker run.
+- **Payout fee.** A flat fee per user payout (`merchants.payout_fee`, token units, set by an admin), held with the
+  amount and booked to `platform_fee_revenue` when the payout confirms (`withdrawal` journal: merchant_withdrawing
+  +(amount+fee), custody_hot −amount, platform_fee_revenue −fee); released with the amount on failure.
+- **Limits.** The merchant sets, per mode and token, a one-time limit and a daily limit (any 24 hours) in the
+  dashboard (owner + 2FA, applies at once). They cap all its withdrawals: its own and its user payouts. Live user
+  payouts need both. Checked at request, by the database guard and again by the signer (a lowered limit stops a
+  queued payout: it fails with `merchant_limit` and the hold is released).
+
 ## Withdrawals (M7d, D-090)
 Only while custody is on (`FEATURE_CUSTODIAL`): with it off, requests and approvals are refused (`custody_off`) and the
 dashboard says withdrawals are paused; balances stay, and cancelling or rejecting still releases a hold.

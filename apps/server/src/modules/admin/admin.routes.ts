@@ -64,6 +64,7 @@ const merchantView = (m: MerchantRow) => ({
   fee_bps: m.feeBps,
   fee_fixed: units(m.feeFixed),
   fee_grace: units(m.feeGrace),
+  payout_fee: units(m.payoutFee),
   underpay_tolerance_bps: m.underpayToleranceBps,
   risk_flags: m.riskFlags,
   created_at: m.createdAt.toISOString(),
@@ -337,21 +338,28 @@ export function adminRoutes(deps: Deps): FastifyPluginAsyncZod {
 
     // ---------------------------------------------------------------- fees (M8, D-076)
 
-    /** Fee model and fee-balance grace. Changes apply to invoices created afterwards (snapshotted at creation). */
+    /**
+     * Fee model and fee-balance grace. Changes apply to invoices created afterwards (snapshotted at creation). The
+     * payout fee (D-100) is charged per payout to one of the merchant's users; omitted = unchanged.
+     */
     app.put(
       '/merchants/:id/fees',
       {
         preHandler: [requireAdmin(deps, 'fees:manage'), requireAdminTotp(deps)],
         schema: {
           params: IdParams,
-          body: z.strictObject({ fee_bps: z.number().int().min(0).max(10_000), fee_fixed: feeUnits(1000), fee_grace: feeUnits(100_000), reason: Reason }),
+          body: z.strictObject({ fee_bps: z.number().int().min(0).max(10_000), fee_fixed: feeUnits(1000), fee_grace: feeUnits(100_000), payout_fee: feeUnits(1000).optional(), reason: Reason }),
         },
       },
       async (req) =>
         withSystem(deps.db, async (tx) => {
           const m = await lockedMerchant(tx, req.params.id);
           const b = req.body;
-          const [next] = await tx.update(merchants).set({ feeBps: b.fee_bps, feeFixed: b.fee_fixed, feeGrace: b.fee_grace }).where(eq(merchants.id, m.id)).returning();
+          const [next] = await tx
+            .update(merchants)
+            .set({ feeBps: b.fee_bps, feeFixed: b.fee_fixed, feeGrace: b.fee_grace, ...(b.payout_fee === undefined ? {} : { payoutFee: b.payout_fee }) })
+            .where(eq(merchants.id, m.id))
+            .returning();
           /* v8 ignore next -- row locked above */
           if (!next) throw new Error('merchant update failed');
           await record(tx, req, {
@@ -359,8 +367,8 @@ export function adminRoutes(deps: Deps): FastifyPluginAsyncZod {
             action: 'admin.merchant_fees_changed',
             targetType: 'merchant',
             targetId: m.id,
-            before: { fee_bps: m.feeBps, fee_fixed: units(m.feeFixed), fee_grace: units(m.feeGrace) },
-            after: { fee_bps: b.fee_bps, fee_fixed: units(next.feeFixed), fee_grace: units(next.feeGrace), reason: b.reason },
+            before: { fee_bps: m.feeBps, fee_fixed: units(m.feeFixed), fee_grace: units(m.feeGrace), payout_fee: units(m.payoutFee) },
+            after: { fee_bps: b.fee_bps, fee_fixed: units(next.feeFixed), fee_grace: units(next.feeGrace), payout_fee: units(next.payoutFee), reason: b.reason },
           });
           return merchantView(next);
         }),

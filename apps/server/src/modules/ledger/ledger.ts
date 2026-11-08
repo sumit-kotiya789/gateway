@@ -233,7 +233,7 @@ export async function postSweep(tx: Tx, s: SweepRow): Promise<void> {
   ]);
 }
 
-type WithdrawalRef = { id: string; merchantId: string; livemode: boolean; tokenId: string; amount: bigint };
+type WithdrawalRef = { id: string; merchantId: string; livemode: boolean; tokenId: string; amount: bigint; fee: bigint };
 const withdrawalHead = (kind: 'withdrawal_hold' | 'withdrawal' | 'withdrawal_release', w: WithdrawalRef) => ({
   kind,
   merchantId: w.merchantId,
@@ -242,27 +242,32 @@ const withdrawalHead = (kind: 'withdrawal_hold' | 'withdrawal' | 'withdrawal_rel
   withdrawalId: w.id,
 });
 
-/** Holds a requested withdrawal's amount. The caller checked the available balance under the merchant's row lock. */
+/**
+ * Holds a requested withdrawal's amount plus its payout fee (user payouts, D-100; 0 otherwise). The caller checked the
+ * available balance under the merchant's row lock.
+ */
 export async function holdWithdrawal(tx: Tx, w: WithdrawalRef): Promise<void> {
   await post(tx, withdrawalHead('withdrawal_hold', w), [
-    ['merchant_available', 'merchant', w.amount],
-    ['merchant_withdrawing', 'merchant', -w.amount],
+    ['merchant_available', 'merchant', w.amount + w.fee],
+    ['merchant_withdrawing', 'merchant', -(w.amount + w.fee)],
   ]);
 }
 
-/** The payout confirmed on chain: the held amount leaves custody. */
+/** The payout confirmed on chain: the amount leaves custody; the fee stays in the hot wallet as platform revenue. */
 export async function completeWithdrawal(tx: Tx, w: WithdrawalRef): Promise<void> {
-  await post(tx, withdrawalHead('withdrawal', w), [
-    ['merchant_withdrawing', 'merchant', w.amount],
+  const lines: [AccountKind, 'merchant' | 'platform', bigint][] = [
+    ['merchant_withdrawing', 'merchant', w.amount + w.fee],
     ['custody_hot', 'platform', -w.amount],
-  ]);
+  ];
+  if (w.fee > 0n) lines.push(['platform_fee_revenue', 'platform', -w.fee]);
+  await post(tx, withdrawalHead('withdrawal', w), lines);
 }
 
-/** Rejected, cancelled or reverted: the held amount is available again. */
+/** Rejected, cancelled or reverted: the held amount and fee are available again. */
 export async function releaseWithdrawal(tx: Tx, w: WithdrawalRef): Promise<void> {
   await post(tx, withdrawalHead('withdrawal_release', w), [
-    ['merchant_withdrawing', 'merchant', w.amount],
-    ['merchant_available', 'merchant', -w.amount],
+    ['merchant_withdrawing', 'merchant', w.amount + w.fee],
+    ['merchant_available', 'merchant', -(w.amount + w.fee)],
   ]);
 }
 
