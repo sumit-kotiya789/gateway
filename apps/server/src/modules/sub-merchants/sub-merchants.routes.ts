@@ -12,7 +12,7 @@ import { requestHash, withIdempotency } from '../../common/idempotency.js';
 import { invoices, subMerchants, tokens } from '../../db/schema.js';
 import type { Deps } from '../../deps.js';
 import { requireApiKey } from '../api-keys/api-keys.js';
-import { requirePermission, requireUser } from '../auth/guards.js';
+import { authedUser, requirePermission, requireUser } from '../auth/guards.js';
 import { Metadata, idempotencyKeyOf, sendStored } from '../invoices/invoices.routes.js';
 
 type Row = typeof subMerchants.$inferSelect;
@@ -146,19 +146,13 @@ export function subMerchantDashboardRoutes(deps: Deps): FastifyPluginAsyncZod {
   const Mode = { livemode: z.stringbool().default(false) };
   return async (app) => {
     app.addHook('preHandler', requireUser(deps));
-    const user = (req: { user?: { id: string; merchantId: string } | undefined }) => {
-      /* v8 ignore next -- requireUser runs first */
-      if (!req.user) throw new AppError('unauthorized', 'authentication required');
-      return req.user;
-    };
-
     app.get('/', { preHandler: requirePermission('invoices:read'), schema: { querystring: ListQuery.extend(Mode) } }, async (req) => {
-      const u = user(req);
+      const u = authedUser(req);
       return withTenant(deps.db, u.merchantId, (tx) => list(tx, u.merchantId, req.query.livemode, req.query));
     });
 
     app.get('/:id', { preHandler: requirePermission('invoices:read'), schema: { params: IdParams, querystring: z.strictObject(Mode) } }, async (req) => {
-      const u = user(req);
+      const u = authedUser(req);
       return withTenant(deps.db, u.merchantId, async (tx) => {
         const r = await loadSubMerchant(tx, u.merchantId, req.query.livemode, req.params.id);
         return { ...view(r), totals: await totals(tx, r) };
@@ -166,7 +160,7 @@ export function subMerchantDashboardRoutes(deps: Deps): FastifyPluginAsyncZod {
     });
 
     app.post('/', { preHandler: requirePermission('invoices:write'), schema: { body: Create.extend({ livemode: z.boolean() }) } }, async (req, reply) => {
-      const u = user(req);
+      const u = authedUser(req);
       const { livemode, ...b } = req.body;
       const r = await withTenant(deps.db, u.merchantId, async (tx) => {
         const row = await create(tx, u.merchantId, livemode, b);
@@ -180,7 +174,7 @@ export function subMerchantDashboardRoutes(deps: Deps): FastifyPluginAsyncZod {
       '/:id',
       { preHandler: requirePermission('invoices:write'), schema: { params: IdParams, body: Patch.extend({ livemode: z.boolean() }) } },
       async (req) => {
-        const u = user(req);
+        const u = authedUser(req);
         const { livemode, ...b } = req.body;
         return withTenant(deps.db, u.merchantId, async (tx) => {
           const { before, after } = await update(tx, u.merchantId, livemode, req.params.id, b);

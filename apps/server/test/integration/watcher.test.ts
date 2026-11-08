@@ -339,15 +339,15 @@ describe('watcher on a fake chain', () => {
   });
 
   it('expiry waits for the scanner; then pending invoices expire', async () => {
-    const { inv, get } = await newInvoice('10', { expires_in: 300 });
+    const { m, inv, get } = await newInvoice('10', { expires_in: 300 });
     clock.advance(301_000);
     const r = await owner.query<{ bt: Date }>(`select block_time bt from chain_cursors where chain_id = 'evm-fake'`);
     if ((r.rows[0]?.bt.getTime() ?? 0) < Date.parse(inv.expires_at)) {
-      expect(await expireDueInvoices(deps)).not.toContain(inv.id);
+      expect(await expireDueInvoices(deps, { merchantId: m.merchantId })).not.toContain(inv.id);
       chain.mine(1, Math.ceil((Date.parse(inv.expires_at) - Number(chain.time) * 1000) / 1000) + 5);
       await tick();
     }
-    expect(await expireDueInvoices(deps)).toContain(inv.id);
+    expect(await expireDueInvoices(deps, { merchantId: m.merchantId })).toContain(inv.id);
     expect((await get()).status).toBe('expired');
   });
 
@@ -751,7 +751,7 @@ describe('ledger, fees, outbox', () => {
     const B = `/admin/v1/merchants/${m.merchantId}`;
     // No fee here, so the fee balance never blocks the next live invoice.
     expect((await op.agent.req('PUT', `${B}/fees`, { fee_bps: 0, fee_fixed: '0', fee_grace: '1', reason: 'risk limits test' }, op.stepUp())).statusCode).toBe(200);
-    const put = (body: Record<string, unknown>, headers = op.stepUp()) =>
+    const put = (body: Record<string, unknown>, headers: Record<string, string> = op.stepUp()) =>
       op.agent.req('PUT', `${B}/risk-limits`, { asset: 'evm-fakelive:usdt', per_invoice: '100', per_day: '120', reason: 'new merchant limits', ...body }, headers);
     // Before any limit: a live invoice of any size goes through.
     const pay0 = await m.api('POST', '/v1/invoices', { amount: '5', token: 'evm-fakelive:usdt' });

@@ -228,9 +228,11 @@ describe('expiry', () => {
     const inv = (await m.api('POST', '/v1/invoices', body({ expires_in: 300 }))).json<InvoiceBody>();
     clock.advance(301_000);
     await scannedUpTo(new Date(Date.parse(inv.expires_at) - 1000));
-    expect(await expireDueInvoices(deps)).not.toContain(inv.id);
+    expect(await expireDueInvoices(deps, { merchantId: m.merchantId })).not.toContain(inv.id);
     await scannedUpTo(new Date(Date.parse(inv.expires_at)));
-    expect(await expireDueInvoices(deps)).toContain(inv.id);
+    // Unscoped, as the worker runs it; batch 0 so it cannot expire invoices of other test files (one shared database).
+    expect(await expireDueInvoices(deps, {}, 0)).toEqual([]);
+    expect(await expireDueInvoices(deps, { merchantId: m.merchantId })).toContain(inv.id);
   });
 
   it('expires pending invoices past their deadline, leaves others alone', async () => {
@@ -239,7 +241,7 @@ describe('expiry', () => {
     const long = (await m.api('POST', '/v1/invoices', body({ expires_in: 3600 }))).json<InvoiceBody>();
     clock.advance(301_000);
     await scannedUpTo(new Date(clock() + 3600_000 * 24 * 365));
-    const expired = await expireDueInvoices(deps);
+    const expired = await expireDueInvoices(deps, { merchantId: m.merchantId });
     expect(expired).toContain(short.id);
     expect(expired).not.toContain(long.id);
     expect((await m.api('GET', `/v1/invoices/${short.id}`)).json<InvoiceBody>().status).toBe('expired');

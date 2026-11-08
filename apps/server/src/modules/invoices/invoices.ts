@@ -161,8 +161,9 @@ export async function transitionInvoice(deps: Deps, tx: Tx, invoiceId: string, t
  * Expires pending invoices past their deadline. Safe to run concurrently (SKIP LOCKED). Returns ids expired.
  * Only once the chain's scanner has passed the deadline (cursor block time >= expires_at): a payment mined in time
  * is always recorded first, so a lagging or stopped watcher can never expire an invoice that was paid on time.
+ * `scope.merchantId` limits it to one merchant (tests: test files share one database but each has its own clock).
  */
-export async function expireDueInvoices(deps: Deps, batch = 500): Promise<string[]> {
+export async function expireDueInvoices(deps: Deps, scope: { merchantId?: string } = {}, batch = 500): Promise<string[]> {
   return withSystem(deps.db, async (tx) => {
     await setReason(tx, 'expired: no payment before deadline');
     const now = new Date(deps.clock());
@@ -173,6 +174,7 @@ export async function expireDueInvoices(deps: Deps, batch = 500): Promise<string
         and(
           eq(invoices.status, 'pending'),
           lte(invoices.expiresAt, now),
+          scope.merchantId ? eq(invoices.merchantId, scope.merchantId) : undefined,
           sql`exists (select 1 from ${chainCursors} where ${chainCursors.chainId} = ${invoices.chainId} and ${chainCursors.blockTime} >= ${invoices.expiresAt})`,
         ),
       )

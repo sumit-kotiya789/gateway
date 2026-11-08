@@ -56,7 +56,7 @@ function errorMessage(b: ErrorBody | null, status: number): string {
   return e?.message ?? `request failed (${String(status)})`;
 }
 
-export async function api<T>(method: 'GET' | 'POST' | 'PUT' | 'DELETE', path: string, body?: unknown, headers?: Record<string, string>): Promise<T> {
+export async function api<T>(method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE', path: string, body?: unknown, headers?: Record<string, string>): Promise<T> {
   let res = await send(method, path, body, headers);
   if (res.status === 401 && !NO_REFRESH.test(path) && (await refresh())) res = await send(method, path, body, headers);
   if (res.status === 204) return undefined as T;
