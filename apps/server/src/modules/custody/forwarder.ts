@@ -56,15 +56,20 @@ export async function planForwards(deps: Deps, env: ForwarderEnv, scope: Forward
       address: string;
       token_contract: string;
     }>(sql`
-      select f.deposit_address_id, i.id as invoice_id, i.merchant_id, i.livemode, i.chain_id, i.token_id, d.address, f.token_contract
+      select f.deposit_address_id, (array_agg(i.id order by i.created_at desc, i.id desc))[1] as invoice_id,
+             i.merchant_id, i.livemode, i.chain_id, i.token_id, d.address, f.token_contract
       from invoices i
       join deposit_addresses d on d.id = i.deposit_address_id
       join forwarder_params f on f.deposit_address_id = d.id
       where i.custody_mode = 'non_custodial_forwarder' ${scope.merchantId ? sql`and i.merchant_id = ${scope.merchantId}` : sql``}
         and not exists (select 1 from forwards w where w.deposit_address_id = d.id and w.status in ('pending', 'sent'))
-        and (select coalesce(sum(p.amount), 0) from payments p where p.invoice_id = i.id and p.status = 'confirmed')
-          > (select coalesce(sum(w.to_merchant + w.fee), 0) from forwards w where w.deposit_address_id = d.id and w.status = 'confirmed')
-      order by i.created_at
+      -- Per address: a user's permanent forwarder (D-101) collects several deposit invoices; one flush moves them all
+      -- (booked to the latest one; settlement allocates oldest first, settleIfForwarded).
+      group by f.deposit_address_id, i.merchant_id, i.livemode, i.chain_id, i.token_id, d.address, f.token_contract
+      having (select coalesce(sum(p.amount), 0) from payments p join invoices x on x.id = p.invoice_id
+              where x.deposit_address_id = f.deposit_address_id and p.status = 'confirmed')
+          > (select coalesce(sum(w.to_merchant + w.fee), 0) from forwards w where w.deposit_address_id = f.deposit_address_id and w.status = 'confirmed')
+      order by min(i.created_at)
       limit ${PLAN_LIMIT}`),
   );
   if (due.rows.length === 0) return 0;

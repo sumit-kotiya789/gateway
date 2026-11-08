@@ -62,6 +62,8 @@ verified email (`403`, `details.reason = "email_unverified"`). `GET /auth/me` re
 | GET | `/v1/tokens` | API key | `read` (same filter; `min_amount` is a decimal string) | M2 |
 | POST | `/v1/invoices` | API key | `invoices:write` | M3 |
 | GET | `/v1/invoices` | API key | `read` (`limit`, `starting_after`, `status`, `external_order_id`) | M3 |
+| POST | `/v1/deposit-accounts` | API key | `invoices:write` (`customer_ref`, `token`): the user's permanent deposit address for that token; 201 new, 200 existing (same user + token = same address; a forwarder account whose payout address was replaced, or one of another custody mode, is retired and a new one issued) | D-101 |
+| GET | `/v1/deposit-accounts`, `/v1/deposit-accounts/:id` | API key | `read` (`customer_ref`, `starting_after`, `limit`; detail lists the account's deposits) | D-101 |
 | GET | `/v1/invoices/:id` | API key | `read` (includes on-chain `payments`, M4; forwarder invoices also `forwards`: status, tx, `to_merchant`, `fee`, D-097) | M3 |
 | POST | `/v1/invoices/:id/cancel` | API key | `invoices:write` (pending only) | M3 |
 | POST | `/v1/payment-links` | API key | `invoices:write` | M3 |
@@ -112,6 +114,9 @@ Statuses: `pending → detected → confirming → paid | underpaid | overpaid �
 confirmed but held for the platform's risk review; it later becomes `paid` (or over/underpaid) or `failed`.
 Custody on only: an invoice still `underpaid` at its deadline closes as `partially_paid` (final), and what arrived is
 credited to the merchant's balance minus the fee on that amount (D-099).
+Deposits (D-101): every transfer to a user's permanent address is an invoice with `kind: "deposit"`, `customer_ref` (the
+user), `deposit_account_id` and `amount` = what was sent; no `checkout_url` / `payment_uri`. Its events carry the same
+fields; credit the user on `invoice.settled`.
 | POST | `/v1/dashboard/auth/signup` | none | – | M1 |
 | POST | `/v1/dashboard/auth/login` | none | – (returns `mfa_required` + `mfa_token` when 2FA on) | M1 |
 | POST | `/v1/dashboard/auth/login/2fa` | `mfa_token` | `code` or `recovery_code` | M1 |

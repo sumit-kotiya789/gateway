@@ -32,6 +32,8 @@ const MONEY_CRITICAL = [
   'packages/chains/src/evm/forwarder.ts',
   'apps/server/src/modules/custody/forwarder.ts',
   'apps/server/src/modules/custody/payout-addresses.ts',
+  // Deposit accounts (D-101)
+  'apps/server/src/modules/deposits/deposit-accounts.ts',
 ];
 const gate = { lines: 90, functions: 90, branches: 90, statements: 90 };
 

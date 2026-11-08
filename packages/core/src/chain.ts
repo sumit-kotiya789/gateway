@@ -129,6 +129,11 @@ export interface AllocationTerms {
   /** Minor units. */
   amountExpected: bigint;
   feeBps: number;
+  /**
+   * Forwarder fee cap (minor units). Default: the fee on `amountExpected` (one invoice). A permanent deposit address of
+   * a user (D-101) has no single amount: its forwarder is uncapped (fee on every deposit).
+   */
+  feeCap?: bigint;
 }
 
 export interface AllocationRequest {

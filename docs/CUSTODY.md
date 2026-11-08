@@ -96,6 +96,20 @@ platform has `FEATURE_CUSTODIAL` on. Turning custody off is refused while the pl
 mode change: new invoices only, locked after the first live invoice, audited. With custody on the dashboard also shows
 Withdrawals.
 
+## Deposit accounts: a permanent address per user (D-101)
+- `deposit_accounts`: one address per merchant, mode, user (`customer_ref`) and token, from the source of the
+  merchant's custody mode (platform HD, merchant xpub, or a CREATE2 forwarder with an **uncapped** fee: the fee is
+  taken on every deposit). Watched while the account exists; never reused. A forwarder account whose payout address
+  was replaced (or an account of an earlier custody mode) is retired on the next request: still watched and credited,
+  but a new address is handed out.
+- Each transfer becomes a **deposit invoice** (`kind = deposit`) for exactly that amount, created by the watcher in the
+  scan transaction (once per tx hash and log index), so statuses, ledger, risk holds, webhooks and reconciliation are
+  those of any invoice. DB guards tie it to its account (merchant, mode, token, address, custody, user).
+- Several deposits share an address: **sweeps and forwards are per address** (one in flight at a time; a confirmed
+  sweep no longer blocks the next one, migration 0051) and settlement allocates what was moved **oldest deposit first**.
+  A forwarder deposit's fee is the fee on it alone (a flush of several can take up to one minor unit more in total;
+  the ledger books the actual flush).
+
 ## Payouts to users and withdrawal limits (D-100)
 - **Payouts to users.** A merchant with custody on pays its own users from its balance: `POST /v1/payouts` (key scope
   `payouts:write`) with the user's id (`customer_ref`) and wallet. Any EIP-55-valid wallet, but never a platform wallet,

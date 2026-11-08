@@ -344,6 +344,27 @@
       "when": 1794153443060,
       "tag": "0048_withdrawal_limits_payouts_security",
       "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "7",
+      "when": 1794154469633,
+      "tag": "0049_deposit_accounts",
+      "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1794154479698,
+      "tag": "0050_deposit_accounts_security",
+      "breakpoints": true
+    },
+    {
+      "idx": 51,
+      "version": "7",
+      "when": 1794155090263,
+      "tag": "0051_sweeps_open_index",
+      "breakpoints": true
     }
   ]
 }

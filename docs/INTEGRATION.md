@@ -164,6 +164,19 @@ func VerifyGatewayWebhook(rawBody []byte, header, secret string, tolerance time.
 }
 ```
 
+## Web3 projects: a deposit address per user, payouts to users (D-100, D-101)
+For games, dApps and apps where users keep a balance:
+1. **Deposit address per user**: `POST /v1/deposit-accounts` with your user id (`customer_ref`) and the token. The same
+   user and token always get the same address: show it in your app. Any amount, any number of times.
+2. **Credit on settlement**: each transfer becomes a deposit invoice (`kind: "deposit"`, `customer_ref`). On the
+   `invoice.settled` webhook, credit `amount_received` to that user (idempotently, by invoice id).
+   - Custody off (wallet address): the funds are forwarded to your wallet minus the fee; credit the gross amount and
+     keep the fee in your pricing. Custody off (xpub): funds land in your own wallet.
+   - Custody on: the funds are swept and added to your gateway balance, minus the fee.
+3. **Payouts (custody on)**: `POST /v1/payouts` with a `payouts:write` key, the user id and their wallet. Set your
+   withdrawal limits first (dashboard, Withdrawals); live payouts need them. A flat payout fee is charged on top.
+   Debit the user in your app before calling, and refund them on `payout.failed`. Use an Idempotency-Key per request.
+
 ## Marketplaces (sellers)
 Platforms that sell for others can keep each seller as a sub-merchant: `POST /v1/sub-merchants` with `name` and your
 own `reference`. Create invoices with `"sub_merchant": "<id>"`; the invoice, its events (`data.sub_merchant_id`) and

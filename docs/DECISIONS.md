@@ -673,3 +673,16 @@ For web3 projects with custody on: their users deposit and withdraw, and the pro
   over absorbing the gas); held with the amount, booked to `platform_fee_revenue` on confirmation. The merchant's own
   withdrawals keep no fee.
 
+## D-101 Permanent deposit address per user (deposit accounts) (2026-11-08, owner)
+Web3 projects give each user one address to deposit to, any amount, any time; it works with custody on or off.
+- **Model.** `deposit_accounts` (merchant, mode, `customer_ref`, token) -> one deposit address from the source of the
+  merchant's custody mode. Forwarder accounts are uncapped (fee on every deposit) and fixed to the payout address they
+  were made for: after a payout-address change the next request retires the account (still watched) and issues a new
+  address. Idempotent per user and token.
+- **Each transfer = a deposit invoice** (`kind = deposit`), created by the watcher for exactly the transferred amount,
+  so the existing pipeline is reused unchanged (statuses, fees, ledger, risk holds, webhooks, reconciliation).
+- **Shared address.** Sweeps and forwards are per address; settlement allocates them oldest deposit first. The sweep
+  index now allows a new sweep after a confirmed one (only one in flight), which the documented amount rule (payments
+  minus earlier confirmed sweeps) already assumed.
+- **Not built.** Rotating an account on demand; per-user totals beyond the account's deposits list.
+

@@ -12,7 +12,8 @@ import type { BlockInfo, ChainAdapter, ChainConfig, Receipt, TokenConfig, Transf
 import { holdPlan, isConfirmed, planInvoice, requiredConfirmations, type InvoiceStatus } from '@gw/core';
 import { and, eq, gt, ne, or, sql } from 'drizzle-orm';
 import { withSystem, type Tx } from '../../common/db.js';
-import { chainCursors, depositAddresses, invoices, payments } from '../../db/schema.js';
+import { chainCursors, depositAccounts, depositAddresses, invoices, payments } from '../../db/schema.js';
+import { depositInvoiceFor, type DepositAccountRow } from '../deposits/deposit-accounts.js';
 import type { Deps } from '../../deps.js';
 import { transitionInvoice } from '../invoices/invoices.js';
 import { RPC_QUORUM } from '../registry/registry.js';
@@ -132,25 +133,37 @@ export async function scanTick(s: Scanner) {
   const to = latest < cursor.blockNumber + MAX_RANGE ? latest : cursor.blockNumber + MAX_RANGE;
 
   // Read AFTER `latest`: an address created later cannot have been paid in a block <= latest.
-  const watched = await withSystem(deps.db, (tx) =>
-    tx
+  const now0 = new Date(deps.clock());
+  const [watched, accounts] = await withSystem(deps.db, async (tx) => [
+    await tx
       .select({ address: depositAddresses.address, invoice: invoices })
       .from(depositAddresses)
       .innerJoin(invoices, eq(invoices.depositAddressId, depositAddresses.id))
-      .where(and(eq(depositAddresses.chainId, chain.id), gt(depositAddresses.watchUntil, new Date(deps.clock())))),
-  );
+      .where(and(eq(depositAddresses.chainId, chain.id), gt(depositAddresses.watchUntil, now0), eq(invoices.kind, 'payment'))),
+    // Users' permanent deposit addresses (D-101): each transfer becomes its own deposit invoice.
+    await tx
+      .select({ address: depositAddresses.address, account: depositAccounts })
+      .from(depositAccounts)
+      .innerJoin(depositAddresses, eq(depositAddresses.id, depositAccounts.depositAddressId))
+      .where(and(eq(depositAccounts.chainId, chain.id), gt(depositAddresses.watchUntil, now0))),
+  ] as const);
   const byAddress = new Map(watched.map((w) => [w.address.toLowerCase(), w.invoice]));
+  const accountByAddress = new Map(accounts.map((a) => [a.address.toLowerCase(), { ...a.account, address: a.address }]));
   const tokenById = new Map(s.tokens.map((t) => [t.id, t]));
 
-  const found: { t: Transfer; token: TokenConfig; invoice: (typeof watched)[number]['invoice'] }[] = [];
+  type Target = { invoice: (typeof watched)[number]['invoice'] } | { account: DepositAccountRow & { address: string } };
+  const found: ({ t: Transfer; token: TokenConfig } & Target)[] = [];
   for (const token of s.tokens) {
-    // Only the invoice's own token counts; other tokens sent to the address are not credited.
-    const addrs = watched.filter((w) => w.invoice.tokenId === token.id).map((w) => w.address);
+    // Only the invoice's (or account's) own token counts; other tokens sent to the address are not credited.
+    const addrs = [...watched.filter((w) => w.invoice.tokenId === token.id), ...accounts.filter((a) => a.account.tokenId === token.id)].map((w) => w.address);
     for (let i = 0; i < addrs.length; i += RECIPIENT_BATCH) {
       for (const t of await adapter.getTokenTransfers(token, from, to, addrs.slice(i, i + RECIPIENT_BATCH))) {
-        const invoice = byAddress.get(t.to.toLowerCase());
         // Dust is ignored (address-poisoning defense, and it could never be credited).
-        if (invoice?.tokenId === token.id && t.amount >= token.minAmount) found.push({ t, token, invoice });
+        if (t.amount < token.minAmount) continue;
+        const invoice = byAddress.get(t.to.toLowerCase());
+        const account = accountByAddress.get(t.to.toLowerCase());
+        if (invoice?.tokenId === token.id) found.push({ t, token, invoice });
+        else if (account?.tokenId === token.id) found.push({ t, token, account });
       }
     }
   }
@@ -235,9 +248,12 @@ export async function scanTick(s: Scanner) {
     const now = new Date(deps.clock());
     const touched = new Set(tracked.map((p) => p.invoiceId));
 
-    for (const { t, token, invoice } of fresh) {
-      const required = requiredConfirmations(token, t.amount > invoice.amountExpected ? t.amount : invoice.amountExpected);
+    for (const f of fresh) {
+      const { t, token } = f;
       const b = await block(t.blockNumber);
+      // A deposit to a user's address gets its own invoice for exactly this transfer (once per tx hash and log index).
+      const invoice = 'invoice' in f ? f.invoice : await depositInvoiceFor(deps, tx, f.account, { txHash: t.txHash, logIndex: t.logIndex, amount: t.amount, blockTime: blockTime(b) });
+      const required = requiredConfirmations(token, t.amount > invoice.amountExpected ? t.amount : invoice.amountExpected);
       const rows = await tx
         .insert(payments)
         .values({

@@ -50,14 +50,17 @@ export async function planSweeps(deps: Deps, scope: SweepScope = {}): Promise<nu
       family: 'evm' | 'tron' | 'solana';
       unswept: string;
     }>(sql`
-      select d.id as deposit_address_id, i.id as invoice_id, i.merchant_id, i.livemode, i.chain_id, i.token_id, d.address, d.family,
+      select d.id as deposit_address_id, (array_agg(i.id order by i.created_at desc, i.id desc))[1] as invoice_id,
+             i.merchant_id, i.livemode, i.chain_id, i.token_id, d.address, d.family,
              (sum(p.amount) - coalesce((select sum(s.amount) from sweeps s where s.deposit_address_id = d.id and s.status = 'confirmed'), 0))::text as unswept
       from invoices i
       join deposit_addresses d on d.id = i.deposit_address_id
       join payments p on p.invoice_id = i.id and p.status = 'confirmed'
       where i.custody_mode = 'custodial' ${scope.merchantId ? sql`and i.merchant_id = ${scope.merchantId}` : sql``}
         and not exists (select 1 from sweeps s where s.deposit_address_id = d.id and s.status in ('pending', 'gas_sent', 'sweep_sent'))
-      group by d.id, i.id
+      -- Per address: a user's permanent address (D-101) collects several deposit invoices; one sweep moves them all
+      -- (booked to the latest one; settlement allocates oldest first, settleIfSwept).
+      group by d.id, i.merchant_id, i.livemode, i.chain_id, i.token_id, d.address, d.family
       having sum(p.amount) > coalesce((select sum(s.amount) from sweeps s where s.deposit_address_id = d.id and s.status = 'confirmed'), 0)
       limit 100`);
     let created = 0;

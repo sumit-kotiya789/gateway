@@ -26,6 +26,7 @@ import { feeTopupDashboardRoutes, ledgerDashboardRoutes, ledgerRoutes } from './
 import { custodyAdminRoutes } from './modules/custody/custody.routes.js';
 import { HttpMetrics, metricsRoutes } from './modules/metrics/metrics.js';
 import { withdrawalAdminRoutes, withdrawalDashboardRoutes, withdrawalRoutes } from './modules/withdrawals/withdrawals.routes.js';
+import { depositAccountDashboardRoutes, depositAccountRoutes } from './modules/deposits/deposit-accounts.routes.js';
 import { webhookDashboardRoutes } from './modules/webhooks/webhooks.routes.js';
 import { xpubDashboardRoutes } from './modules/xpubs/xpubs.routes.js';
 import { inviteAuthRoutes, teamDashboardRoutes } from './modules/team/team.routes.js';
@@ -156,6 +157,7 @@ export function buildApp(logger: FastifyBaseLogger, deps?: Deps) {
   void app.register(teamDashboardRoutes(deps), { prefix: '/v1/dashboard/team' });
   void app.register(exportDashboardRoutes(deps), { prefix: '/v1/dashboard/exports' });
   void app.register(withdrawalDashboardRoutes(deps), { prefix: '/v1/dashboard/withdrawals' });
+  void app.register(depositAccountDashboardRoutes(deps), { prefix: '/v1/dashboard/deposit-accounts' });
   void app.register(settingsDashboardRoutes(deps), { prefix: '/v1/dashboard/settings' });
   void app.register(subMerchantDashboardRoutes(deps), { prefix: '/v1/dashboard/sub-merchants' });
   void app.register(inviteAuthRoutes(deps), { prefix: '/v1/dashboard/auth/invite' });
@@ -167,6 +169,7 @@ export function buildApp(logger: FastifyBaseLogger, deps?: Deps) {
   void app.register(ledgerRoutes(deps), { prefix: '/v1' });
   void app.register(exportRoutes(deps), { prefix: '/v1' });
   void app.register(withdrawalRoutes(deps), { prefix: '/v1' });
+  void app.register(depositAccountRoutes(deps), { prefix: '/v1' });
   void app.register(checkoutRoutes(deps));
   void app.register(publicPayRoutes(deps));
   void app.register(

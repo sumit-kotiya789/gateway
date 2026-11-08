@@ -43,6 +43,8 @@ Every file with a `// MONEY-CRITICAL` header is listed here and in the coverage 
 | `packages/chains/src/evm/forwarder.ts`, `forwarder.artifacts.json` | forwarder address math and fee split (must equal the contracts), committed bytecode | M12 |
 | `apps/server/src/modules/custody/forwarder.ts` | forwards: planning from on-chain balances, signer intents, confirmation, fee booking, settlement | M12 |
 | `apps/server/src/modules/custody/payout-addresses.ts` | current payout address (withdrawals and forwarder destinations) | M12 |
+| `apps/server/db/migrations/0049_deposit_accounts.sql`, `0050_deposit_accounts_security.sql`, `0051_sweeps_open_index.sql` | deposit accounts (immutable, address from the source of their custody mode), deposit invoices tied to their account, payment invoices never on an account address, sweeps per address | D-101 |
+| `apps/server/src/modules/deposits/deposit-accounts.ts` | account issue/retire, deposit invoice per transfer | D-101 |
 | `apps/server/db/migrations/0047_withdrawal_limits_payouts.sql`, `0048_withdrawal_limits_payouts_security.sql` | merchant limits (per tx, 24 h), user payouts (auto-approved, payout fee, destination check `payout_destination_allowed`), fee booked on confirmation, `payout.*` events | D-100 |
 | `apps/server/db/migrations/0045_partial_payments.sql`, `0046_partial_payments_security.sql` | `partially_paid` status: custodial only, `underpaid` edge only, settlement journal allowed for it | D-099 |
 | `apps/server/src/modules/custody/partials.ts` | closes underpaid custodial invoices after the deadline (scanned past it, fully swept) | D-099 |
@@ -123,6 +125,7 @@ Status: `planned` until the mitigation's milestone lands, then the test that pro
 | Late payment auto-fulfilled | `expired`/`cancelled` → `late_payment` only; `late_payment` → `paid` is manual | `invoice.test.ts` | M3 |
 | Custody mode switched under live money | Trigger locks `custody_mode` after the first live invoice | `invoices.test.ts` | M3 |
 | Leaked `payouts:write` key drains the merchant balance to attacker wallets | Live payouts refused without both merchant limits; per-transaction and 24 h caps enforced by app, DB guard and signer; platform `SIGNER_LIMITS`; blocklist; scoped keys (rotate on leak) | `payouts.test.ts` | D-100 |
+| A deposit credited twice, or to the wrong user | One deposit invoice per (account, tx hash:log index), unique index; created in the scan transaction; guard ties it to its account's user, address, token and custody | `deposit-accounts.test.ts` | D-101 |
 | Payout sent into custody or another merchant's address (loops, mis-crediting) | `payout_destination_allowed`: no platform wallet, no deposit address of any merchant, no blocked address; checked by app, DB guard, signer | `payouts.test.ts` | D-100 |
 | Partial payment credited too early or twice (custodial) | `underpaid` -> `partially_paid` only after the deadline, once the scanner passed it and every payment was swept; custodial only (DB guard); final status; one settlement journal per invoice (unique index); reconciliation `custodial_settlement` | `custodial-ledger.test.ts`, `invoice.test.ts` | D-099 |
 | Custody turned off with funds still held (stranded balance) | Switch refused while any custodial balance or open custody invoice exists; withdrawals refused while `FEATURE_CUSTODIAL` is off | `custody-mode.test.ts` | D-098 |

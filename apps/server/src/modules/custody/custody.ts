@@ -140,7 +140,7 @@ export const forwarderStrategy: CustodyStrategy<Tx> = {
       feeRecipient: getAddress(fee.address),
       token: getAddress(terms.tokenContract),
       feeBps: terms.feeBps,
-      feeCap: forwarderFeeOn(terms.amountExpected, terms.feeBps),
+      feeCap: terms.feeCap ?? forwarderFeeOn(terms.amountExpected, terms.feeBps),
     };
     const address = forwarderAddress(factory, salt, params);
     const [row] = await tx

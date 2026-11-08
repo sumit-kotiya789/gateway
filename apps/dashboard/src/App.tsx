@@ -9,6 +9,7 @@ import { Security } from './settings';
 import { AcceptInvite, Team } from './team';
 import { Widget } from './widget';
 import { Withdrawals } from './withdrawals';
+import { UserDeposits } from './deposits';
 import { Alert, BrandMark, ErrorBox, Icon, Toaster, errorText, type IconName } from './ui';
 
 function useHash(): string {
@@ -73,6 +74,8 @@ export function App() {
   const nav: { href: string; label: string; icon: IconName; show: boolean; group: 'Payments' | 'Developers' | 'Account' }[] = [
     { href: '#/invoices', label: 'Invoices', icon: 'invoice', show: true, group: 'Payments' },
     { href: '#/sellers', label: 'Sellers', icon: 'store', show: true, group: 'Payments' },
+    // Users' permanent deposit addresses (D-101), for web3 projects.
+    { href: '#/deposits', label: 'User deposits', icon: 'users', show: true, group: 'Payments' },
     // Payout wallet: where the merchant turns custody on or off (D-098). Custody on: they withdraw what we hold for them;
     // off: payments go straight into their own wallet.
     { href: '#/xpub', label: 'Payout wallet', icon: 'wallet', show: true, group: 'Payments' },
@@ -89,6 +92,7 @@ export function App() {
   let body;
   if (page === 'invoices' && id) body = <InvoiceDetail id={id} canWrite={role !== 'read_only'} />;
   else if (page === 'sellers') body = <Sellers livemode={livemode} canWrite={role !== 'read_only'} />;
+  else if (page === 'deposits') body = <UserDeposits livemode={livemode} />;
   else if (page === 'api-keys' && dev) body = <ApiKeys livemode={livemode} totp={totp} />;
   else if (page === 'webhooks' && dev) body = <Webhooks livemode={livemode} totp={totp} />;
   else if (page === 'xpub') body = <PayoutWallet livemode={livemode} canManage={role === 'owner'} totp={totp} onModeChange={loadMe} />;

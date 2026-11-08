@@ -18,6 +18,7 @@
 //                           Dr merchant_pending R / Cr merchant_available R-F / Cr platform_fee_revenue F
 // The database allows each journal kind only its own account kinds (ledger_entry_guard).
 import { AppError, classifyPayment, computeFee, feeBase } from '@gw/core';
+import { forwarderFeeOn } from '@gw/chains';
 import { and, eq, inArray, or, sql } from 'drizzle-orm';
 import type { Tx } from '../../common/db.js';
 import { feeTopups, forwards, ledgerAccounts, ledgerEntries, ledgerJournals, invoices, payments, sweeps } from '../../db/schema.js';
@@ -130,6 +131,29 @@ export async function closePartialPayment(deps: Deps, tx: Tx, invoiceId: string)
 }
 
 /**
+ * Forwarded deposits of a user's permanent address (D-101), oldest first: settled once the address's confirmed
+ * forwards moved at least everything up to them. Each deposit's fee_amount is the fee the uncapped forwarder takes on
+ * it alone (a flush of several deposits at once can take up to one minor unit more in total, booked by postForward).
+ */
+async function settleForwardedDeposits(deps: Deps, tx: Tx, depositAddressId: string): Promise<boolean> {
+  const [r] = await tx
+    .select({ moved: sql<string>`coalesce(sum(${forwards.toMerchant} + ${forwards.fee}), 0)::text` })
+    .from(forwards)
+    .where(and(eq(forwards.depositAddressId, depositAddressId), eq(forwards.status, 'confirmed')));
+  let any = false;
+  for (const d of await depositsCovered(tx, depositAddressId, BigInt(r?.moved ?? '0'))) {
+    if (d.status !== 'paid' && d.status !== 'overpaid') continue;
+    const [inv] = await tx.select().from(invoices).where(eq(invoices.id, d.id)).for('update');
+    /* v8 ignore next -- the row was just read */
+    if (!inv) continue;
+    await tx.update(invoices).set({ feeAmount: forwarderFeeOn(inv.amountReceived, inv.feeBps) }).where(eq(invoices.id, inv.id));
+    await transitionInvoice(deps, tx, inv.id, 'settled', 'deposit forwarded to the merchant wallet');
+    any = true;
+  }
+  return any;
+}
+
+/**
  * Pending -> available for everything the invoice received, minus its fee (on min(received, expected)); records the
  * fee. Callers hold the invoice row lock and checked a status that has no settlement journal yet.
  */
@@ -204,6 +228,7 @@ export async function postForward(tx: Tx, f: ForwardRow): Promise<void> {
  */
 export async function settleIfForwarded(deps: Deps, tx: Tx, invoiceId: string): Promise<boolean> {
   const [inv] = await tx.select().from(invoices).where(eq(invoices.id, invoiceId)).for('update');
+  if (inv?.kind === 'deposit' && inv.custodyMode === 'non_custodial_forwarder') return settleForwardedDeposits(deps, tx, inv.depositAddressId);
   if (!inv || inv.custodyMode !== 'non_custodial_forwarder' || (inv.status !== 'paid' && inv.status !== 'overpaid')) return false;
   const [r] = await tx
     .select({
@@ -273,14 +298,49 @@ export async function releaseWithdrawal(tx: Tx, w: WithdrawalRef): Promise<void>
 
 /**
  * Settles a paid/overpaid custodial invoice once every confirmed payment to its address has been swept (whichever
- * comes last: the payment, the sweep or an admin's acceptance). No-op otherwise.
+ * comes last: the payment, the sweep or an admin's acceptance). No-op otherwise. A deposit invoice (D-101) shares its
+ * address with the user's other deposits: sweeps of the address are allocated to them oldest first.
  */
 export async function settleIfSwept(deps: Deps, tx: Tx, invoiceId: string): Promise<boolean> {
+  const [inv] = await tx.select({ kind: invoices.kind, depositAddressId: invoices.depositAddressId }).from(invoices).where(eq(invoices.id, invoiceId));
+  if (inv?.kind === 'deposit') return settleSweptDeposits(deps, tx, inv.depositAddressId);
   const [r] = await tx.execute<{ booked: string; swept: string }>(sql`
     select coalesce((select sum(amount) from ${payments} where invoice_id = ${invoiceId} and status = 'confirmed'), 0)::text as booked,
            coalesce((select sum(amount) from ${sweeps} where invoice_id = ${invoiceId} and status = 'confirmed'), 0)::text as swept`).then((x) => x.rows);
   if (!r || BigInt(r.booked) === 0n || BigInt(r.swept) < BigInt(r.booked)) return false;
   return settleCustodialInvoice(deps, tx, invoiceId);
+}
+
+/**
+ * Deposits of one address, oldest first, with what they received (confirmed). Each is covered by the address's
+ * confirmed sweeps / forwards once the running total up to it is within what was moved.
+ */
+async function depositsCovered(tx: Tx, depositAddressId: string, moved: bigint) {
+  const rows = await tx
+    .select({ id: invoices.id, status: invoices.status, received: invoices.amountReceived })
+    .from(invoices)
+    .where(and(eq(invoices.depositAddressId, depositAddressId), eq(invoices.kind, 'deposit'), sql`${invoices.amountReceived} > 0`))
+    .orderBy(invoices.createdAt, invoices.id);
+  const covered: typeof rows = [];
+  let total = 0n;
+  for (const r of rows) {
+    total += r.received;
+    if (total > moved) break;
+    covered.push(r);
+  }
+  return covered;
+}
+
+async function settleSweptDeposits(deps: Deps, tx: Tx, depositAddressId: string): Promise<boolean> {
+  const [s] = await tx
+    .select({ swept: sql<string>`coalesce(sum(${sweeps.amount}), 0)::text` })
+    .from(sweeps)
+    .where(and(eq(sweeps.depositAddressId, depositAddressId), eq(sweeps.status, 'confirmed')));
+  let any = false;
+  for (const d of await depositsCovered(tx, depositAddressId, BigInt(s?.swept ?? '0'))) {
+    if (d.status === 'paid' || d.status === 'overpaid') any = (await settleCustodialInvoice(deps, tx, d.id)) || any;
+  }
+  return any;
 }
 
 /**

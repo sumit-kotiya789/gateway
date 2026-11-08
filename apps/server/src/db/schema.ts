@@ -569,6 +569,48 @@ export const subMerchants = pgTable(
   ],
 );
 
+/** payment: an invoice the merchant created. deposit: one transfer to a user's permanent deposit address (D-101). */
+export const invoiceKind = pgEnum('invoice_kind', ['payment', 'deposit']);
+
+/**
+ * A permanent deposit address of one of the merchant's users, per token (D-101): web3 projects show it to the user;
+ * every transfer to it becomes a deposit invoice that runs through the normal pipeline (custody per `custody_mode`:
+ * swept, forwarded or straight to the merchant's xpub wallet). Never reused; watched while the account exists. A
+ * retired account (e.g. a forwarder whose payout address was replaced) is still watched but no longer handed out.
+ */
+export const depositAccounts = pgTable(
+  'deposit_accounts',
+  {
+    id: id(),
+    merchantId: uuid('merchant_id')
+      .notNull()
+      .references(() => merchants.id),
+    livemode: boolean('livemode').notNull(),
+    // The merchant's own id for its user.
+    customerRef: text('customer_ref').notNull(),
+    chainId: text('chain_id')
+      .notNull()
+      .references(() => chains.id),
+    tokenId: text('token_id')
+      .notNull()
+      .references(() => tokens.id),
+    custodyMode: custodyMode('custody_mode').notNull(),
+    depositAddressId: uuid('deposit_address_id')
+      .notNull()
+      .references(() => depositAddresses.id),
+    retiredAt: tstz('retired_at'),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('deposit_accounts_address_uq').on(t.depositAddressId),
+    uniqueIndex('deposit_accounts_current_uq')
+      .on(t.merchantId, t.livemode, t.customerRef, t.tokenId)
+      .where(sql`${t.retiredAt} is null`),
+    index('deposit_accounts_merchant_idx').on(t.merchantId, t.livemode, t.id),
+    check('deposit_accounts_customer_ref', sql`char_length(${t.customerRef}) between 1 and 200`),
+  ],
+);
+
 export const paymentLinks = pgTable(
   'payment_links',
   {
@@ -633,13 +675,21 @@ export const invoices = pgTable(
     cancelUrl: text('cancel_url'),
     paymentLinkId: uuid('payment_link_id').references(() => paymentLinks.id),
     subMerchantId: uuid('sub_merchant_id'),
+    // D-101: a deposit to a user's permanent address. `deposit_ref` = tx hash:log index (one invoice per transfer).
+    kind: invoiceKind('kind').notNull().default('payment'),
+    depositAccountId: uuid('deposit_account_id').references(() => depositAccounts.id),
+    depositRef: text('deposit_ref'),
+    customerRef: text('customer_ref'),
     feeAmount: money('fee_amount'),
     expiresAt: tstz('expires_at').notNull(),
     statusChangedAt: tstz('status_changed_at').notNull().defaultNow(),
     createdAt: createdAt(),
   },
   (t) => [
-    uniqueIndex('invoices_deposit_address_uq').on(t.depositAddressId),
+    // One invoice per address, except a user's permanent deposit address: one deposit invoice per transfer (D-101).
+    uniqueIndex('invoices_deposit_address_uq').on(t.depositAddressId).where(sql`${t.kind} = 'payment'`),
+    uniqueIndex('invoices_deposit_ref_uq').on(t.depositAccountId, t.depositRef).where(sql`${t.kind} = 'deposit'`),
+    index('invoices_deposit_account_idx').on(t.depositAccountId, t.id).where(sql`${t.kind} = 'deposit'`),
     uniqueIndex('invoices_external_order_uq')
       .on(t.merchantId, t.livemode, t.externalOrderId)
       .where(sql`${t.externalOrderId} is not null`),
@@ -660,6 +710,11 @@ export const invoices = pgTable(
     check('invoices_fee_fixed', sql`${t.feeFixed} >= 0`),
     check('invoices_metadata_size', sql`octet_length(${t.metadata}::text) <= 4096`),
     check('invoices_external_order_len', sql`${t.externalOrderId} is null or char_length(${t.externalOrderId}) between 1 and 200`),
+    check(
+      'invoices_kind',
+      sql`(${t.kind} = 'payment' and ${t.depositAccountId} is null and ${t.depositRef} is null and ${t.customerRef} is null)
+       or (${t.kind} = 'deposit' and ${t.depositAccountId} is not null and ${t.depositRef} is not null and ${t.customerRef} is not null)`,
+    ),
   ],
 );
 
@@ -1168,7 +1223,9 @@ export const sweeps = pgTable(
     createdAt: createdAt(),
   },
   (t) => [
-    uniqueIndex('sweeps_open_uq').on(t.depositAddressId).where(sql`${t.status} <> 'failed'`),
+    // One sweep in flight per address. A user's permanent address (D-101) is swept again after each later deposit
+    // (amount = confirmed payments - confirmed sweeps, re-checked by the signer).
+    uniqueIndex('sweeps_open_uq').on(t.depositAddressId).where(sql`${t.status} in ('pending', 'gas_sent', 'sweep_sent')`),
     index('sweeps_due_idx').on(t.nextAttemptAt).where(sql`${t.status} in ('pending', 'gas_sent', 'sweep_sent')`),
     check('sweeps_amount', sql`${t.amount} > 0`),
   ],
