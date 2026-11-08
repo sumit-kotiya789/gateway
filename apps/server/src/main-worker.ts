@@ -19,6 +19,7 @@ import { applyDueXpubChanges } from './modules/xpubs/xpubs.js';
 import { deliverDueEmails } from './modules/email/outbox.js';
 import { createMailer, type Mailer } from './modules/email/mailer.js';
 import { chainTxFor } from './modules/custody/chain-tx.js';
+import { closeUnderpaidInvoices } from './modules/custody/partials.js';
 import { createSignerClient } from './modules/custody/signer-client.js';
 import { advanceWithdrawals } from './modules/custody/payouts.js';
 import { advanceTreasury } from './modules/custody/treasury.js';
@@ -89,7 +90,10 @@ export async function runEmailJob(deps: Deps, mailer: Mailer): Promise<{ sent: n
 /** Plans new sweeps, then moves due sweeps, withdrawals and treasury transfers one step forward. */
 export async function runCustodyJob(deps: Deps, env: SweeperEnv): Promise<Record<string, unknown>> {
   const planned = await planSweeps(deps);
-  return { planned, sweeps: await advanceSweeps(deps, env), withdrawals: await advanceWithdrawals(deps, env), treasury: await advanceTreasury(deps, env) };
+  const swept = await advanceSweeps(deps, env);
+  // After the sweeps: an underpaid invoice swept this tick closes in the same run (D-099).
+  const partial = (await closeUnderpaidInvoices(deps)).length;
+  return { planned, sweeps: swept, partial, withdrawals: await advanceWithdrawals(deps, env), treasury: await advanceTreasury(deps, env) };
 }
 
 /** Plans new forwards, then moves due forwards one step forward (forwarder mode, D-097). */

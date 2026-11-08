@@ -316,6 +316,20 @@
       "when": 1794139641862,
       "tag": "0044_forwarder_security",
       "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1794150607079,
+      "tag": "0045_partial_payments",
+      "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "7",
+      "when": 1794150619207,
+      "tag": "0046_partial_payments_security",
+      "breakpoints": true
     }
   ]
 }

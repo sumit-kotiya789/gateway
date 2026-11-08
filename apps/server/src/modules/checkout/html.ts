@@ -70,6 +70,7 @@ export const STRINGS = {
       expired: 'This invoice has expired. Do not send funds.',
       cancelled: 'This invoice was cancelled. Do not send funds.',
       late_payment: 'Payment received after expiry. The merchant will contact you.',
+      partially_paid: 'Partial payment received and the invoice is closed. Do not send more; the merchant will contact you.',
       failed: 'This invoice is closed. Do not send funds.',
       held: 'Payment received and under review. The merchant will contact you.',
       created: 'Preparing invoice',

@@ -43,6 +43,8 @@ Every file with a `// MONEY-CRITICAL` header is listed here and in the coverage 
 | `packages/chains/src/evm/forwarder.ts`, `forwarder.artifacts.json` | forwarder address math and fee split (must equal the contracts), committed bytecode | M12 |
 | `apps/server/src/modules/custody/forwarder.ts` | forwards: planning from on-chain balances, signer intents, confirmation, fee booking, settlement | M12 |
 | `apps/server/src/modules/custody/payout-addresses.ts` | current payout address (withdrawals and forwarder destinations) | M12 |
+| `apps/server/db/migrations/0045_partial_payments.sql`, `0046_partial_payments_security.sql` | `partially_paid` status: custodial only, `underpaid` edge only, settlement journal allowed for it | D-099 |
+| `apps/server/src/modules/custody/partials.ts` | closes underpaid custodial invoices after the deadline (scanned past it, fully swept) | D-099 |
 | `apps/server/db/migrations/0043_forwarder.sql`, `0044_forwarder_security.sql` | forwarder params (immutable, tied to current payout address, fee wallet, factory, token), forward guards and fee cap, set-once factory | M12 |
 
 ## Security-critical files (mandatory human review)
@@ -119,6 +121,7 @@ Status: `planned` until the mitigation's milestone lands, then the test that pro
 | Illegal invoice status change (bug or insider) | One app transition function + DB trigger against the same table; history written only by trigger; amount/address/token immutable; no deletes | `invoice.test.ts` (all 144 pairs), `invoices.test.ts` | M3 |
 | Late payment auto-fulfilled | `expired`/`cancelled` → `late_payment` only; `late_payment` → `paid` is manual | `invoice.test.ts` | M3 |
 | Custody mode switched under live money | Trigger locks `custody_mode` after the first live invoice | `invoices.test.ts` | M3 |
+| Partial payment credited too early or twice (custodial) | `underpaid` -> `partially_paid` only after the deadline, once the scanner passed it and every payment was swept; custodial only (DB guard); final status; one settlement journal per invoice (unique index); reconciliation `custodial_settlement` | `custodial-ledger.test.ts`, `invoice.test.ts` | D-099 |
 | Custody turned off with funds still held (stranded balance) | Switch refused while any custodial balance or open custody invoice exists; withdrawals refused while `FEATURE_CUSTODIAL` is off | `custody-mode.test.ts` | D-098 |
 | Checkout XSS / data leak | Escape-everything templating, script data via escaped JSON, `default-src 'none'` + per-response nonce, `frame-ancestors 'none'`, no-store; page shows no metadata/order ids | `invoices.test.ts` (hostile merchant name) | M3 |
 | Address-burning via payment links | Invoice creation is POST-only (prefetch-safe), 5/10 min per IP, per-link cap on pending invoices (bounds wallet gap) | `invoices.test.ts` | M3 |

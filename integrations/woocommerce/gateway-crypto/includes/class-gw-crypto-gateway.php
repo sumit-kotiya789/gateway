@@ -200,6 +200,12 @@ class GW_Crypto_Gateway extends WC_Payment_Gateway {
 					$this->hold( $order, sprintf( __( 'Crypto invoice is %1$s (%2$s of %3$s received). Resolve it in the gateway dashboard.', 'gateway-crypto' ), $inv['status'], $inv['amount_received'], $inv['amount'] ) );
 				}
 				return;
+			case 'partially_paid':
+				if ( $open ) {
+					/* translators: 1: amount received, 2: amount expected */
+					$this->hold( $order, sprintf( __( 'Crypto invoice closed with a partial payment (%1$s of %2$s received and credited). Do not ship as fully paid; contact the customer.', 'gateway-crypto' ), $inv['amount_received'], $inv['amount'] ) );
+				}
+				return;
 			case 'held':
 				if ( $open ) {
 					$this->hold( $order, __( 'Crypto payment received but held for review by the payment gateway. Do not ship until it is released.', 'gateway-crypto' ) );

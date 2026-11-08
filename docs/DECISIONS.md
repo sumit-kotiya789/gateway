@@ -643,3 +643,20 @@ Owner: the merchant decides whether to use custody, not an admin; withdrawals on
   `FEATURE_CUSTODIAL` is off (no worker would send them). Cancel and reject stay allowed: they only release a hold.
   `/v1/dashboard/auth/me` reports `withdrawals_enabled`; the dashboard explains the pause instead of offering a form.
 - **Not built.** Per-customer permanent custodial addresses (still per invoice); emailing owners about a mode change.
+
+## D-099 Custodial underpaid invoices close as partially paid (2026-11-08, owner)
+Ported from the unmerged branch `claude/beautiful-newton-wp9j3v` (its D-092, written 2026-11-04 before D-092..D-098 on
+main took those numbers). Its other commit, the signer seed in OpenBao, was not ported: D-010 (2026-11-06) chose a
+KEK file from the secret manager instead.
+- **Underpaid = partial credit.** An underpaid custodial invoice stays open until its deadline, so the customer can send
+  the rest. After the deadline it closes as `partially_paid` (new final status, event `invoice.partially_paid`) and
+  the merchant is credited what arrived, minus the fee on that amount: floor(R × bps / 10000) + fixed, never above R.
+  The custody worker does it only once the chain's scanner has passed the deadline (a top-up mined in time is recorded
+  first) and every confirmed payment was swept (the credit is backed by funds in the hot wallet).
+- **Late = admin approval only.** Payments after expiry or cancellation stay `late_payment` and in `merchant_pending`
+  until an admin accepts them (existing resolve, TOTP); they then settle like any paid invoice.
+- `partially_paid` is never `paid`: merchants must not fulfil it as a paid order (INTEGRATION; the WooCommerce plugin puts
+  the order on hold). Non-custodial invoices never take it (DB guard): those merchants already hold what arrived, and
+  underpaid stays a manual decision for them.
+- Money after an invoice closed (`settled`, `partially_paid`) stays pending and shows in reconciliation for an operator.
+

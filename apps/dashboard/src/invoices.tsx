@@ -3,7 +3,7 @@ import { api, download, type Balance, type FeeTopup, type Invoice, type Page, ty
 import { SellerSelect } from './sellers';
 import { ConfirmButton, CopyField, EmptyState, ErrorBox, Field, Icon, Skeleton, Stat, StatusBadge, Submit, fmtDate, short, toast, useAction, useLoad } from './ui';
 
-const STATUSES = ['pending', 'detected', 'confirming', 'paid', 'underpaid', 'overpaid', 'settled', 'expired', 'cancelled', 'failed', 'late_payment', 'held'];
+const STATUSES = ['pending', 'detected', 'confirming', 'paid', 'underpaid', 'overpaid', 'settled', 'expired', 'cancelled', 'failed', 'late_payment', 'held', 'partially_paid'];
 
 export function Invoices(props: { livemode: boolean; canWrite: boolean; canExport: boolean }) {
   const [status, setStatus] = useState('');

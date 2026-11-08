@@ -78,7 +78,10 @@ the user's sessions and recovery codes; the user signs in with the password and 
   proxies `/admin/v1/*`. Its own origin, never the dashboard's (config refuses a shared origin); list it in `ADMIN_ORIGINS`.
   Restrict it at the edge (VPN / IP allowlist) and set `ADMIN_IP_ALLOWLIST` (non-listed IPs get 404).
 - Underpaid / late-payment invoices: the Invoices page lists them; "Mark as paid" (operator + TOTP) books the fee and
-  settles. Use it only when the merchant confirms they accept the funds; it cannot be undone.
+  settles. Use it only when the merchant confirms they accept the funds; it cannot be undone. Custodial underpaid
+  invoices need no action: after their deadline the custody worker closes them as `partially_paid` and credits what
+  arrived (D-099). Money arriving after an invoice closed shows in reconciliation (`custodial_settlement`): it is in
+  custody and in `merchant_pending`; agree with the merchant whether to refund.
 - Suspend a merchant: immediate (API keys stop working, no new invoices). Reactivation needs TOTP.
 - Dev: `pnpm --filter @gw/admin dev` (http://localhost:5174/admin/, proxies to the api on :3000).
 

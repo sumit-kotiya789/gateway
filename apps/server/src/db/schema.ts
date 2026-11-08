@@ -531,6 +531,8 @@ export const invoiceStatus = pgEnum('invoice_status', [
   'late_payment',
   // Payments confirmed but a risk rule tripped (blocked payer, merchant limit): an admin releases or rejects (M9).
   'held',
+  // Custodial underpaid invoice closed after its deadline; what arrived was credited minus the fee (D-099).
+  'partially_paid',
 ]);
 
 /**

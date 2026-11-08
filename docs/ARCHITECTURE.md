@@ -125,7 +125,7 @@ stateDiagram-v2
   confirming --> overpaid
   underpaid --> detected: top-up
   underpaid --> paid: merchant accepts
-  underpaid --> expired
+  underpaid --> partially_paid: deadline (custodial)
   paid --> settled
   overpaid --> settled
   expired --> late_payment
@@ -133,3 +133,4 @@ stateDiagram-v2
 ```
 
 `settled` means: custodial, sweep confirmed and merchant balance moved from pending to available; non-custodial, platform fee charged.
+`partially_paid` (custodial only, final): the deadline passed while underpaid; what arrived was swept and credited, minus its fee.

@@ -61,6 +61,7 @@ const REASON: Record<InvoiceStatus, string> = {
   // Never reached by the watcher (not in WATCHER_TRANSITIONS); listed so every status has a reason.
   created: 'watcher: created',
   settled: 'watcher: settled',
+  partially_paid: 'watcher: partially_paid',
   cancelled: 'watcher: cancelled',
   failed: 'watcher: failed',
 };

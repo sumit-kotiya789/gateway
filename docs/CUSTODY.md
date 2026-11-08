@@ -60,14 +60,21 @@ Database guards that hold even if application code is wrong:
 |---|---|---|
 | Payment confirmed (A) | `payment` | Dr `custody_deposits` A (platform) / Cr `merchant_pending` A |
 | Invoice settled after its deposit address was swept (R received, F fee) | `settlement` | Dr `merchant_pending` R / Cr `merchant_available` R−F / Cr `platform_fee_revenue` F |
+| Underpaid invoice closed as `partially_paid` after its deadline, swept (R received, F fee) | `settlement` | same lines |
 
 - Fee = floor(min(R, expected) × bps / 10000) + fixed, never above that base; deducted at settlement. Custodial merchants
   have no prepaid fee balance (`fee_status` = `not_enforced`, live invoices never get 402).
-- Underpaid and late payments stay in `merchant_pending` until an admin accepts them (they then settle like any paid
-  invoice) or they are refunded (M7d).
+- Underpaid (D-099): the invoice stays open until its deadline, so the customer can send the rest. After it, once the
+  chain's scanner has passed the deadline and every confirmed payment was swept, the custody worker closes it as
+  `partially_paid` and credits what arrived: fee = floor(R × bps / 10000) + fixed, never above R. Final: nothing
+  reopens it. Before the deadline an admin may still accept it as paid.
+- Late payments (after expiry or cancellation) stay in `merchant_pending` until an admin accepts them (admin console,
+  TOTP); they then settle like any paid invoice. Not accepted = they stay pending (refund: RUNBOOK). Money arriving
+  after an invoice closed (`settled`, `partially_paid`) also stays pending; reconciliation reports it
+  (`custodial_settlement`) so an operator decides.
 - The database lets each journal kind touch only its own account kinds (`ledger_entry_guard`): a custodial payment can
   never book into `merchant_received`, a `fee` journal is refused on a custodial invoice, a `settlement` journal on
-  anything but a paid custodial invoice.
+  anything but a paid, overpaid or partially paid custodial invoice. Only a custodial invoice can become `partially_paid`.
 - Reconciliation adds `custodial_received`, `custodial_settlement` and `negative_merchant_balance`.
 
 ## Sweeps (M7c, D-089)

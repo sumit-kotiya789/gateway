@@ -25,6 +25,7 @@ const MONEY_CRITICAL = [
   'apps/signer/src/seed.ts',
   'apps/server/src/modules/custody/treasury.ts',
   'apps/server/src/modules/custody/sweeper.ts',
+  'apps/server/src/modules/custody/partials.ts',
   'apps/server/src/modules/custody/payouts.ts',
   'apps/server/src/modules/withdrawals/withdrawals.ts',
   // Forwarder mode (D-097)
