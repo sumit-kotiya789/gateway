@@ -64,10 +64,17 @@ const CHECKS = {
   /** invoices.amount_received = sum of confirmed payments. */
   invoice_received: sql`select i.id from invoices i left join payments p on p.invoice_id = i.id and p.status = 'confirmed'
     group by i.id having i.amount_received <> coalesce(sum(p.amount), 0)`,
-  /** Ledger received = sum of confirmed payments, per merchant, mode and token. */
+  /**
+   * Ledger received = confirmed payments (xpub and forwarder invoices) minus what forwarders paid as fees on-chain
+   * (D-097), per merchant, mode and token.
+   */
   received_balance: sql`select concat_ws(':', x.merchant_id, x.livemode, x.token_id) as id from (
-      select i.merchant_id, i.livemode, i.token_id, sum(p.amount) as paid from payments p join invoices i on i.id = p.invoice_id
-      where p.status = 'confirmed' and i.custody_mode = ${NC} group by 1, 2, 3) x
+      select merchant_id, livemode, token_id, sum(amount) as paid from (
+        select i.merchant_id, i.livemode, i.token_id, p.amount from payments p join invoices i on i.id = p.invoice_id
+        where p.status = 'confirmed' and i.custody_mode in (${NC}, 'non_custodial_forwarder')
+        union all
+        select f.merchant_id, f.livemode, f.token_id, -f.fee from forwards f where f.status = 'confirmed') z
+      group by 1, 2, 3) x
     full join (
       select a.merchant_id, a.livemode, a.token_id, sum(e.amount) as booked from ledger_entries e join ledger_accounts a on a.id = e.account_id
       where a.kind = 'merchant_received' group by 1, 2, 3) y
@@ -87,6 +94,14 @@ const CHECKS = {
       where j.kind = 'fee_topup' and j.topup_id = t.id), 0) <> -t.amount`,
   /** Paid non-custodial invoices settle in the same transaction; one left behind is stuck. */
   unsettled: sql`select i.id from invoices i where i.status in ('paid', 'overpaid') and i.custody_mode = ${NC}`,
+  /** Forwarder mode (D-097): every confirmed forward's fee is booked once, for exactly that amount, into the fee wallet. */
+  forward_fee_journal: sql`select f.id from forwards f where f.status = 'confirmed'
+      and coalesce((select sum(e.amount) from ledger_journals j join ledger_entries e on e.journal_id = j.id
+        join ledger_accounts a on a.id = e.account_id and a.kind = 'platform_fee_wallet'
+        where j.kind = 'forward_fee' and j.forward_id = f.id), 0) <> f.fee`,
+  /** Forwarder invoices paid more than an hour ago but not forwarded yet (gas wallet empty, signer down, RPC trouble). */
+  unforwarded: sql`select i.id from invoices i where i.status in ('paid', 'overpaid') and i.custody_mode = 'non_custodial_forwarder'
+      and i.status_changed_at < now() - interval '1 hour'`,
   /** Audit log hash chain intact (M11): the first broken seq, if any. */
   // ponytail: walks the whole chain hourly; add checkpoints when it nears the 15 s statement timeout.
   audit_chain_broken: sql`select v.seq::text as id from (select audit_verify() as seq) v where v.seq is not null`,

@@ -19,8 +19,11 @@
     "test:unit": "vitest run --project unit",
     "test:integration": "vitest run --project integration",
     "contracts:build": "docker run --rm -v \"$PWD/contracts:/c\" -w /c ghcr.io/foundry-rs/foundry:stable \"forge build\" && node scripts/export-contract-artifacts.mjs",
+    "contracts:test": "docker run --rm -v \"$PWD/contracts:/c\" -w /c ghcr.io/foundry-rs/foundry:stable \"forge test -vv\"",
     "db:seed": "pnpm --filter @gw/server db:seed",
     "dev:usdt": "pnpm --filter @gw/server dev:usdt",
+    "testnet:token": "pnpm --filter @gw/server testnet:token",
+    "forwarder:deploy": "pnpm --filter @gw/server forwarder:deploy",
     "chains:verify": "pnpm --filter @gw/server chains:verify",
     "platform:register": "pnpm --filter @gw/server platform:register"
   },

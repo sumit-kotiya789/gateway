@@ -82,6 +82,35 @@ describe('admin auth domain', () => {
     const r = await owner.query(`select 1 from audit_logs where actor_id = $1 and action = 'admin.login'`, [a.id]);
     expect(r.rowCount).toBe(1);
   });
+
+  it('login without a TOTP code is rejected by default', async () => {
+    const a = await createAdmin();
+    const agent = new Agent(app, ADMIN_ORIGIN);
+    expect((await agent.req('GET', '/admin/v1/auth/options')).json()).toEqual({ totp_required: true });
+    expect((await adminLogin(agent, { email: a.email, password: a.password })).statusCode).toBe(400);
+  });
+});
+
+describe('admin login with ADMIN_LOGIN_TOTP_DISABLED (development only)', () => {
+  const noTotp = buildTestApp({ ADMIN_LOGIN_TOTP_DISABLED: 'true' });
+  beforeAll(async () => {
+    await noTotp.app.ready();
+  });
+  afterAll(async () => {
+    await noTotp.close();
+  });
+
+  it('accepts email + password only, still checks the password, audits the skip', async () => {
+    const a = await createAdminRow(owner, noTotp.deps);
+    const agent = new Agent(noTotp.app, ADMIN_ORIGIN);
+    expect((await agent.req('GET', '/admin/v1/auth/options')).json()).toEqual({ totp_required: false });
+    expect((await adminLogin(agent, { email: a.email, password: 'wrong wrong wrong' })).statusCode).toBe(401);
+    const ok = await adminLogin(agent, { email: a.email, password: a.password });
+    expect(ok.statusCode).toBe(200);
+    expect((await agent.req('GET', '/admin/v1/auth/me')).json()).toMatchObject({ id: a.id, role: 'operator' });
+    const r = await owner.query(`select after from audit_logs where actor_id = $1 and action = 'admin.login'`, [a.id]);
+    expect(r.rows).toEqual([{ after: { mfa: 'skipped' } }]);
+  });
 });
 
 describe('admin IP allowlist', () => {

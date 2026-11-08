@@ -68,7 +68,7 @@ class GW_Crypto_Gateway extends WC_Payment_Gateway {
 			'token'          => array(
 				'title'       => __( 'Token', 'gateway-crypto' ),
 				'type'        => 'text',
-				'description' => __( 'Gateway token id: bsc:usdt for live, nexis:usdt for test.', 'gateway-crypto' ),
+				'description' => __( 'Gateway token id: bsc:usdt for live, bsc-testnet:usdt for test.', 'gateway-crypto' ),
 				'default'     => 'bsc:usdt',
 			),
 			'expires_min'    => array(

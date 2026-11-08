@@ -3,14 +3,15 @@
 // raw transaction: it re-reads the record, re-derives every address from its own seed, checks balances, limits and
 // the kill switch, builds the transaction itself and records what it signed. One transaction per intent: asking
 // again returns the same signed bytes, so the worker can rebroadcast without ever creating a second payment.
+import { FORWARDER_FACTORY_CODEHASH, deployAndFlushData, forwarderAddress } from '@gw/chains';
 import { toMinorUnits } from '@gw/core';
 import type pg from 'pg';
-import { encodeFunctionData, erc20Abi, parseUnits, keccak256 } from 'viem';
+import { encodeFunctionData, erc20Abi, parseUnits, keccak256, type Hex } from 'viem';
 import type { ChainRpc } from './chain.js';
 import type { SignerConfig } from './config.js';
 import { sameAddress, type Keyring } from './keys.js';
 
-export type IntentKind = 'gas_topup' | 'sweep' | 'withdrawal' | 'treasury';
+export type IntentKind = 'gas_topup' | 'sweep' | 'withdrawal' | 'treasury' | 'forward';
 export interface Intent {
   kind: IntentKind;
   id: string;
@@ -267,6 +268,86 @@ export function createSigner(deps: SignerDeps) {
       const data = encodeFunctionData({ abi: erc20Abi, functionName: 'transfer', args: [t.cold_address as `0x${string}`, amount] });
       return { chain, rpc, fromPath: hot.path, from: hot.address, txTo: t.contract_address, recipient: t.cold_address, value: 0n, data, gas: tokenGas, gasPrice, tokenId: t.token_id, amount };
     },
+    /**
+     * Forwarder flush (D-097): the gas wallet calls ForwarderFactory.deployAndFlush for one forwarder deposit address.
+     * Nothing of the platform's moves but gas; the destinations are fixed by the contract address. The signer still
+     * re-checks that the committed values match their sources and that they really produce the deposit address the
+     * payer paid, and that the factory on-chain runs exactly the committed code.
+     */
+    async forward(id) {
+      const f = await one<{
+        status: string;
+        livemode: boolean;
+        chain_id: string;
+        token_id: string;
+        amount: string;
+        forwarder_address: string;
+        merchant_id: string;
+        factory: string;
+        salt: string;
+        merchant_address: string;
+        fee_recipient: string;
+        token_contract: string;
+        fee_bps: number;
+        fee_cap: string;
+        deposit_address: string;
+        source: string;
+        deposit_merchant: string;
+        chain_factory: string | null;
+        contract_address: string;
+        token_chain: string;
+        payout_address: string;
+        payout_merchant: string;
+        fee_wallet: string;
+        fee_wallet_kind: string;
+        fee_wallet_livemode: boolean;
+      }>(
+        `select w.status, w.livemode, w.chain_id, w.token_id, w.amount::text, w.forwarder_address,
+                p.merchant_id, p.factory, p.salt, p.merchant_address, p.fee_recipient, p.token_contract, p.fee_bps, p.fee_cap::text,
+                d.address as deposit_address, d.source, d.merchant_id as deposit_merchant, c.forwarder_factory as chain_factory,
+                t.contract_address, t.chain_id as token_chain, pa.address as payout_address, pa.merchant_id as payout_merchant,
+                pw.address as fee_wallet, pw.kind as fee_wallet_kind, pw.livemode as fee_wallet_livemode
+         from forwards w
+         join forwarder_params p on p.deposit_address_id = w.deposit_address_id
+         join deposit_addresses d on d.id = w.deposit_address_id
+         join chains c on c.id = w.chain_id
+         join tokens t on t.id = p.token_id
+         join payout_addresses pa on pa.id = p.payout_address_id
+         join platform_wallets pw on pw.id = p.fee_wallet_id
+         where w.id = $1`,
+        [id],
+      );
+      if (!f) throw new Refusal('not_found', 'forward not found');
+      if (f.status !== 'pending') throw new Refusal('wrong_status', `forward is ${f.status}`);
+      if (!f.chain_factory || !sameAddress(f.chain_factory, f.factory)) throw new Refusal('factory_mismatch', 'forward does not use the factory of its chain');
+      const consistent =
+        f.source === 'forwarder' &&
+        f.deposit_merchant === f.merchant_id &&
+        sameAddress(f.deposit_address, f.forwarder_address) &&
+        f.token_chain === f.chain_id &&
+        sameAddress(f.contract_address, f.token_contract) &&
+        f.payout_merchant === f.merchant_id &&
+        sameAddress(f.payout_address, f.merchant_address) &&
+        f.fee_wallet_kind === 'fee' &&
+        f.fee_wallet_livemode === f.livemode &&
+        sameAddress(f.fee_wallet, f.fee_recipient);
+      if (!consistent) throw new Refusal('params_mismatch', 'forwarder parameters do not match their sources');
+      const params = { merchant: f.merchant_address, feeRecipient: f.fee_recipient, token: f.token_contract, feeBps: f.fee_bps, feeCap: BigInt(f.fee_cap) };
+      // The deposit address must be exactly the forwarder these values produce: a flush can only reach where the payer paid.
+      if (!sameAddress(forwarderAddress(f.factory, f.salt as Hex, params), f.deposit_address)) {
+        throw new Refusal('not_our_address', 'deposit address is not the forwarder of its committed parameters');
+      }
+      const { chain, rpc, gasPrice } = await chainOf(f.chain_id);
+      if ((await rpc.codeHash(f.factory)) !== FORWARDER_FACTORY_CODEHASH) {
+        throw new Refusal('factory_mismatch', 'factory code on-chain is not the committed artifact');
+      }
+      const gasWallet = await platformWallet('gas', chain.family, f.livemode);
+      const data = deployAndFlushData(f.salt as Hex, params, [f.token_contract]);
+      const gas = ((await rpc.estimateGas({ from: gasWallet.address, to: f.factory, data })) * 120n) / 100n;
+      if (gas > BigInt(config.SIGNER_MAX_FORWARD_GAS)) throw new Refusal('over_limit', 'flush would use more gas than SIGNER_MAX_FORWARD_GAS');
+      if ((await rpc.nativeBalance(gasWallet.address)) < gas * gasPrice) throw new Refusal('needs_gas', 'gas wallet cannot pay the network fee');
+      return { chain, rpc, fromPath: gasWallet.path, from: gasWallet.address, txTo: f.factory, recipient: f.merchant_address, value: 0n, data, gas, gasPrice, tokenId: f.token_id, amount: BigInt(f.amount) };
+    },
   };
 
   /**
@@ -274,6 +355,12 @@ export function createSigner(deps: SignerDeps) {
    * only reach an address on the signer's own cold allowlist.
    */
   async function checkLimits(kind: IntentKind, plan: Plan, db: pg.PoolClient): Promise<void> {
+    if (kind === 'forward') {
+      // Flushes only spend gas: cap how many per day, so a runaway worker cannot drain the gas wallet.
+      const n = await one<{ n: string }>(`select count(*)::text as n from signer_signatures where intent_kind = 'forward' and created_at > now() - interval '24 hours'`, [], db);
+      if (BigInt(n?.n ?? '0') >= BigInt(config.SIGNER_MAX_FORWARDS_PER_DAY)) throw new Refusal('over_limit', 'forward count above the 24-hour limit');
+      return;
+    }
     if (kind !== 'withdrawal') return;
     // Payouts are token transfers: tokenId is always set here.
     const tokenId = plan.tokenId ?? '';

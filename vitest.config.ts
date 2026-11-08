@@ -27,6 +27,10 @@ const MONEY_CRITICAL = [
   'apps/server/src/modules/custody/sweeper.ts',
   'apps/server/src/modules/custody/payouts.ts',
   'apps/server/src/modules/withdrawals/withdrawals.ts',
+  // Forwarder mode (D-097)
+  'packages/chains/src/evm/forwarder.ts',
+  'apps/server/src/modules/custody/forwarder.ts',
+  'apps/server/src/modules/custody/payout-addresses.ts',
 ];
 const gate = { lines: 90, functions: 90, branches: 90, statements: 90 };
 

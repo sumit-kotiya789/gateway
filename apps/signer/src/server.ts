@@ -5,7 +5,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { Refusal, type Intent, type IntentKind, type Signed } from './signer.js';
 
-const KINDS: readonly IntentKind[] = ['gas_topup', 'sweep', 'withdrawal', 'treasury'];
+const KINDS: readonly IntentKind[] = ['gas_topup', 'sweep', 'withdrawal', 'treasury', 'forward'];
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const MAX_BODY = 4096;
 const TOLERANCE_S = 60;

@@ -468,3 +468,11 @@ td .badge + .badge { margin-left: 0.3rem; }
   *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
 }
 .hidden { display: none; }
+
+/* Payout wallet: receiving-mode choice (D-097) */
+.choices { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 0.75rem; margin: 0.5rem 0 0.75rem; }
+.choice { display: flex; gap: 0.75rem; align-items: flex-start; padding: 0.85rem 1rem; border: 1px solid var(--border-strong); border-radius: 12px; cursor: pointer; transition: border-color 0.15s var(--ease), background 0.15s var(--ease); }
+.choice:hover { border-color: var(--accent-line); }
+.choice.selected { border-color: var(--accent-line); background: var(--accent-soft); }
+.choice input { margin-top: 0.2rem; accent-color: var(--accent); }
+.choice span { display: grid; gap: 0.2rem; }

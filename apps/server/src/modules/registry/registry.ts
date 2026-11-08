@@ -1,5 +1,5 @@
 import type { ChainAdapter, ChainConfig, TokenConfig } from '@gw/core';
-import { adapterFor, resolveRpcUrls } from '@gw/chains';
+import { FORWARDER_FACTORY_CODEHASH, adapterFor, resolveRpcUrls } from '@gw/chains';
 import { asc } from 'drizzle-orm';
 import { z } from 'zod';
 import type { Tx } from '../../common/db.js';
@@ -23,6 +23,7 @@ export function rowToChain(r: typeof chains.$inferSelect): ChainConfig {
     finality: r.finality,
     testnet: r.testnet,
     enabled: r.enabled,
+    forwarderFactory: r.forwarderFactory,
   };
 }
 
@@ -60,7 +61,8 @@ type MakeAdapter = (chain: ChainConfig, urls: readonly string[]) => ChainAdapter
 
 /**
  * Pre-flight check before any process trusts the registry: every RPC (individually) must report the configured
- * network, and every enabled token's on-chain decimals must equal config. Returns problems; empty = OK.
+ * network, every enabled token's on-chain decimals must equal config, and a configured forwarder factory must run
+ * exactly the committed code (D-097). Returns problems; empty = OK.
  * Messages never include RPC URLs (they may embed provider keys).
  */
 export async function verifyRegistry(
@@ -91,6 +93,13 @@ export async function verifyRegistry(
         for (const token of reg.tokens.filter((t) => t.enabled && t.chainId === chain.id)) {
           const decimals = await adapter.readTokenDecimals(token);
           if (decimals !== token.decimals) problems.push(`${label}: ${token.id} decimals on-chain ${String(decimals)}, config ${String(token.decimals)}`);
+        }
+        // Forwarder deposit addresses are only as safe as the factory they are derived from (D-097): its on-chain code
+        // must be exactly the committed artifact, or a different factory could be deployed to pay someone else.
+        if (chain.forwarderFactory) {
+          const hash = adapter.getCodeHash ? await adapter.getCodeHash(chain.forwarderFactory) : undefined;
+          if (hash === null) problems.push(`${label}: forwarder factory has no code on-chain`);
+          else if (hash !== FORWARDER_FACTORY_CODEHASH) problems.push(`${label}: forwarder factory code does not match the committed artifact`);
         }
       } catch (err) {
         problems.push(`${label}: unreachable or failed (${err instanceof Error ? err.name : 'error'})`);

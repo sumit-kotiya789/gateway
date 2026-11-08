@@ -2,7 +2,7 @@
 // xpub changes whose cooldown elapsed.
 // `webhooks`: outbound delivery, on its own queue so slow merchant endpoints never delay maintenance. `emails`: the email
 // outbox (M10), likewise separate from a slow SMTP server. `custody`: sweeps and withdrawals (M7), only with
-// FEATURE_CUSTODIAL.
+// FEATURE_CUSTODIAL. `forwards`: forwarder flushes (D-097), only with FEATURE_FORWARDER.
 // Every job handler is idempotent and safe to run on several workers at once.
 import { Queue, Worker } from 'bullmq';
 import { Redis } from 'ioredis';
@@ -23,11 +23,13 @@ import { createSignerClient } from './modules/custody/signer-client.js';
 import { advanceWithdrawals } from './modules/custody/payouts.js';
 import { advanceTreasury } from './modules/custody/treasury.js';
 import { advanceSweeps, planSweeps, type SweeperEnv } from './modules/custody/sweeper.js';
+import { advanceForwards, planForwards, type ForwarderEnv } from './modules/custody/forwarder.js';
 
 const QUEUE = 'maintenance';
 const WEBHOOK_QUEUE = 'webhooks';
 const EMAIL_QUEUE = 'emails';
 const CUSTODY_QUEUE = 'custody';
+const FORWARD_QUEUE = 'forwards';
 const EMAIL_BATCHES_PER_JOB = 5;
 /** Batches per delivery job: drains a backlog faster than one batch per tick, still yields between jobs. */
 const WEBHOOK_BATCHES_PER_JOB = 10;
@@ -90,6 +92,12 @@ export async function runCustodyJob(deps: Deps, env: SweeperEnv): Promise<Record
   return { planned, sweeps: await advanceSweeps(deps, env), withdrawals: await advanceWithdrawals(deps, env), treasury: await advanceTreasury(deps, env) };
 }
 
+/** Plans new forwards, then moves due forwards one step forward (forwarder mode, D-097). */
+export async function runForwardJob(deps: Deps, env: ForwarderEnv): Promise<Record<string, unknown>> {
+  const planned = await planForwards(deps, env);
+  return { planned, forwards: await advanceForwards(deps, env) };
+}
+
 async function main(): Promise<void> {
   const config = loadConfig();
   const log = createLogger(config.LOG_LEVEL);
@@ -135,6 +143,16 @@ async function main(): Promise<void> {
       log.error({ err }, 'custody job failed');
     });
     closers.push(custodyWorker, custodyQueue);
+  }
+  if (config.FEATURE_FORWARDER) {
+    const forwardQueue = new Queue(FORWARD_QUEUE, { connection });
+    await forwardQueue.upsertJobScheduler('forwards', { every: 10_000 }, { name: 'forwards', opts: jobOpts });
+    const env: ForwarderEnv = { signer: createSignerClient(config), chainTx: (c) => chainTxFor(c.rpcUrls) };
+    const forwardWorker = new Worker(FORWARD_QUEUE, () => runForwardJob(deps, env), { connection, concurrency: 1 });
+    forwardWorker.on('failed', (_job, err) => {
+      log.error({ err }, 'forward job failed');
+    });
+    closers.push(forwardWorker, forwardQueue);
   }
   log.info('worker started');
 

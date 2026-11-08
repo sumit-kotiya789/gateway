@@ -84,7 +84,8 @@ function Addresses(props: { xpub: Xpub }) {
   );
 }
 
-export function Xpubs(props: { livemode: boolean; canManage: boolean; totp: boolean; custodyMode: string }) {
+/** `embedded`: inside the Payout wallet page (which owns the page title). */
+export function Xpubs(props: { livemode: boolean; canManage: boolean; totp: boolean; custodyMode: string; embedded?: boolean }) {
   const list = useLoad(() => api<XpubList>('GET', `/xpubs/?livemode=${String(props.livemode)}`), [props.livemode]);
   const [xpub, setXpub] = useState('');
   const [preview, setPreview] = useState<XpubPreview>();
@@ -108,7 +109,7 @@ export function Xpubs(props: { livemode: boolean; canManage: boolean; totp: bool
   if (props.custodyMode !== 'non_custodial_xpub') {
     return (
       <section>
-        <header className="page-head"><h2>Payout wallet (xpub)</h2></header>
+        {props.embedded ? <h3 className="section-title">Extended public key (xpub)</h3> : <header className="page-head"><h2>Payout wallet (xpub)</h2></header>}
         <p className="muted">This account uses {props.custodyMode.replace(/_/g, ' ')} settlement; no xpub is needed.</p>
       </section>
     );
@@ -116,7 +117,7 @@ export function Xpubs(props: { livemode: boolean; canManage: boolean; totp: bool
 
   return (
     <section>
-      <header className="page-head"><h2>Payout wallet (xpub)</h2></header>
+      {props.embedded ? <h3 className="section-title">Extended public key (xpub)</h3> : <header className="page-head"><h2>Payout wallet (xpub)</h2></header>}
       <p>
         Every invoice gets a fresh deposit address derived from your account xpub, so payments land directly in your own wallet. We
         never hold your keys.

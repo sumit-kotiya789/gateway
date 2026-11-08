@@ -12,6 +12,8 @@
     "admin:create": "tsx --env-file=../../.env src/cli/admin-create.ts",
     "db:seed": "tsx --env-file=../../.env src/cli/seed.ts",
     "dev:usdt": "tsx --env-file-if-exists=../../.env src/cli/dev-usdt.ts",
+    "testnet:token": "tsx --env-file=../../.env src/cli/testnet-token.ts",
+    "forwarder:deploy": "tsx --env-file=../../.env src/cli/forwarder-deploy.ts",
     "chains:verify": "tsx --env-file=../../.env src/cli/chains-verify.ts",
     "dev:worker": "tsx watch --env-file=../../.env src/main-worker.ts",
     "dev:watcher": "tsx watch --env-file=../../.env src/main-watcher.ts",

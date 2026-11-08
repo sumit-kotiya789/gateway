@@ -13,31 +13,31 @@ import { notifyOwners } from '../email/outbox.js';
 import { templates } from '../email/templates.js';
 import { resolveToken } from '../invoices/invoices.js';
 import { holdWithdrawal, releaseWithdrawal } from '../ledger/ledger.js';
+import { currentPayoutAddress } from '../custody/payout-addresses.js';
 
 /** A new live payout address takes effect this long after it was added (owners are emailed meanwhile). */
 export const PAYOUT_ADDRESS_COOLDOWN_H = 24;
 
 type PayoutRow = typeof payoutAddresses.$inferSelect;
 type WithdrawalRow = typeof withdrawals.$inferSelect;
-type Family = PayoutRow['family'];
 
-/** The address withdrawals of this mode and family go to now: newest activated, not cancelled. */
-export async function currentPayoutAddress(tx: Tx, merchantId: string, livemode: boolean, family: Family): Promise<PayoutRow | undefined> {
-  const [row] = await tx
-    .select()
-    .from(payoutAddresses)
-    .where(
-      and(
-        eq(payoutAddresses.merchantId, merchantId),
-        eq(payoutAddresses.livemode, livemode),
-        eq(payoutAddresses.family, family),
-        isNull(payoutAddresses.cancelledAt),
-        sql`${payoutAddresses.activatesAt} <= now()`,
-      ),
-    )
-    .orderBy(desc(payoutAddresses.activatesAt), desc(payoutAddresses.createdAt))
-    .limit(1);
-  return row;
+/** The address withdrawals (and forwarders, D-097) of this mode and family go to now. */
+export { currentPayoutAddress };
+
+/** Payout addresses are for custodial merchants (withdrawals) and forwarder merchants (where forwarders pay, D-097). */
+async function payoutMerchant(tx: Tx, merchantId: string) {
+  const [m] = await tx.select({ mode: merchants.custodyMode }).from(merchants).where(eq(merchants.id, merchantId));
+  /* v8 ignore next -- callers pass the authenticated merchant */
+  if (!m) throw new AppError('not_found', 'merchant not found');
+  if (m.mode === 'non_custodial_xpub') throw new AppError('forbidden', 'payout addresses are for custodial and wallet-address (forwarder) accounts; xpub accounts are paid to their own wallet');
+}
+
+/**
+ * Withdrawals exist only while custody is on (FEATURE_CUSTODIAL): with it off no worker sends them, so none may be
+ * requested or approved. Cancelling and rejecting stay allowed: they only release a hold back to the balance.
+ */
+function assertCustodyOn(deps: Deps): void {
+  if (!deps.config.FEATURE_CUSTODIAL) throw new AppError('forbidden', 'withdrawals are not available: custody is off on this platform', { reason: 'custody_off' });
 }
 
 async function custodialMerchant(tx: Tx, merchantId: string, lock = false) {
@@ -54,7 +54,7 @@ export async function addPayoutAddress(
   tx: Tx,
   p: { merchantId: string; livemode: boolean; address: string; label: string | null; userId: string },
 ): Promise<PayoutRow> {
-  await custodialMerchant(tx, p.merchantId);
+  await payoutMerchant(tx, p.merchantId);
   // Mixed case means an EIP-55 checksum: a typo there is caught here, not after the money left.
   if (!isAddress(p.address, { strict: true })) throw new AppError('validation_error', 'address checksum does not match: check for a typo', { field: 'address' });
   const address = getAddress(p.address);
@@ -99,6 +99,7 @@ export async function requestWithdrawal(
   tx: Tx,
   p: { merchantId: string; livemode: boolean; tokenId: string; amount: string; requestedBy: string },
 ): Promise<WithdrawalRow> {
+  assertCustodyOn(deps);
   // The merchant row lock serializes this merchant's withdrawals: two requests cannot both spend the same balance.
   const m = await custodialMerchant(tx, p.merchantId, true);
   if (m.status !== 'active') throw new AppError('forbidden', 'account is suspended');
@@ -160,6 +161,7 @@ export async function cancelWithdrawal(tx: Tx, merchantId: string, id: string): 
 
 /** One admin's approval. Approved (and queued for sending) once enough different admins agreed. */
 export async function approveWithdrawal(deps: Deps, tx: Tx, id: string, adminId: string): Promise<WithdrawalRow> {
+  assertCustodyOn(deps);
   const w = await locked(tx, id);
   if (w.status !== 'pending_approval') throw new AppError('conflict', `withdrawal is ${w.status}`);
   if (w.approvedBy.includes(adminId)) throw new AppError('conflict', 'you already approved this withdrawal; another admin must approve it', { reason: 'second_approver_required' });

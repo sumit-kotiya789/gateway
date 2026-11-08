@@ -90,7 +90,7 @@ export type Role = 'owner' | 'admin' | 'developer' | 'finance' | 'read_only';
 
 export interface Me {
   user: { id: string; email: string; email_verified: boolean; role: Role; totp_enabled: boolean; session_mfa: boolean };
-  merchant: { id: string; name: string; status: string; custody_mode: string };
+  merchant: { id: string; name: string; status: string; custody_mode: string; withdrawals_enabled: boolean };
   api_origin: string;
 }
 
@@ -113,6 +113,18 @@ export interface Invoice {
   created_at: string;
   history?: { from: string | null; to: string; reason: string; at: string }[];
   payments?: { tx_hash: string; from: string; amount: string; status: string; block_number: string; confirmations_required: number; confirmed_at: string | null }[];
+  /** Forwarder mode (D-097): flushes that moved the funds on to the merchant wallet, fee split on-chain. */
+  forwards?: { status: string; tx_hash: string | null; explorer_url: string | null; to_merchant: string | null; fee: string | null; confirmed_at: string | null }[];
+}
+
+export type ReceivingMode = 'non_custodial_xpub' | 'non_custodial_forwarder' | 'custodial';
+
+export interface MerchantSettings {
+  widget_origins: string[];
+  receiving_mode: ReceivingMode;
+  forwarder_available: boolean;
+  /** Custody is on for this platform: the merchant may choose to have it hold their funds (D-098). */
+  custodial_available: boolean;
 }
 
 export interface Page<T> {

@@ -15,6 +15,14 @@ const usdtTiers = (decimals: number) => [
   { min_amount: toMinorUnits('100000', decimals).toString(), confirmations: 60 },
 ];
 
+/** A ForwarderFactory address from env (D-097), or null when unset. chains:verify checks its on-chain code. */
+function factoryFrom(env: Record<string, string | undefined>, name: string): string | null {
+  const v = env[name]?.trim();
+  if (!v) return null;
+  if (!/^0x[0-9a-fA-F]{40}$/.test(v)) throw new Error(`${name} is not an address`);
+  return v;
+}
+
 export function registrySeed(env: Record<string, string | undefined>): { chains: ChainRow[]; tokens: TokenRow[] } {
   const c: ChainRow[] = [
     {
@@ -31,8 +39,9 @@ export function registrySeed(env: Record<string, string | undefined>): { chains:
       reorgDepth: 64,
       finality: 'tag',
       testnet: false,
-      // Mainnet stays off until the launch checklist is complete.
+      // Mainnet stays off until the launch checklist is complete (and a forwarder factory only after its audit).
       enabled: false,
+      forwarderFactory: factoryFrom(env, 'BSC_FORWARDER_FACTORY'),
     },
     {
       id: 'bsc-testnet',
@@ -48,13 +57,16 @@ export function registrySeed(env: Record<string, string | undefined>): { chains:
       reorgDepth: 64,
       finality: 'tag',
       testnet: true,
-      // Nexis is the test network (D-074). Re-seeding never flips `enabled`, so existing DBs disable it via the admin
-      // kill switch.
-      enabled: false,
+      // The test network (D-096, replaces Nexis from D-074). Re-seeding never flips `enabled`, so existing DBs enable
+      // it via the admin console. The first RPC (BSC_TESTNET_RPC_URL) must serve address-filtered eth_getLogs: the
+      // public bnbchain.org dataseed nodes refuse it and only act as confirmation witnesses.
+      enabled: true,
+      forwarderFactory: factoryFrom(env, 'BSC_TESTNET_FORWARDER_FACTORY'),
     },
     {
-      // Nexis Chain (owner-designated test chain, D-074). A public chain, but registered as `testnet` so only test keys
-      // see it: its USDT is a mock, never real money. Finality tag and block time unverified -> count confirmations only.
+      // Nexis Chain (test chain under D-074, retired by D-096: seeded disabled, row kept for existing data). A public
+      // chain, but registered as `testnet` so only test keys see it: its USDT is a mock, never real money. Finality tag
+      // and block time unverified -> count confirmations only.
       id: 'nexis',
       family: 'evm',
       name: 'Nexis Chain',
@@ -69,7 +81,7 @@ export function registrySeed(env: Record<string, string | undefined>): { chains:
       reorgDepth: 64,
       finality: 'confirmations',
       testnet: true,
-      enabled: true,
+      enabled: false,
     },
   ];
   const t: TokenRow[] = [
@@ -104,13 +116,14 @@ export function registrySeed(env: Record<string, string | undefined>): { chains:
     },
   ];
 
-  // No official USDT exists on BSC testnet: we deploy our own mock and register its address.
+  // No official USDT exists on BSC testnet: we deploy our own mock, sastaUSDT (`pnpm testnet:token deploy`, D-096),
+  // and register its address. Test money only; anyone can mint it.
   if (env.BSC_TESTNET_USDT_ADDRESS) {
     t.push({
       id: 'bsc-testnet:usdt',
       chainId: 'bsc-testnet',
-      symbol: 'USDT',
-      name: 'Test USDT (gateway mock)',
+      symbol: 'sastaUSDT',
+      name: 'sastaUSDT (BSC testnet mock)',
       contractAddress: env.BSC_TESTNET_USDT_ADDRESS,
       decimals: 18,
       minConfirmations: 15,
@@ -137,6 +150,7 @@ export function registrySeed(env: Record<string, string | undefined>): { chains:
       finality: 'tag',
       testnet: true,
       enabled: true,
+      forwarderFactory: factoryFrom(env, 'EVM_LOCAL_FORWARDER_FACTORY'),
     });
     if (env.EVM_LOCAL_USDT_ADDRESS) {
       t.push({
@@ -172,6 +186,8 @@ export async function seedRegistry(tx: Tx, env: Record<string, string | undefine
           defaultConfirmations: sql`excluded.default_confirmations`,
           reorgDepth: sql`excluded.reorg_depth`,
           finality: sql`excluded.finality`,
+          // Set once (DB trigger): an unset env var keeps the registered factory; a different one is refused loudly.
+          forwarderFactory: sql`coalesce(excluded.forwarder_factory, chains.forwarder_factory)`,
           // identity columns included so the immutability trigger rejects a changed seed instead of ignoring it
           family: sql`excluded.family`,
           evmChainId: sql`excluded.evm_chain_id`,

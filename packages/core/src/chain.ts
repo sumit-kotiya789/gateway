@@ -19,6 +19,8 @@ export interface ChainConfig {
   finality: 'tag' | 'confirmations';
   testnet: boolean;
   enabled: boolean;
+  /** ForwarderFactory address (D-097); null/absent = forwarder mode unavailable on this chain. */
+  forwarderFactory?: string | null;
 }
 
 export interface ConfirmationTier {
@@ -99,6 +101,8 @@ export interface ChainAdapter {
   getBalance(address: string, token: TokenConfig | null): Promise<bigint>;
   getTransactionReceipt(hash: string): Promise<Receipt | null>;
   readTokenDecimals(token: TokenConfig): Promise<number>;
+  /** keccak256 of the code at `address`, or null when there is none (EVM; used to verify the forwarder factory). */
+  getCodeHash?(address: string): Promise<string | null>;
   estimateFee(tx: TxRequest): Promise<FeeEstimate>;
   broadcast(signedTx: string): Promise<string>;
   isValidAddress(addr: string): boolean;
@@ -118,17 +122,28 @@ export interface AddressDeriver {
 export const CUSTODY_MODES = ['custodial', 'non_custodial_xpub', 'non_custodial_forwarder'] as const;
 export type CustodyMode = (typeof CUSTODY_MODES)[number];
 
+/** What the invoice will charge: the forwarder strategy commits the deposit address to it (D-097). */
+export interface AllocationTerms {
+  tokenId: string;
+  tokenContract: string;
+  /** Minor units. */
+  amountExpected: bigint;
+  feeBps: number;
+}
+
 export interface AllocationRequest {
   merchantId: string;
   livemode: boolean;
   chain: ChainConfig;
+  /** Required by the forwarder strategy; the others ignore it. */
+  terms?: AllocationTerms;
 }
 
 export interface DepositAddress {
   id: string;
   address: string;
   chainId: string;
-  source: 'platform' | 'merchant_xpub';
+  source: 'platform' | 'merchant_xpub' | 'forwarder';
   derivationIndex: number;
   derivationPath: string;
 }

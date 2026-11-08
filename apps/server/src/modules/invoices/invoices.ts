@@ -84,10 +84,15 @@ export async function createInvoice(deps: Deps, tx: Tx, merchantId: string, live
     if (!s.active) throw new AppError('conflict', 'sub-merchant is deactivated');
   }
   // Before an address is allocated: a refused invoice must not burn a derivation index (wallet gap).
-  // Custodial merchants pay fees out of each settlement instead (D-087).
-  if (m.mode !== 'custodial') await assertFeeBalance(tx, merchantId, livemode, token, m.feeGrace);
+  // Custodial merchants pay fees out of each settlement instead (D-087); forwarders split the fee on-chain (D-097).
+  const forwarder = m.mode === 'non_custodial_forwarder';
+  if (m.mode !== 'custodial' && !forwarder) await assertFeeBalance(tx, merchantId, livemode, token, m.feeGrace);
 
-  const addr = await allocateDepositAddress(tx, { merchantId, livemode, chain: rowToChain(chain) }, { custodialEnabled: deps.config.FEATURE_CUSTODIAL });
+  const addr = await allocateDepositAddress(
+    tx,
+    { merchantId, livemode, chain: rowToChain(chain), terms: { tokenId: token.id, tokenContract: token.contractAddress, amountExpected, feeBps: m.feeBps } },
+    { custodialEnabled: deps.config.FEATURE_CUSTODIAL, forwarderEnabled: deps.config.FEATURE_FORWARDER },
+  );
   const expiresAt = new Date(deps.clock() + expiresIn * 1000);
   await tx.update(depositAddresses).set({ watchUntil: new Date(expiresAt.getTime() + LATE_PAYMENT_WATCH_MS) }).where(eq(depositAddresses.id, addr.id));
 
@@ -107,7 +112,8 @@ export async function createInvoice(deps: Deps, tx: Tx, merchantId: string, live
       custodyMode: addr.custodyMode,
       underpayToleranceBps: m.tolerance,
       feeBps: m.feeBps,
-      feeFixed: feeUnitsToMinor(m.feeFixed, token.decimals),
+      // The forwarder contract takes the rate only (D-097): no fixed fee on forwarder invoices.
+      feeFixed: forwarder ? 0n : feeUnitsToMinor(m.feeFixed, token.decimals),
       description: input.description ?? null,
       metadata: input.metadata ?? {},
       successUrl: input.successUrl ?? null,

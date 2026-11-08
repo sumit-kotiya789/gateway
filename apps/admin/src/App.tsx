@@ -21,6 +21,13 @@ function Login(props: { onDone: (a: Admin) => void }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [code, setCode] = useState('');
+  // Ask for the code unless the server says login skips it (development only).
+  const [totp, setTotp] = useState(true);
+  useEffect(() => {
+    api<{ totp_required: boolean }>('GET', '/auth/options').then((o) => {
+      setTotp(o.totp_required);
+    }, () => undefined);
+  }, []);
   const a = useAction();
   return (
     <div className="auth-solo">
@@ -29,7 +36,7 @@ function Login(props: { onDone: (a: Admin) => void }) {
         onSubmit={(e) => {
           e.preventDefault();
           void a.run(async () => {
-            const r = await api<{ admin: Admin }>('POST', '/auth/login', { email, password, code });
+            const r = await api<{ admin: Admin }>('POST', '/auth/login', totp ? { email, password, code } : { email, password });
             props.onDone(r.admin);
           });
         }}
@@ -49,7 +56,7 @@ function Login(props: { onDone: (a: Admin) => void }) {
         <Field label="Password">
           <input type="password" value={password} onChange={(e) => { setPassword(e.target.value); }} autoComplete="current-password" placeholder="••••••••••••" required />
         </Field>
-        <TotpInput value={code} onChange={setCode} />
+        {totp && <TotpInput value={code} onChange={setCode} />}
         <ErrorBox error={a.error} />
         <Submit busy={a.busy}>Sign in</Submit>
       </form>

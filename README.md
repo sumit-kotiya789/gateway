@@ -13,11 +13,26 @@ Node 22+, pnpm 10 (`corepack enable`), Docker.
 corepack enable
 pnpm install
 cp .env.example .env        # set dev passwords; generate JWT_SECRET, ADMIN_JWT_SECRET, API_KEY_PEPPER, DATA_KEK
-docker compose up --build   # postgres, redis, anvil, mailpit, migrate (one-shot), api on :3000
+docker compose up --build   # postgres, redis, mailpit, migrate (one-shot), api on :3000, watcher on BSC testnet
 pnpm admin:create you@example.com superadmin   # first admin (prints password + TOTP URI once)
 ```
 Emails (verification, password reset, notices) land in Mailpit: http://localhost:8025.
 Custodial mode (M7) adds the signer: `docker compose --profile custodial up` (setup: `docs/RUNBOOK.md`, "Custody setup").
+
+## Test network: BSC testnet + sastaUSDT
+Test mode uses BSC testnet; live mode uses BSC mainnet (D-096). One-time token setup:
+1. Make a new throwaway wallet, fund it with tBNB (https://www.bnbchain.org/en/testnet-faucet), put its private key
+   in `.env` as `BSC_TESTNET_DEPLOYER_KEY` (testnet only; never a key with real funds).
+2. `pnpm testnet:token deploy`, then copy the printed `BSC_TESTNET_USDT_ADDRESS` into `.env`.
+3. `pnpm db:seed`, then `docker compose restart watcher worker`.
+4. Pay a test invoice: `pnpm testnet:token pay <deposit-address> <amount>`.
+
+### Wallet-address merchants (forwarder mode, D-097)
+Merchants without an xpub enter a plain wallet address: each invoice gets its own CREATE2 forwarder address and the
+funds are forwarded to the wallet automatically, fee split on-chain (`docs/CUSTODY.md`). Testnet setup:
+`pnpm forwarder:deploy` (factory into `.env`, then `pnpm db:seed`), signer seed + `pnpm platform:register` with a
+`fee_wallets` entry, fund the signer gas wallet (`pnpm testnet:token send-bnb <gas-wallet> 0.05`),
+`FEATURE_FORWARDER=true`, `docker compose --profile forwarder up -d --build`. Details: `docs/RUNBOOK.md`.
 
 ## Scripts
 | Script | Does |
@@ -26,6 +41,9 @@ Custodial mode (M7) adds the signer: `docker compose --profile custodial up` (se
 | `pnpm migrate` | apply migrations as the schema owner (`DATABASE_MIGRATION_URL`) |
 | `pnpm admin:create <email> <role>` | bootstrap an admin |
 | `pnpm platform:register <file>` | register custody keys printed by the signer's `init-seed` (custodial, M7) |
+| `pnpm testnet:token <cmd>` | BSC testnet sastaUSDT: `address`, `deploy`, `mint`, `pay`, `balance`, `send-bnb` (key from `.env`) |
+| `pnpm forwarder:deploy` | deploy the ForwarderFactory on BSC testnet (D-097) |
+| `pnpm contracts:test` | Solidity tests (forwarder contracts) via the Foundry image |
 | `pnpm test` / `pnpm test:coverage` | unit + integration (integration needs Docker); coverage gate on money-critical files |
 | `pnpm test:unit` / `pnpm test:integration` | one project only |
 | `pnpm lint` | eslint (type-aware, bans float money helpers) |

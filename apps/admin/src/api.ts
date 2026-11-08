@@ -154,12 +154,35 @@ export interface AdminCredentials extends AdminAccount {
   qr_svg: string;
 }
 
+/** Forwarder flush (D-097). */
+export interface Forward {
+  id: string;
+  merchant_id: string;
+  invoice_id: string;
+  livemode: boolean;
+  chain: string;
+  token: string;
+  symbol: string;
+  forwarder_address: string;
+  amount: string;
+  to_merchant: string | null;
+  fee: string | null;
+  status: string;
+  tx_hash: string | null;
+  attempts: number;
+  last_error: string | null;
+  created_at: string;
+  confirmed_at: string | null;
+}
+
 export interface CustodyOverview {
   custodial_enabled: boolean;
+  forwarder_enabled: boolean;
   signer: { paused: boolean; reason: string | null; updated_at: string | null };
-  wallets: { livemode: boolean; family: string; kind: 'hot' | 'gas' | 'cold'; address: string; derivation_path: string | null }[];
+  wallets: { livemode: boolean; family: string; kind: 'hot' | 'gas' | 'cold' | 'fee'; address: string; derivation_path: string | null }[];
   balances: Record<string, string | boolean | null>[];
   open_sweeps: number;
+  forwards: { open: number; failed_24h: number };
   withdrawals: Partial<Record<'pending_approval' | 'approved' | 'sent', number>>;
 }
 

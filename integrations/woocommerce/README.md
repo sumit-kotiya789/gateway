@@ -11,7 +11,7 @@ Requirements: WordPress 6.4+, WooCommerce 8.3+, PHP 7.4+, store currency USD (US
 3. WooCommerce → Settings → Payments → Crypto (USDT):
    - **Gateway URL**: the API base, e.g. `https://pay.example`.
    - **Secret API key**: `sk_test_…` first (scopes `read`, `invoices:write`); `sk_live_…` to go live.
-   - **Token**: `nexis:usdt` with a test key, `bsc:usdt` with a live key.
+   - **Token**: `bsc-testnet:usdt` (sastaUSDT) with a test key, `bsc:usdt` with a live key.
    - **Webhook secret**: in the gateway dashboard add a webhook endpoint for the URL shown under the field
      (`https://<shop>/wp-json/gateway-crypto/v1/webhook`) and paste its `whsec_…` secret.
 4. Place a test order and pay it with the test token.

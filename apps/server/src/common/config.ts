@@ -55,8 +55,14 @@ const schema = z
 
     SIGNUP_ENABLED: z.stringbool().default(true),
     FEATURE_CUSTODIAL: z.stringbool().default(false),
+    // Forwarder custody mode (D-097): per-invoice CREATE2 forwarders that pay the merchant's wallet, fee split on-chain.
+    // The worker asks the signer to flush them, so it needs SIGNER_URL and SIGNER_HMAC_SECRET too.
+    FEATURE_FORWARDER: z.stringbool().default(false),
     // Lets webhooks reach private/loopback addresses (local receivers in dev and tests). Refused in production.
     WEBHOOK_ALLOW_PRIVATE_NETWORKS: z.stringbool().default(false),
+    // Admin console login with email + password only, no TOTP code (local testing). Step-up actions still need a code.
+    // Refused in production.
+    ADMIN_LOGIN_TOTP_DISABLED: z.stringbool().default(false),
     // Live withdrawals at or above this amount (token units) need two different admins; below, one (D-090).
     WITHDRAWAL_TWO_PERSON_MIN: z.string().regex(/^\d+(\.\d+)?$/).default('10000'),
     // Custodial (M7): the worker asks the signer to sign sweeps and payouts. Worker only: it refuses to start without
@@ -103,6 +109,9 @@ const schema = z
       }
       if (c.WEBHOOK_ALLOW_PRIVATE_NETWORKS) {
         ctx.addIssue({ code: 'custom', path: ['WEBHOOK_ALLOW_PRIVATE_NETWORKS'], message: 'must be false in production (SSRF guard)' });
+      }
+      if (c.ADMIN_LOGIN_TOTP_DISABLED) {
+        ctx.addIssue({ code: 'custom', path: ['ADMIN_LOGIN_TOTP_DISABLED'], message: 'must be false in production (admin 2FA)' });
       }
       if (!c.SMTP_URL) {
         ctx.addIssue({ code: 'custom', path: ['SMTP_URL'], message: 'required in production (verification and security emails)' });

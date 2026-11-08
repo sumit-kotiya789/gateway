@@ -40,6 +40,9 @@ const rpc: ChainRpc = {
   gasPrice: async () => chain.gasPrice,
   nativeBalance: async (a) => chain.native.get(a.toLowerCase()) ?? 0n,
   tokenBalance: async (_t, a) => chain.token.get(a.toLowerCase()) ?? 0n,
+  // Forwarder flushes (D-097) are tested on Anvil (forwarder.test.ts), not on this simulated chain.
+  codeHash: async () => null,
+  estimateGas: async () => 0n,
 };
 
 beforeAll(async () => {

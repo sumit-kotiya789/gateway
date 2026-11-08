@@ -3,13 +3,12 @@ import { api, totpHeader, type Balance, type PayoutAddress, type Withdrawal } fr
 import { Alert, ConfirmButton, CopyField, EmptyState, ErrorBox, Field, Skeleton, Stat, StatusBadge, Submit, TotpInput, fmtDate, short, toast, useAction, useLoad } from './ui';
 
 /** Custodial accounts only: balances held for you, where withdrawals go, and the withdrawals themselves (D-090). */
-export function Withdrawals(props: { livemode: boolean; canRequest: boolean; canManageAddress: boolean; totp: boolean }) {
+export function Withdrawals(props: { livemode: boolean; enabled: boolean; canRequest: boolean; canManageAddress: boolean; totp: boolean }) {
   const q = `livemode=${String(props.livemode)}`;
   const balances = useLoad(() => api<{ data: Balance[] }>('GET', `/balances/?${q}`), [q]);
   const addresses = useLoad(() => api<{ data: PayoutAddress[] }>('GET', `/withdrawals/payout-addresses?${q}`), [q]);
   const list = useLoad(() => api<{ data: Withdrawal[] }>('GET', `/withdrawals/?${q}`), [q]);
   const current = addresses.data?.data.find((a) => a.status === 'current');
-  const pending = addresses.data?.data.find((a) => a.status === 'pending');
   const reload = () => {
     balances.reload();
     addresses.reload();
@@ -21,7 +20,8 @@ export function Withdrawals(props: { livemode: boolean; canRequest: boolean; can
       <header className="page-head">
         <h2>Withdrawals</h2>
       </header>
-      {!props.totp && <Alert tone="warning">Turn on two-factor authentication (Security) to add a payout address or withdraw.</Alert>}
+      {!props.enabled && <Alert tone="info">Withdrawals are paused: custody is off on this platform. Your balance stays safe; requests open again when custody is back on.</Alert>}
+      {props.enabled && !props.totp && <Alert tone="warning">Turn on two-factor authentication (Security) to add a payout address or withdraw.</Alert>}
       <div className="stats">
         {(balances.data?.data ?? []).map((b) => (
           <Stat key={b.token} label={`Available · ${b.token}`} value={b.available} unit={b.symbol} icon="wallet">
@@ -36,39 +36,9 @@ export function Withdrawals(props: { livemode: boolean; canRequest: boolean; can
       </p>
 
       <h3 className="section-title">Payout address</h3>
-      <ErrorBox error={addresses.error} />
-      {!addresses.data && !addresses.error && <Skeleton />}
-      {current ? (
-        <dl className="details card">
-          <dt>Withdrawals go to</dt>
-          <dd><CopyField value={current.address} /> {current.label && <span className="muted">{current.label}</span>}</dd>
-          <dt>Since</dt>
-          <dd>{fmtDate(current.activates_at)}</dd>
-        </dl>
-      ) : (
-        addresses.data && <Alert tone="info">No payout address yet.</Alert>
-      )}
-      {pending && (
-        <Alert tone="warning">
-          New address <code>{pending.address}</code> takes over at {fmtDate(pending.activates_at)}. If you did not add it, cancel it now and change your
-          password.{' '}
-          {props.canManageAddress && (
-            <ConfirmButton
-              label="Cancel new address"
-              message="The current address keeps receiving withdrawals."
-              onConfirm={() => {
-                void api('POST', `/withdrawals/payout-addresses/${pending.id}/cancel`).then(() => {
-                  toast.success('New payout address cancelled');
-                  reload();
-                });
-              }}
-            />
-          )}
-        </Alert>
-      )}
-      {props.canManageAddress && props.totp && <AddAddress livemode={props.livemode} onDone={reload} />}
+      <PayoutAddressSection livemode={props.livemode} canManage={props.canManageAddress} totp={props.totp} currentLabel="Withdrawals go to" keepsLabel="The current address keeps receiving withdrawals." onChange={reload} />
 
-      {props.canRequest && props.totp && current && <RequestWithdrawal livemode={props.livemode} balances={balances.data?.data ?? []} to={current.address} onDone={reload} />}
+      {props.enabled && props.canRequest && props.totp && current && <RequestWithdrawal livemode={props.livemode} balances={balances.data?.data ?? []} to={current.address} onDone={reload} />}
 
       <h3 className="section-title">History</h3>
       <ErrorBox error={list.error} />
@@ -112,6 +82,56 @@ export function Withdrawals(props: { livemode: boolean; canRequest: boolean; can
         </div>
       )}
     </section>
+  );
+}
+
+/**
+ * The current payout address, a pending change (cancellable), and the form to add one (D-090). Custodial withdrawals
+ * and forwarder payouts (D-097) both go to this address.
+ */
+export function PayoutAddressSection(props: { livemode: boolean; canManage: boolean; totp: boolean; currentLabel: string; keepsLabel: string; onChange?: () => void }) {
+  const q = `livemode=${String(props.livemode)}`;
+  const addresses = useLoad(() => api<{ data: PayoutAddress[] }>('GET', `/withdrawals/payout-addresses?${q}`), [q]);
+  const current = addresses.data?.data.find((a) => a.status === 'current');
+  const pending = addresses.data?.data.find((a) => a.status === 'pending');
+  const reload = () => {
+    addresses.reload();
+    props.onChange?.();
+  };
+  return (
+    <>
+    <ErrorBox error={addresses.error} />
+    {!addresses.data && !addresses.error && <Skeleton />}
+    {current ? (
+      <dl className="details card">
+        <dt>{props.currentLabel}</dt>
+        <dd><CopyField value={current.address} /> {current.label && <span className="muted">{current.label}</span>}</dd>
+        <dt>Since</dt>
+        <dd>{fmtDate(current.activates_at)}</dd>
+      </dl>
+    ) : (
+      addresses.data && <Alert tone="info">No payout address yet.</Alert>
+    )}
+    {pending && (
+      <Alert tone="warning">
+        New address <code>{pending.address}</code> takes over at {fmtDate(pending.activates_at)}. If you did not add it, cancel it now and change your
+        password.{' '}
+        {props.canManage && (
+          <ConfirmButton
+            label="Cancel new address"
+            message={props.keepsLabel}
+            onConfirm={() => {
+              void api('POST', `/withdrawals/payout-addresses/${pending.id}/cancel`).then(() => {
+                toast.success('New payout address cancelled');
+                reload();
+              });
+            }}
+          />
+        )}
+      </Alert>
+    )}
+    {props.canManage && props.totp && <AddAddress livemode={props.livemode} onDone={reload} />}
+    </>
   );
 }
 

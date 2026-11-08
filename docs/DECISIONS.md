@@ -596,3 +596,50 @@ split funds on chain, and a commission that is only a receivable is not worth bu
   `sub_merchant_id` column (appended). Fees, limits and risk holds stay per platform merchant.
 - Not built: payment links per seller, seller logins, payouts. Add when a marketplace asks.
 
+
+## D-096 BSC testnet + sastaUSDT as the test network; BSC mainnet for live; Anvil opt-in (2026-11-08, owner)
+Replaces D-074. Test mode runs on **BSC testnet** (`bsc-testnet`, chain id 97), live mode on **BSC mainnet** (`bsc`).
+- **Token.** No official USDT exists on BSC testnet, so we deploy our own `MockERC20` as **sastaUSDT** (18 decimals,
+  like BSC USDT; open `mint`: test money only) with `pnpm testnet:token deploy`, signed by `BSC_TESTNET_DEPLOYER_KEY`
+  (a throwaway testnet wallet funded from the faucet; host-only, never passed to containers). Its address goes in
+  `BSC_TESTNET_USDT_ADDRESS`; the seed registers it as `bsc-testnet:usdt` (symbol `sastaUSDT`). The address is
+  identity (immutable by trigger): a redeploy needs a new token id.
+- **Seed.** `bsc-testnet` is seeded **enabled**, `nexis` **disabled** (row kept for existing data). `bsc` stays seeded
+  disabled until the launch checklist is complete; operators enable it in the admin console. Re-seeding never flips
+  `enabled`, so existing databases change it by hand.
+- **RPC.** The scanner sends address-filtered `eth_getLogs` to the first URL (fallback after). The public bnbchain.org
+  dataseed nodes refuse `eth_getLogs` ("limit exceeded") but serve receipts, so they remain as quorum witnesses.
+  `BSC_TESTNET_RPC_URL` / `BSC_RPC_URL` must point at a provider that serves logs (publicnode by default; a dedicated
+  provider for production).
+- **Anvil.** The local chain is opt-in: `docker compose --profile anvil` plus `EVM_LOCAL_RPC_URL` in `.env`.
+  Integration tests keep using their own Anvil container (Testcontainers).
+
+## D-097 Forwarder custody mode: per-invoice CREATE2 forwarders, fee split on-chain (M12) (2026-11-08, owner)
+Merchants without an xpub enter a wallet address; every invoice still gets its own address, and confirmed funds are
+forwarded to the wallet automatically. xpub mode stays (owner: keep both).
+- **Contracts.** `Forwarder`: constructor args (merchant, fee wallet, token, feeBps, feeCap) immutable; `flush` sends the
+  whole balance, fee only on the invoice token, total capped; `flushNative`; no owner, no upgrade, anyone may call.
+  `ForwarderFactory`: `predict` and `deployAndFlush` via CREATE2, stateless. A full contract per invoice rather than a
+  minimal proxy: a few cents more gas on BSC, much simpler to audit. Audit required before mainnet.
+- **Fee.** On-chain split (owner). Rate only; the cap is the fee on the invoice amount, so overpayments are not
+  charged (same base as D-011/D-076). No prepaid fee balance for these merchants.
+- **Keys.** None for deposit addresses. The signer's gas wallet pays the flushes (intent `forward`) after re-deriving
+  the address from the stored params and checking the factory code hash; per-day count and per-flush gas limits.
+- **Data.** `forwarder_params` (immutable, DB-tied to the current payout address, the active `fee` wallet, the set-once
+  chain factory and the token), `forwards` (status forward-only, fee within cap), journal `forward_fee`, account
+  `platform_fee_wallet`. Enum values added by recreating the types (0017).
+- **Not built.** Booking flushes done outside the gateway; per-customer permanent addresses (custodial request, a
+  separate decision).
+
+## D-098 Custody on / off is the merchant's choice; withdrawals only while custody is on (2026-11-08, owner)
+Owner: the merchant decides whether to use custody, not an admin; withdrawals only when the custody feature is on.
+- **Who switches.** The merchant owner, in the dashboard (Payout wallet: "Custody on" next to the two custody-off
+  modes), with 2FA, through the same `PUT /v1/dashboard/settings/receiving-mode` (`custody:manage`), audited. Offered
+  only while the platform has `FEATURE_CUSTODIAL` on. No admin control (an admin route built first was removed).
+- **No stranded funds.** Turning custody off is refused while any custodial balance is non-zero (test or live) or a
+  custody invoice can still bring money in (open, paid, held, late payment). The existing DB lock after the first live
+  invoice still applies, so in practice only test-mode state is ever switched.
+- **Withdrawals gated on the flag.** Requests (dashboard and API) and admin approvals refuse with `custody_off` when
+  `FEATURE_CUSTODIAL` is off (no worker would send them). Cancel and reject stay allowed: they only release a hold.
+  `/v1/dashboard/auth/me` reports `withdrawals_enabled`; the dashboard explains the pause instead of offering a form.
+- **Not built.** Per-customer permanent custodial addresses (still per invoice); emailing owners about a mode change.

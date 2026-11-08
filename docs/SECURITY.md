@@ -39,6 +39,11 @@ Every file with a `// MONEY-CRITICAL` header is listed here and in the coverage 
 | `apps/server/src/modules/custody/treasury.ts` | hot ↔ cold transfers, on-chain verification of refills | M7 |
 | `apps/server/src/modules/withdrawals/withdrawals.ts` | payout addresses, requests and holds, approvals, release | M7 |
 | `apps/server/db/migrations/0029_custodial_ledger.sql` … `0038_treasury_security.sql` | custodial account kinds and journals, per-journal account allow-lists, sweep/withdrawal/treasury/platform-wallet guards, signer DB role | M7 |
+| `contracts/src/Forwarder.sol`, `contracts/src/ForwarderFactory.sol` | forwarder custody: per-invoice CREATE2 contract that can only pay the merchant and the capped fee (audit before mainnet) | M12 |
+| `packages/chains/src/evm/forwarder.ts`, `forwarder.artifacts.json` | forwarder address math and fee split (must equal the contracts), committed bytecode | M12 |
+| `apps/server/src/modules/custody/forwarder.ts` | forwards: planning from on-chain balances, signer intents, confirmation, fee booking, settlement | M12 |
+| `apps/server/src/modules/custody/payout-addresses.ts` | current payout address (withdrawals and forwarder destinations) | M12 |
+| `apps/server/db/migrations/0043_forwarder.sql`, `0044_forwarder_security.sql` | forwarder params (immutable, tied to current payout address, fee wallet, factory, token), forward guards and fee cap, set-once factory | M12 |
 
 ## Security-critical files (mandatory human review)
 
@@ -114,6 +119,7 @@ Status: `planned` until the mitigation's milestone lands, then the test that pro
 | Illegal invoice status change (bug or insider) | One app transition function + DB trigger against the same table; history written only by trigger; amount/address/token immutable; no deletes | `invoice.test.ts` (all 144 pairs), `invoices.test.ts` | M3 |
 | Late payment auto-fulfilled | `expired`/`cancelled` → `late_payment` only; `late_payment` → `paid` is manual | `invoice.test.ts` | M3 |
 | Custody mode switched under live money | Trigger locks `custody_mode` after the first live invoice | `invoices.test.ts` | M3 |
+| Custody turned off with funds still held (stranded balance) | Switch refused while any custodial balance or open custody invoice exists; withdrawals refused while `FEATURE_CUSTODIAL` is off | `custody-mode.test.ts` | D-098 |
 | Checkout XSS / data leak | Escape-everything templating, script data via escaped JSON, `default-src 'none'` + per-response nonce, `frame-ancestors 'none'`, no-store; page shows no metadata/order ids | `invoices.test.ts` (hostile merchant name) | M3 |
 | Address-burning via payment links | Invoice creation is POST-only (prefetch-safe), 5/10 min per IP, per-link cap on pending invoices (bounds wallet gap) | `invoices.test.ts` | M3 |
 | Open redirect / javascript: URLs | success/cancel URLs must be http(s) (https in prod) without credentials | `invoices.test.ts` | M3 |
@@ -146,6 +152,10 @@ Status: `planned` until the mitigation's milestone lands, then the test that pro
 | Client IP spoofing | `X-Forwarded-For` trusted only for `TRUST_PROXY_HOPS` hops | `admin.test.ts` | M1 |
 | Float money bugs | bigint only; lint bans `parseFloat`, `Number.parseFloat`, `.toFixed` | `money.test.ts` + eslint | M0 |
 | Vulnerable base-image tooling | npm/corepack removed from runtime image; trivy image scan in CI | trivy (0 HIGH/CRITICAL) | M1 |
+| Forwarder pays someone else (D-097) | The deposit address is CREATE2 over every constructor argument (merchant, fee wallet, token, rate, cap); the contract has no owner or other destination; params immutable and DB-tied to the current payout address and active fee wallet; the signer re-derives the address and checks the factory code hash before signing | `Forwarder.t.sol`, `forwarder.test.ts` | M12 |
+| Wrong or malicious forwarder factory | Factory set once per chain (trigger); `chains:verify` and the signer compare its on-chain code hash with the committed artifact; the deploy CLI refuses mainnet | `forwarder.test.ts` | M12 |
+| Forwarder fee above the agreed rate | Cap committed in the address (fee on the invoice amount); the contract enforces it across flushes; DB guard on confirmed forwards; no fixed fee in this mode | `Forwarder.t.sol`, `forwarder.test.ts` | M12 |
+| Gas wallet drained by runaway flushes | Signer caps forwards per 24 h and gas per flush; gas price cap; kill switch | `forwarder.test.ts` | M12 |
 
 ## Known limits (accepted, revisit before launch)
 

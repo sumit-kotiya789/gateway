@@ -7,6 +7,21 @@ export { MAX_NON_HARDENED_INDEX, deriveEvmAddress, evmDeriver, parseAccountXpub 
 export { TRANSFER_TOPIC, decodeTokenTransfers, decodeTransferLog, type RawLog } from './evm/transfers.js';
 export { detectSecretMaterial, type SecretKind } from './evm/secrets.js';
 export { resolveRpcUrls } from './rpc.js';
+export {
+  FORWARDER_ABI,
+  FORWARDER_FACTORY_ABI,
+  FORWARDER_FACTORY_BYTECODE,
+  FORWARDER_FACTORY_CODEHASH,
+  checkForwarderParams,
+  decodeFlushed,
+  deployAndFlushData,
+  forwarderAddress,
+  forwarderFeeOn,
+  forwarderFlushFee,
+  forwarderSalt,
+  type FlushedEvent,
+  type ForwarderParams,
+} from './evm/forwarder.js';
 
 // Family registry. Adding a chain family = one entry here + its adapter/deriver. Nothing else changes.
 const ADAPTERS: Partial<Record<ChainFamily, (chain: ChainConfig, urls: readonly string[]) => ChainAdapter>> = {

@@ -57,6 +57,9 @@ const schema = z
     SIGNER_MAX_GAS_PRICE_GWEI: decimal.default('20'),
     SIGNER_MAX_GAS_TOPUP: decimal.default('0.005'), // native coin units per top-up
     SIGNER_TOKEN_TRANSFER_GAS: z.coerce.number().int().min(21_000).max(500_000).default(100_000),
+    // Forwarder flushes (D-097): at most this many signed per 24 h, each at most this much gas (the gas wallet pays).
+    SIGNER_MAX_FORWARDS_PER_DAY: z.coerce.number().int().min(1).max(1_000_000).default(10_000),
+    SIGNER_MAX_FORWARD_GAS: z.coerce.number().int().min(100_000).max(5_000_000).default(1_500_000),
     // Emergency stop from the signer's own config, independent of the admin switch in the database.
     SIGNER_PAUSED: z.stringbool().default(false),
   })

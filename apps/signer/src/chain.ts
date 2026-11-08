@@ -1,7 +1,7 @@
 // Read-only chain access the signer needs to build a transaction: chain id check, nonce, gas price, balances.
 // The signer never broadcasts: the worker does, so a compromised network path cannot make the signer send anything.
 import { resolveRpcUrls } from '@gw/chains';
-import { createPublicClient, erc20Abi, fallback, http, type PublicClient } from 'viem';
+import { createPublicClient, erc20Abi, fallback, http, keccak256, type PublicClient } from 'viem';
 
 export interface ChainRpc {
   chainId(): Promise<number>;
@@ -10,6 +10,10 @@ export interface ChainRpc {
   gasPrice(): Promise<bigint>;
   nativeBalance(address: string): Promise<bigint>;
   tokenBalance(token: string, address: string): Promise<bigint>;
+  /** keccak256 of the code at `address`, null when none (verifies the forwarder factory, D-097). */
+  codeHash(address: string): Promise<string | null>;
+  /** Gas a call would use (forwarder flushes, D-097). */
+  estimateGas(tx: { from: string; to: string; data: `0x${string}` }): Promise<bigint>;
 }
 
 export function viemRpc(urls: string[]): ChainRpc {
@@ -21,6 +25,11 @@ export function viemRpc(urls: string[]): ChainRpc {
     nativeBalance: (address) => client.getBalance({ address: address as `0x${string}` }),
     tokenBalance: (token, address) =>
       client.readContract({ address: token as `0x${string}`, abi: erc20Abi, functionName: 'balanceOf', args: [address as `0x${string}`] }),
+    codeHash: async (address) => {
+      const code = await client.getCode({ address: address as `0x${string}` });
+      return code && code !== '0x' ? keccak256(code) : null;
+    },
+    estimateGas: (tx) => client.estimateGas({ account: tx.from as `0x${string}`, to: tx.to as `0x${string}`, data: tx.data }),
   };
 }
 

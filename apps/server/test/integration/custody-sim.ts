@@ -48,6 +48,9 @@ export class FakeChain {
     gasPrice: async () => this.gasPrice,
     nativeBalance: async (a) => this.bal(this.native, a),
     tokenBalance: async (_t, a) => this.bal(this.token, a),
+    // Forwarder flushes (D-097) are tested on Anvil (forwarder.test.ts), not on this simulated chain.
+    codeHash: async () => null,
+    estimateGas: async () => 0n,
   };
   tx: ChainTx = {
     sendRaw: async (raw) => {

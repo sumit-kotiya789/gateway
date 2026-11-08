@@ -6,7 +6,7 @@ through an audited admin migration (later milestone). Each invoice snapshots `cu
 
 | | custodial | non_custodial_xpub | non_custodial_forwarder |
 |---|---|---|---|
-| Status | M7 built, behind `FEATURE_CUSTODIAL` (off by default); production takes the seed KEK from a secret-manager file, no KMS (D-010) | M8, MVP | M12, experimental, audit required |
+| Status | M7 built, behind `FEATURE_CUSTODIAL` (off by default); production takes the seed KEK from a secret-manager file, no KMS (D-010) | M8, MVP | M12 built (D-097), behind `FEATURE_FORWARDER`; contract audit required before mainnet |
 | Deposit address | Platform HD wallet, `m/44'/60'/{account}'/0/{i}` | Merchant account xpub (depth 3), child `0/{i}` | CREATE2 forwarder |
 | Keys on app servers | xpub only | xpub only | none |
 | Who moves funds | Platform (sweep, withdrawal via signer) | Merchant, with their own wallet | Contract auto-forwards |
@@ -32,7 +32,7 @@ flowchart TB
 
 1. Reads the merchant's custody mode; suspended merchants are refused.
 2. `strategyFor(mode)`: `non_custodial_xpub` → merchant xpub; `custodial` → platform wallet (only with `FEATURE_CUSTODIAL`);
-   forwarder → refused until M12.
+   `non_custodial_forwarder` → CREATE2 forwarder address (only with `FEATURE_FORWARDER`, see "Forwarder mode").
 3. `UPDATE … SET next_index = next_index + 1 … RETURNING` on the key's row: the row lock serializes concurrent invoices,
    so each gets a distinct index. A rolled-back invoice rolls back its index too (no address was ever shown).
 4. Public derivation of `<account xpub>/0/<index>`, insert into `deposit_addresses`.
@@ -82,7 +82,16 @@ Worker queue `custody` (every 15 s, only with `FEATURE_CUSTODIAL`):
 Unmined transactions are rebroadcast with the same bytes; only a mined revert fails a sweep. Reconciliation:
 `sweep_journal`, `negative_custody`. Metrics: `gw_sweeps_open`, `gw_sweep_oldest_open_seconds`, `gw_sweeps_failed_24h`.
 
+## Custody on / off (D-098)
+The merchant decides, not an admin: dashboard > Payout wallet > "Custody on" (owner + 2FA), offered only while the
+platform has `FEATURE_CUSTODIAL` on. Turning custody off is refused while the platform holds funds for the merchant
+(pending, available or withdrawing, any mode) or custody invoices are still open: withdraw everything first. Like every
+mode change: new invoices only, locked after the first live invoice, audited. With custody on the dashboard also shows
+Withdrawals.
+
 ## Withdrawals (M7d, D-090)
+Only while custody is on (`FEATURE_CUSTODIAL`): with it off, requests and approvals are refused (`custody_off`) and the
+dashboard says withdrawals are paused; balances stay, and cancelling or rejecting still releases a hold.
 1. **Payout address** (dashboard, owner + TOTP): EIP-55 checksum checked; live addresses become current 24 h after
    they are added (owners emailed; cancellable meanwhile); test addresses at once. Withdrawals always go to the
    current one; a newer address or a cancellation stops older requests (the signer re-checks).
@@ -96,6 +105,25 @@ Unmined transactions are rebroadcast with the same bytes; only a mined revert fa
    as wrong: `withdrawal_release` (back to available). Refused for the moment (paused, limits, hot wallet short):
    waits with backoff; admins see `last_error`.
 5. Webhook events `withdrawal.<status>`; owners are emailed on request and on the outcome.
+
+## Forwarder mode (M12, D-097)
+For merchants who have a wallet address but no xpub (MetaMask, Trust, exchange-style wallets).
+- **Setup.** Dashboard > Payout wallet: mode "Wallet address" (owner + 2FA), then a payout address (D-090 rules: test
+  at once, live after 24 h). The mode locks after the first live invoice.
+- **Address.** Each invoice gets `CREATE2(factory, salt, Forwarder(merchant, feeWallet, token, feeBps, feeCap))`, salt =
+  keccak of the deposit address row id. Nothing is deployed until the first flush. `forwarder_params` stores the
+  committed values (immutable; DB-tied to the current payout address, the active `fee` platform wallet, the factory of
+  the chain and the token).
+- **Fee.** `floor(amount * feeBps / 10000)` per flush, total capped at the fee on the invoice amount (an overpayment is
+  never charged; same base as `feeBase`). No fixed fee and no prepaid fee balance in this mode. Other tokens and the
+  native coin are forwarded 100% to the merchant.
+- **Flush.** Worker (`forwards` queue): once payments are confirmed it reads the on-chain balance and creates a forward;
+  the signer's gas wallet calls `ForwarderFactory.deployAndFlush` (the signer re-derives the address and checks the
+  factory code first); after confirmations the `Flushed` event gives what moved: `forward_fee` journal
+  (`merchant_received` -fee / `merchant_sales` +fee, `platform_fee_wallet` +fee / `platform_fee_revenue` -fee), and the
+  invoice settles once forwards cover what it received.
+- **Anyone can flush.** Factory and forwarders are permissionless: a merchant can always move late payments out
+  themselves (the planner then leaves that address alone; such flushes are not booked).
 
 ## Merchant responsibilities (non-custodial)
 

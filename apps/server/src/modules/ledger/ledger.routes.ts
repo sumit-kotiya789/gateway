@@ -36,15 +36,16 @@ export async function balancesView(tx: Tx, merchantId: string, livemode: boolean
   const ids = [...new Set([...b.keys(), ...(livemode ? await liveTokenIds(tx) : [])])].sort();
   const meta = await decimalsOf(tx, ids);
   const [m] = await tx.select({ grace: merchants.feeGrace, mode: merchants.custodyMode }).from(merchants).where(eq(merchants.id, merchantId));
-  // Custodial merchants pay fees out of each settlement, not from a prepaid balance (D-087).
-  const custodial = m?.mode === 'custodial';
+  // Only xpub merchants pay fees from a prepaid balance (D-076). Custodial merchants pay out of each settlement (D-087),
+  // forwarder merchants on-chain in each forward (D-097): neither is ever blocked for a top-up.
+  const prepaidModel = m?.mode === 'non_custodial_xpub';
   return {
     livemode,
     custody_mode: m?.mode ?? null,
     data: ids.map((token) => {
       const v = b.get(token) ?? { received: 0n, feesOwed: 0n, feesCharged: 0n, pending: 0n, available: 0n, withdrawing: 0n };
       const d = meta.get(token)?.decimals ?? 0;
-      const fb = feeBalanceOf(livemode && !custodial, v.feesOwed, m?.grace ?? '0', d);
+      const fb = feeBalanceOf(livemode && prepaidModel, v.feesOwed, m?.grace ?? '0', d);
       return {
         token,
         symbol: meta.get(token)?.symbol ?? null,

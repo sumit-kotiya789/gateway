@@ -319,7 +319,8 @@ export const auditLogs = pgTable(
 
 export const chainFamily = pgEnum('chain_family', ['evm', 'tron', 'solana']);
 export const chainFinality = pgEnum('chain_finality', ['tag', 'confirmations']);
-export const addressSource = pgEnum('address_source', ['platform', 'merchant_xpub']);
+// forwarder (D-097): a CREATE2 Forwarder address; no key exists for it anywhere.
+export const addressSource = pgEnum('address_source', ['platform', 'merchant_xpub', 'forwarder']);
 export const xpubStatus = pgEnum('xpub_status', ['active', 'retired']);
 
 export const chains = pgTable(
@@ -340,10 +341,13 @@ export const chains = pgTable(
     finality: chainFinality('finality').notNull(),
     testnet: boolean('testnet').notNull(),
     enabled: boolean('enabled').notNull().default(false),
+    // ForwarderFactory on this chain (D-097); null = forwarder mode unavailable here. chains:verify checks its code.
+    forwarderFactory: text('forwarder_factory'),
     createdAt: createdAt(),
   },
   (t) => [
     check('chains_id_format', sql`${t.id} ~ '^[a-z0-9-]{2,32}$'`),
+    check('chains_forwarder_factory', sql`${t.forwarderFactory} is null or ${t.forwarderFactory} ~ '^0x[0-9a-fA-F]{40}$'`),
     check('chains_evm_chain_id', sql`${t.family} <> 'evm' or ${t.evmChainId} > 0`),
     check(
       'chains_numbers',
@@ -492,7 +496,8 @@ export const depositAddresses = pgTable(
     check(
       'deposit_addresses_one_source',
       sql`(${t.source} = 'platform' and ${t.walletAccountId} is not null and ${t.merchantXpubId} is null)
-       or (${t.source} = 'merchant_xpub' and ${t.merchantXpubId} is not null and ${t.walletAccountId} is null)`,
+       or (${t.source} = 'merchant_xpub' and ${t.merchantXpubId} is not null and ${t.walletAccountId} is null)
+       or (${t.source} = 'forwarder' and ${t.walletAccountId} is null and ${t.merchantXpubId} is null)`,
     ),
     check('deposit_addresses_index', sql`${t.derivationIndex} between 0 and 2147483647`),
     // Composite FKs: an address can only come from THIS merchant's xpub, in the same mode and family.
@@ -879,8 +884,21 @@ export const ledgerAccountKind = pgEnum('ledger_account_kind', [
   'merchant_pending',
   'merchant_available',
   'merchant_withdrawing',
+  // Forwarder mode (D-097): fees the forwarder contracts paid into the platform fee wallet (platform asset).
+  'platform_fee_wallet',
 ]);
-export const ledgerJournalKind = pgEnum('ledger_journal_kind', ['payment', 'fee', 'fee_topup', 'settlement', 'sweep', 'withdrawal_hold', 'withdrawal', 'withdrawal_release', 'treasury']);
+export const ledgerJournalKind = pgEnum('ledger_journal_kind', [
+  'payment',
+  'fee',
+  'fee_topup',
+  'settlement',
+  'sweep',
+  'withdrawal_hold',
+  'withdrawal',
+  'withdrawal_release',
+  'treasury',
+  'forward_fee',
+]);
 
 /** One account per (kind, merchant, mode, token). Platform accounts have merchant_id null. */
 export const ledgerAccounts = pgTable(
@@ -899,7 +917,7 @@ export const ledgerAccounts = pgTable(
     unique('ledger_accounts_uq').on(t.kind, t.merchantId, t.livemode, t.tokenId).nullsNotDistinct(),
     check(
       'ledger_accounts_owner',
-      sql`(${t.kind} in ('platform_fee_revenue', 'platform_topups', 'custody_deposits', 'custody_hot', 'custody_cold')) = (${t.merchantId} is null)`,
+      sql`(${t.kind} in ('platform_fee_revenue', 'platform_topups', 'custody_deposits', 'custody_hot', 'custody_cold', 'platform_fee_wallet')) = (${t.merchantId} is null)`,
     ),
   ],
 );
@@ -925,9 +943,12 @@ export const ledgerJournals = pgTable(
     sweepId: uuid('sweep_id').references((): AnyPgColumn => sweeps.id),
     withdrawalId: uuid('withdrawal_id').references((): AnyPgColumn => withdrawals.id),
     treasuryId: uuid('treasury_id').references((): AnyPgColumn => treasuryTransfers.id),
+    forwardId: uuid('forward_id').references((): AnyPgColumn => forwards.id),
     createdAt: createdAt(),
   },
   (t) => [
+    uniqueIndex('ledger_journals_forward_uq').on(t.forwardId).where(sql`${t.kind} = 'forward_fee'`),
+    check('ledger_journals_forward_ref', sql`(${t.kind} = 'forward_fee') = (${t.forwardId} is not null)`),
     uniqueIndex('ledger_journals_payment_uq').on(t.paymentId).where(sql`${t.kind} = 'payment'`),
     uniqueIndex('ledger_journals_fee_uq').on(t.invoiceId).where(sql`${t.kind} = 'fee'`),
     uniqueIndex('ledger_journals_topup_uq').on(t.topupId).where(sql`${t.kind} = 'fee_topup'`),
@@ -1032,7 +1053,8 @@ export const webhookDeliveries = pgTable(
 
 // ---------------------------------------------------------------- M7: custodial operations (signer, sweeps)
 
-export const platformWalletKind = pgEnum('platform_wallet_kind', ['hot', 'gas', 'cold']);
+// fee (D-097): where forwarders send the platform fee; address only, like cold (no key on any server).
+export const platformWalletKind = pgEnum('platform_wallet_kind', ['hot', 'gas', 'cold', 'fee']);
 
 /**
  * Platform-controlled wallets per family and mode (M7b, D-088). Hot (receives sweeps, pays withdrawals) and gas (pays
@@ -1054,7 +1076,7 @@ export const platformWallets = pgTable(
   },
   (t) => [
     uniqueIndex('platform_wallets_active_uq').on(t.family, t.livemode, t.kind).where(sql`${t.retiredAt} is null`),
-    check('platform_wallets_path', sql`(${t.kind} = 'cold') = (${t.derivationPath} is null)`),
+    check('platform_wallets_path', sql`(${t.kind} in ('cold', 'fee')) = (${t.derivationPath} is null)`),
     check('platform_wallets_address', sql`${t.address} ~ '^0x[0-9a-fA-F]{40}$'`),
   ],
 );
@@ -1117,7 +1139,7 @@ export const sweeps = pgTable(
   ],
 );
 
-export const signerIntentKind = pgEnum('signer_intent_kind', ['gas_topup', 'sweep', 'withdrawal', 'treasury']);
+export const signerIntentKind = pgEnum('signer_intent_kind', ['gas_topup', 'sweep', 'withdrawal', 'treasury', 'forward']);
 
 /**
  * Every transaction the signer signed (M7b). Written only by the signer's own DB role; the app can read it (to
@@ -1275,5 +1297,104 @@ export const treasuryTransfers = pgTable(
     check('treasury_transfers_amount', sql`${t.amount} > 0`),
     check('treasury_transfers_two_people', sql`${t.approvedBy} is null or ${t.approvedBy} <> ${t.requestedBy}`),
     check('treasury_transfers_to_hot_tx', sql`${t.direction} <> 'to_hot' or ${t.txHash} is not null`),
+  ],
+);
+
+/**
+ * Forwarder mode (D-097): the constructor arguments a forwarder deposit address commits to, snapshotted when the
+ * invoice is created. Immutable (trigger). The signer re-derives the CREATE2 address from exactly these values (and
+ * checks they still match the payout address, fee wallet and token they were taken from) before it signs a flush.
+ */
+export const forwarderParams = pgTable(
+  'forwarder_params',
+  {
+    depositAddressId: uuid('deposit_address_id')
+      .primaryKey()
+      .references(() => depositAddresses.id),
+    merchantId: uuid('merchant_id')
+      .notNull()
+      .references(() => merchants.id),
+    livemode: boolean('livemode').notNull(),
+    chainId: text('chain_id')
+      .notNull()
+      .references(() => chains.id),
+    tokenId: text('token_id')
+      .notNull()
+      .references(() => tokens.id),
+    factory: text('factory').notNull(),
+    salt: text('salt').notNull(),
+    payoutAddressId: uuid('payout_address_id')
+      .notNull()
+      .references((): AnyPgColumn => payoutAddresses.id),
+    merchantAddress: text('merchant_address').notNull(),
+    feeWalletId: uuid('fee_wallet_id')
+      .notNull()
+      .references((): AnyPgColumn => platformWallets.id),
+    feeRecipient: text('fee_recipient').notNull(),
+    tokenContract: text('token_contract').notNull(),
+    feeBps: integer('fee_bps').notNull(),
+    feeCap: money('fee_cap').notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index('forwarder_params_merchant_idx').on(t.merchantId, t.livemode),
+    check(
+      'forwarder_params_addresses',
+      sql`${t.factory} ~ '^0x[0-9a-fA-F]{40}$' and ${t.merchantAddress} ~ '^0x[0-9a-fA-F]{40}$'
+       and ${t.feeRecipient} ~ '^0x[0-9a-fA-F]{40}$' and ${t.tokenContract} ~ '^0x[0-9a-fA-F]{40}$'`,
+    ),
+    check('forwarder_params_salt', sql`${t.salt} ~ '^0x[0-9a-f]{64}$'`),
+    check('forwarder_params_fee', sql`${t.feeBps} between 0 and 10000 and ${t.feeCap} >= 0`),
+  ],
+);
+
+export const forwardStatus = pgEnum('forward_status', ['pending', 'sent', 'confirmed', 'failed']);
+
+/**
+ * One flush of a forwarder deposit address (D-097): the signer's gas wallet calls ForwarderFactory.deployAndFlush,
+ * which deploys the forwarder if needed and sends the invoice token on. `amount` is the on-chain balance the worker saw
+ * when planning; what actually moved (to the merchant, fee) is read from the receipt's Flushed event. One open
+ * forward per address; a failed one is followed by a new one.
+ */
+export const forwards = pgTable(
+  'forwards',
+  {
+    id: id(),
+    merchantId: uuid('merchant_id')
+      .notNull()
+      .references(() => merchants.id),
+    livemode: boolean('livemode').notNull(),
+    chainId: text('chain_id')
+      .notNull()
+      .references(() => chains.id),
+    tokenId: text('token_id')
+      .notNull()
+      .references(() => tokens.id),
+    depositAddressId: uuid('deposit_address_id')
+      .notNull()
+      .references(() => forwarderParams.depositAddressId),
+    invoiceId: uuid('invoice_id')
+      .notNull()
+      .references(() => invoices.id),
+    forwarderAddress: text('forwarder_address').notNull(),
+    amount: money('amount').notNull(),
+    toMerchant: money('to_merchant'),
+    fee: money('fee'),
+    status: forwardStatus('status').notNull().default('pending'),
+    txHash: text('tx_hash'),
+    blockNumber: bigint('block_number', { mode: 'bigint' }),
+    attempts: integer('attempts').notNull().default(0),
+    nextAttemptAt: tstz('next_attempt_at').notNull().defaultNow(),
+    lastError: text('last_error'),
+    confirmedAt: tstz('confirmed_at'),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('forwards_open_uq').on(t.depositAddressId).where(sql`${t.status} in ('pending', 'sent')`),
+    index('forwards_due_idx').on(t.nextAttemptAt).where(sql`${t.status} in ('pending', 'sent')`),
+    index('forwards_invoice_idx').on(t.invoiceId),
+    uniqueIndex('forwards_tx_uq').on(t.chainId, sql`lower(${t.txHash})`).where(sql`${t.txHash} is not null`),
+    check('forwards_amount', sql`${t.amount} > 0`),
+    check('forwards_result', sql`(${t.status} = 'confirmed') = (${t.toMerchant} is not null and ${t.fee} is not null)`),
   ],
 );

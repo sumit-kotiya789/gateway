@@ -183,6 +183,28 @@ Local stack (`docker compose`, profile `custodial`; the signer has no host port 
    `signerdata` volume), then register it as in step 2 (`pnpm platform:register` with `DATABASE_URL` pointing at
    `localhost:${PG_HOST_PORT:-5432}`).
 3. `docker compose --profile custodial up --build`.
+4. Test on BSC testnet: `SIGNER_LIMITS={"bsc-testnet:usdt":{"per_tx":"1000","per_day":"5000"}}` (tokens without limits
+   are never paid out); fund the test gas wallet (sweeps) and the test hot wallet (withdrawal gas) with a little tBNB
+   (`pnpm testnet:token send-bnb <address> 0.01`). Merchant dashboard > Payout wallet > "Custody on" (owner + 2FA,
+   D-098). Then Withdrawals > payout address (test: active at once), create and pay an invoice
+   (`pnpm testnet:token pay`), wait for the sweep (Not swept yet -> Available), request a withdrawal (test mode needs
+   no approval).
+
+## Forwarder mode (M12, D-097)
+Setup (testnet first; mainnet only after the contract audit):
+1. `pnpm forwarder:deploy` (BSC testnet, deployer key from `.env`) -> `BSC_TESTNET_FORWARDER_FACTORY` in `.env`,
+   `pnpm db:seed`, `pnpm chains:verify` (checks the factory code hash). The factory of a chain is set once.
+2. Signer running (`docker compose --profile forwarder up`; same seed setup as custody: `init-seed`, register) and a fee
+   wallet: add `"fee_wallets": [{"livemode": false, "address": "0x..."}]` to the register file, `pnpm platform:register`.
+3. Fund the signer's gas wallet with native coin (one flush is about 0.5M gas), `FEATURE_FORWARDER=true`, restart api
+   and worker.
+Operations:
+- Admin console > Custody: forwards in flight / failed (24 h) and the recent forwards. Reconciliation flags
+  `unforwarded` (paid more than 1 h ago, not forwarded) and `forward_fee_journal`.
+- `needs_gas` refusals: top up the gas wallet. `gas_price_too_high`: wait or raise `SIGNER_MAX_GAS_PRICE_GWEI`.
+- A failed forward is followed by a new one at the next planning round; a sent one is rebroadcast with the same bytes.
+- `factory_mismatch`, `not_our_address`, `params_mismatch`: data or factory tampering suspected. Pause the signer and
+  investigate before anything else.
 
 ## Stuck transaction (M7)
 - Sweeps: `select id, status, attempts, last_error, gas_tx_hash, tx_hash, next_attempt_at from sweeps where status in ('pending','gas_sent','sweep_sent') order by created_at;`

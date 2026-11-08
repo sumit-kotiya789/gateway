@@ -1,4 +1,5 @@
-// Admin auth domain: separate table, JWT secret, audience, cookies and origin. Password AND TOTP always required.
+// Admin auth domain: separate table, JWT secret, audience, cookies and origin. Password AND TOTP required; only a
+// development config (ADMIN_LOGIN_TOTP_DISABLED, refused in production) lets login skip the TOTP code.
 import { AppError } from '@gw/core';
 import { eq, sql } from 'drizzle-orm';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
@@ -18,8 +19,14 @@ import { cookieBase, signToken } from './session.js';
 const ADMIN_TTL_S = 900;
 const COOKIE_PATH = '/admin';
 
+const TotpCode = z.string().regex(/^\d{6}$/);
+
 export function adminAuthRoutes(deps: Deps): FastifyPluginAsyncZod {
+  const totpRequired = !deps.config.ADMIN_LOGIN_TOTP_DISABLED;
   return async (app) => {
+    // Public: tells the console whether to ask for a TOTP code at login.
+    app.get('/options', () => ({ totp_required: totpRequired }));
+
     app.post(
       '/login',
       {
@@ -28,7 +35,7 @@ export function adminAuthRoutes(deps: Deps): FastifyPluginAsyncZod {
           body: z.strictObject({
             email: z.email().max(254).transform((s) => s.toLowerCase()),
             password: z.string().max(PASSWORD_MAX),
-            code: z.string().regex(/^\d{6}$/),
+            code: totpRequired ? TotpCode : TotpCode.optional(),
           }),
         },
       },
@@ -39,16 +46,19 @@ export function adminAuthRoutes(deps: Deps): FastifyPluginAsyncZod {
           const [a] = await tx.select().from(adminUsers).where(sql`lower(${adminUsers.email}) = ${req.body.email}`).for('update');
           if (!a || a.disabledAt || isLocked(a.lockedUntil, now)) return burnPasswordCheck(req.body.password);
           const pwOk = await verifyPassword(a.passwordHash, req.body.password);
-          const secret = await deps.envelope.open(a.totpSecretEnc, adminTotpAad(a.id));
-          const step = verifyTotp(secret, req.body.code, now, a.totpLastStep);
-          if (!pwOk || step === null) {
+          let step = a.totpLastStep;
+          if (totpRequired) {
+            const secret = await deps.envelope.open(a.totpSecretEnc, adminTotpAad(a.id));
+            step = verifyTotp(secret, req.body.code ?? '', now, a.totpLastStep);
+          }
+          if (!pwOk || (totpRequired && step === null)) {
             const failed = a.failedLogins + 1;
             await tx.update(adminUsers).set({ failedLogins: failed, lockedUntil: lockoutUntil(failed, now) }).where(eq(adminUsers.id, a.id));
             await audit(tx, { actorType: 'anonymous', action: 'admin.login_failed', targetType: 'admin_user', targetId: a.id, after: { failed } }, req);
             return false;
           }
           await tx.update(adminUsers).set({ failedLogins: 0, lockedUntil: null, totpLastStep: step }).where(eq(adminUsers.id, a.id));
-          await audit(tx, { actorType: 'admin', actorId: a.id, action: 'admin.login' }, req);
+          await audit(tx, { actorType: 'admin', actorId: a.id, action: 'admin.login', ...(totpRequired ? {} : { after: { mfa: 'skipped' } }) }, req);
           return a;
         });
         if (!admin) throw new AppError('unauthorized', 'invalid credentials');

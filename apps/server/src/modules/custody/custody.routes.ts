@@ -2,12 +2,12 @@
 // (`kill_switch:manage`); resuming lowers a control, so it needs a superadmin and step-up, like re-enabling a chain.
 import { AppError, fromMinorUnits, fromSignedMinorUnits } from '@gw/core';
 import type { FastifyRequest } from 'fastify';
-import { asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, inArray, isNull, sql } from 'drizzle-orm';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { audit } from '../../common/audit.js';
 import { withSystem } from '../../common/db.js';
-import { ledgerAccounts, ledgerEntries, platformWallets, signerControls, sweeps, tokens, treasuryTransfers, withdrawals } from '../../db/schema.js';
+import { forwards, ledgerAccounts, ledgerEntries, platformWallets, signerControls, sweeps, tokens, treasuryTransfers, withdrawals } from '../../db/schema.js';
 import { approveTreasuryTransfer, createTreasuryTransfer, rejectTreasuryTransfer, treasuryView } from './treasury.js';
 import type { Deps } from '../../deps.js';
 import { requireAdmin, requireAdminTotp } from '../auth/guards.js';
@@ -46,6 +46,11 @@ export function custodyAdminRoutes(deps: Deps): FastifyPluginAsyncZod {
           rows.set(key, row);
         }
         const [openSweeps] = await tx.select({ n: sql<number>`count(*)::int` }).from(sweeps).where(inArray(sweeps.status, ['pending', 'gas_sent', 'sweep_sent']));
+        const [openForwards] = await tx.select({ n: sql<number>`count(*)::int` }).from(forwards).where(inArray(forwards.status, ['pending', 'sent']));
+        const [failedForwards] = await tx
+          .select({ n: sql<number>`count(*)::int` })
+          .from(forwards)
+          .where(and(eq(forwards.status, 'failed'), gt(forwards.createdAt, sql`now() - interval '24 hours'`)));
         const queue = await tx
           .select({ status: withdrawals.status, n: sql<number>`count(*)::int` })
           .from(withdrawals)
@@ -53,13 +58,54 @@ export function custodyAdminRoutes(deps: Deps): FastifyPluginAsyncZod {
           .groupBy(withdrawals.status);
         return {
           custodial_enabled: deps.config.FEATURE_CUSTODIAL,
+          forwarder_enabled: deps.config.FEATURE_FORWARDER,
           signer: { paused: ctl?.paused ?? true, reason: ctl?.reason ?? null, updated_at: ctl?.updatedAt.toISOString() ?? null },
           wallets: wallets.map((w) => ({ livemode: w.livemode, family: w.family, kind: w.kind, address: w.address, derivation_path: w.derivationPath })),
           balances: [...rows.values()],
           open_sweeps: openSweeps?.n ?? 0,
+          forwards: { open: openForwards?.n ?? 0, failed_24h: failedForwards?.n ?? 0 },
           withdrawals: Object.fromEntries(queue.map((q) => [q.status, q.n])),
         };
       }),
+    );
+
+    // ---------------------------------------------------------------- forwards (forwarder mode, D-097)
+
+    // Read-only: a failed forward is followed by a new one at the next planning round; a sent one is rebroadcast.
+    app.get(
+      '/forwards',
+      { preHandler: requireAdmin(deps, 'admin:read'), schema: { querystring: z.strictObject({ status: z.enum(['pending', 'sent', 'confirmed', 'failed']).optional() }) } },
+      async (req) =>
+        withSystem(deps.db, async (tx) => {
+          const rows = await tx
+            .select({ f: forwards, decimals: tokens.decimals, symbol: tokens.symbol })
+            .from(forwards)
+            .innerJoin(tokens, eq(tokens.id, forwards.tokenId))
+            .where(req.query.status ? eq(forwards.status, req.query.status) : undefined)
+            .orderBy(desc(forwards.createdAt))
+            .limit(100);
+          return {
+            data: rows.map(({ f, decimals, symbol }) => ({
+              id: f.id,
+              merchant_id: f.merchantId,
+              invoice_id: f.invoiceId,
+              livemode: f.livemode,
+              chain: f.chainId,
+              token: f.tokenId,
+              symbol,
+              forwarder_address: f.forwarderAddress,
+              amount: fromMinorUnits(f.amount, decimals),
+              to_merchant: f.toMerchant === null ? null : fromMinorUnits(f.toMerchant, decimals),
+              fee: f.fee === null ? null : fromMinorUnits(f.fee, decimals),
+              status: f.status,
+              tx_hash: f.txHash,
+              attempts: f.attempts,
+              last_error: f.lastError,
+              created_at: f.createdAt.toISOString(),
+              confirmed_at: f.confirmedAt?.toISOString() ?? null,
+            })),
+          };
+        }),
     );
 
     // ---------------------------------------------------------------- treasury (hot <-> cold)

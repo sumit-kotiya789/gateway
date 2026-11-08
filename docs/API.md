@@ -62,7 +62,7 @@ verified email (`403`, `details.reason = "email_unverified"`). `GET /auth/me` re
 | GET | `/v1/tokens` | API key | `read` (same filter; `min_amount` is a decimal string) | M2 |
 | POST | `/v1/invoices` | API key | `invoices:write` | M3 |
 | GET | `/v1/invoices` | API key | `read` (`limit`, `starting_after`, `status`, `external_order_id`) | M3 |
-| GET | `/v1/invoices/:id` | API key | `read` (includes on-chain `payments`, M4) | M3 |
+| GET | `/v1/invoices/:id` | API key | `read` (includes on-chain `payments`, M4; forwarder invoices also `forwards`: status, tx, `to_merchant`, `fee`, D-097) | M3 |
 | POST | `/v1/invoices/:id/cancel` | API key | `invoices:write` (pending only) | M3 |
 | POST | `/v1/payment-links` | API key | `invoices:write` | M3 |
 | GET | `/v1/payment-links`, `/v1/payment-links/:id` | API key | `read` | M3 |
@@ -73,7 +73,7 @@ verified email (`403`, `details.reason = "email_unverified"`). `GET /auth/me` re
 | PATCH | `/v1/sub-merchants/:id` | API key | `invoices:write` (`name`, `active`, `metadata`) | M9 |
 | GET | `/v1/balances` | API key | `read` (per token: `received`, `fees_charged`, `fees_owed` (charged, not covered by top-ups), `prepaid_fees` (signed), `fee_status` ok / low / blocked / not_enforced; custodial: `pending` (not swept yet), `available` (withdrawable), `withdrawing`; top-level `custody_mode`; live keys also list every usable live token) | M5/M8/M7 |
 | GET | `/v1/events`, `/v1/events/:id` | API key | `read` (`limit`, `starting_after`, `type`; newest first) | M5 |
-| POST | `/v1/withdrawals` | API key | `withdrawals:write` (`token`, `amount`; custodial; to the current payout address; Idempotency-Key; held at once) | M7 |
+| POST | `/v1/withdrawals` | API key | `withdrawals:write` (`token`, `amount`; custodial, and only while custody is on: else 403 `custody_off`; to the current payout address; Idempotency-Key; held at once) | M7 |
 | GET | `/v1/withdrawals`, `/v1/withdrawals/:id` | API key | `read` | M7 |
 | GET | `/v1/exports/invoices.csv`, `/v1/exports/payments.csv` | API key | `read` (the key's mode; `from`, `to` as UTC dates, default last 31 days, ≤ 366 days, ≤ 50,000 rows; 10/min per key; audited as the key) | M10 |
 | GET | `/checkout/:id`, `/checkout/:id/status` | public (invoice id) | – | M3 |
@@ -89,7 +89,7 @@ Authorization: Bearer sk_test_…
 Idempotency-Key: order-1001
 Content-Type: application/json
 
-{ "amount": "25.00", "token": "nexis:usdt", "external_order_id": "1001",
+{ "amount": "25.00", "token": "bsc-testnet:usdt", "external_order_id": "1001",
   "expires_in": 1800, "success_url": "https://shop.example/thanks", "metadata": { "cart": "42" } }
 ```
 
@@ -97,7 +97,7 @@ Response `201` (abridged):
 
 ```json
 { "id": "01a1…", "object": "invoice", "status": "pending", "livemode": false, "custody_mode": "non_custodial_xpub",
-  "amount": "25", "amount_received": "0", "token": "nexis:usdt", "symbol": "USDT", "chain": "nexis",
+  "amount": "25", "amount_received": "0", "token": "bsc-testnet:usdt", "symbol": "sastaUSDT", "chain": "bsc-testnet",
   "deposit_address": "0x…", "payment_uri": "ethereum:0xToken@97/transfer?address=0x…&uint256=25000000000000000000",
   "checkout_url": "https://pay.example/checkout/01a1…", "expires_at": "…" }
 ```
@@ -113,7 +113,7 @@ confirmed but held for the platform's risk review; it later becomes `paid` (or o
 | POST | `/v1/dashboard/auth/login/2fa` | `mfa_token` | `code` or `recovery_code` | M1 |
 | POST | `/v1/dashboard/auth/refresh` | refresh cookie | – | M1 |
 | POST | `/v1/dashboard/auth/logout` | refresh cookie | – | M1 |
-| GET | `/v1/dashboard/auth/me` | session | – | M1 |
+| GET | `/v1/dashboard/auth/me` | session | – (`user`, `merchant` incl. `custody_mode` and `withdrawals_enabled` (custody on, D-098)) | M1 |
 | POST | `/v1/dashboard/auth/2fa/setup` | session | – | M1 |
 | POST | `/v1/dashboard/auth/2fa/enable` | session | – (returns 10 recovery codes once) | M1 |
 | POST | `/v1/dashboard/auth/verify-email` | none | – (`token` from the emailed link; single use, 48 h) | M10 |
@@ -157,8 +157,9 @@ confirmed but held for the platform's risk review; it later becomes `paid` (or o
 | GET | `/v1/dashboard/withdrawals/payout-addresses` | session | `account:read` (`livemode`; status current / pending / superseded / cancelled) | M7 |
 | POST | `/v1/dashboard/withdrawals/payout-addresses` | session + **2FA** | `payouts:manage` (`livemode`, `address` (EIP-55 checked), `label`; live: active after 24 h, owners emailed) | M7 |
 | POST | `/v1/dashboard/withdrawals/payout-addresses/:id/cancel` | session | `payouts:manage` (only before it is active) | M7 |
-| GET | `/v1/dashboard/settings/` | session | `account:read` (`widget_origins`) | M10 |
+| GET | `/v1/dashboard/settings/` | session | `account:read` (`widget_origins`, `receiving_mode`, `forwarder_available`) | M10 |
 | PUT | `/v1/dashboard/settings/widget-origins` | session | `settings:manage` (`widget_origins`: ≤ 10 exact origins, https in production; audited) | M10 |
+| PUT | `/v1/dashboard/settings/receiving-mode` | session + **2FA** | `custody:manage` (`mode`: `non_custodial_xpub`, `non_custodial_forwarder` (needs `FEATURE_FORWARDER`) or `custodial` = custody on (needs `FEATURE_CUSTODIAL`, else 403 `custody_off`); turning custody off refused while funds are held (`funds_in_custody`) or custody invoices are open (`open_custodial_invoices`); new invoices only; locked after the first live invoice (`mode_locked`); audited) | M12/D-098 |
 | POST | `/admin/v1/auth/login` | none | password + TOTP | M1 |
 | POST | `/admin/v1/auth/logout` | admin session | `admin:read` | M1 |
 | GET | `/admin/v1/auth/me` | admin session | `admin:read` | M1 |
@@ -188,9 +189,10 @@ confirmed but held for the platform's risk review; it later becomes `paid` (or o
 | POST | `/admin/v1/admins/:id/enable` | admin session + **2FA** | `admins:manage` (`reason`; clears lockout) | M9 |
 | POST | `/admin/v1/admins/:id/reset-credentials` | admin session + **2FA** | `admins:manage` (`reason`; new password + TOTP shown once; signs the admin out everywhere) | M9 |
 | GET | `/admin/v1/withdrawals/` | admin session | `admin:read` (`status`, default `pending_approval`; `merchant_id`) | M7 |
-| POST | `/admin/v1/withdrawals/:id/approve` | admin session + **2FA** | `withdrawals:approve` (`reason`; two different admins at or above `WITHDRAWAL_TWO_PERSON_MIN`) | M7 |
+| POST | `/admin/v1/withdrawals/:id/approve` | admin session + **2FA** | `withdrawals:approve` (`reason`; two different admins at or above `WITHDRAWAL_TWO_PERSON_MIN`; 403 `custody_off` while custody is off) | M7 |
 | POST | `/admin/v1/withdrawals/:id/reject` | admin session | `withdrawals:approve` (`reason`; releases the hold) | M7 |
-| GET | `/admin/v1/custody/` | admin session | `admin:read` (signer state, platform wallets, custody totals, open sweeps, withdrawal queue) | M7 |
+| GET | `/admin/v1/custody/` | admin session | `admin:read` (signer state, platform wallets, custody totals, open sweeps, withdrawal queue, forwards open / failed 24 h) | M7 |
+| GET | `/admin/v1/custody/forwards` | admin session | `admin:read` (`status` filter; last 100 forwarder flushes, D-097) | M12 |
 | POST | `/admin/v1/custody/signer/pause` | admin session | `kill_switch:manage` (`reason`; the signer refuses everything) | M7 |
 | POST | `/admin/v1/custody/signer/resume` | admin session + **2FA** | `registry:enable` (`reason`) | M7 |
 | GET | `/admin/v1/custody/treasury` | admin session | `admin:read` | M7 |

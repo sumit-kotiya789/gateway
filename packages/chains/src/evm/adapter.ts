@@ -6,6 +6,7 @@ import {
   getAddress,
   http,
   isAddress,
+  keccak256,
   numberToHex,
   type Hex,
   type PublicClient,
@@ -96,6 +97,10 @@ export function createEvmAdapter(chain: ChainConfig, rpcUrls: readonly string[],
       };
     },
 
+    getCodeHash: async (address) => {
+      const code = await client.getCode({ address: getAddress(address) });
+      return code && code !== '0x' ? keccak256(code) : null;
+    },
     readTokenDecimals: (token) =>
       client.readContract({ address: getAddress(token.contractAddress), abi: erc20Abi, functionName: 'decimals' }),
 

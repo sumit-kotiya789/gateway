@@ -73,6 +73,8 @@ describe('loadConfig', () => {
     expect(loadConfig(ok).PUBLIC_BASE_URL).toBe('https://pay.a.test'); // trailing slash trimmed
     expect(issues({ ...ok, PUBLIC_BASE_URL: 'http://pay.a.test' })).toContain('PUBLIC_BASE_URL');
     expect(issues({ ...ok, WEBHOOK_ALLOW_PRIVATE_NETWORKS: 'true' })).toContain('WEBHOOK_ALLOW_PRIVATE_NETWORKS');
+    expect(issues({ ...ok, ADMIN_LOGIN_TOTP_DISABLED: 'true' })).toContain('ADMIN_LOGIN_TOTP_DISABLED');
+    expect(loadConfig(base).ADMIN_LOGIN_TOTP_DISABLED).toBe(false);
     expect(issues({ ...ok, SMTP_URL: '' })).toContain('SMTP_URL');
     expect(issues({ ...ok, DASHBOARD_URL: 'https://other.test' })).toContain('DASHBOARD_URL'); // not a dashboard origin
     expect(loadConfig(ok).DASHBOARD_URL).toBe('https://a.test');

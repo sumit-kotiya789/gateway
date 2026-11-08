@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Alert, CopyField, EmptyState, ErrorBox, Field, Icon, Modal, Skeleton, Stat, StatusBadge, Submit, TotpInput, fmtDate, short, toast, useAction, useLoad, type IconName } from '../../dashboard/src/ui';
-import { RISK_FLAGS, api, totpHeader, type AdminAccount, type AdminCredentials, type AdminRole, type AdminWithdrawal, type AuditRow, type CustodyOverview, type TreasuryTransfer, type FeeTopup, type Invoice, type Merchant, type MerchantDetail as MerchantData, type Page, type Registry as RegistryData } from './api';
+import { RISK_FLAGS, api, totpHeader, type AdminAccount, type AdminCredentials, type AdminRole, type AdminWithdrawal, type AuditRow, type CustodyOverview, type Forward, type TreasuryTransfer, type FeeTopup, type Invoice, type Merchant, type MerchantDetail as MerchantData, type Page, type Registry as RegistryData } from './api';
 
 /** First page of a list, plus "load more" via the server cursor. Refetches when `path` changes. */
 interface Paged<T> {
@@ -773,6 +773,7 @@ function NewTreasury(props: { onDone: () => void }) {
 export function Custody(props: { selfId: string; manage: boolean; superadmin: boolean }) {
   const r = useLoad(() => api<CustodyOverview>('GET', '/custody/'), []);
   const t = useLoad(() => api<{ data: TreasuryTransfer[] }>('GET', '/custody/treasury'), []);
+  const fw = useLoad(() => api<{ data: Forward[] }>('GET', '/custody/forwards'), []);
   if (r.error) return <ErrorBox error={r.error} />;
   if (!r.data) return <Skeleton />;
   const d = r.data;
@@ -804,6 +805,8 @@ export function Custody(props: { selfId: string; manage: boolean; superadmin: bo
         <Stat label="Open sweeps" value={String(d.open_sweeps)} icon="refresh" />
         <Stat label="Withdrawals to approve" value={String(d.withdrawals.pending_approval ?? 0)} icon="wallet" {...((d.withdrawals.pending_approval ?? 0) > 0 ? { tone: 'warn' as const } : {})} />
         <Stat label="Withdrawals in flight" value={String((d.withdrawals.approved ?? 0) + (d.withdrawals.sent ?? 0))} icon="activity" />
+        {d.forwarder_enabled && <Stat label="Forwards in flight" value={String(d.forwards.open)} icon="refresh" />}
+        {d.forwarder_enabled && <Stat label="Forwards failed (24 h)" value={String(d.forwards.failed_24h)} icon="activity" {...(d.forwards.failed_24h > 0 ? { tone: 'warn' as const } : {})} />}
       </div>
 
       <h3 className="section-title">Balances (ledger)</h3>
@@ -826,6 +829,36 @@ export function Custody(props: { selfId: string; manage: boolean; superadmin: bo
           </tbody>
         </table>
       </div>
+
+      {d.forwarder_enabled && (
+        <>
+          <h3 className="section-title">Forwards (wallet-address merchants)</h3>
+          <p className="muted">Each confirmed payment to a forwarder address is flushed to the merchant wallet; the fee goes to the fee wallet. A failed forward is retried by the next planning round; a sent one is rebroadcast until mined.</p>
+          {fw.data && fw.data.data.length === 0 && <p className="muted">No forwards yet.</p>}
+          {fw.data && fw.data.data.length > 0 && (
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr><th>Created</th><th>Invoice</th><th className="num">Amount</th><th className="num">To merchant</th><th className="num">Fee</th><th>Status</th><th>Transaction</th></tr>
+                </thead>
+                <tbody>
+                  {fw.data.data.map((x) => (
+                    <tr key={x.id}>
+                      <td>{fmtDate(x.created_at)}</td>
+                      <td><a href={`#/invoices/${x.invoice_id}`}><code>{short(x.invoice_id)}</code></a> {x.livemode ? <span className="badge s-active">live</span> : <span className="badge">test</span>}</td>
+                      <td className="num">{x.amount} {x.symbol}</td>
+                      <td className="num">{x.to_merchant ?? '—'}</td>
+                      <td className="num">{x.fee ?? '—'}</td>
+                      <td><StatusBadge status={x.status} />{x.last_error && <small className="muted"> {x.last_error}</small>}</td>
+                      <td>{x.tx_hash ? <code>{short(x.tx_hash)}</code> : <span className="muted">—</span>}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
+      )}
 
       <h3 className="section-title">Platform wallets</h3>
       <div className="table-wrap">

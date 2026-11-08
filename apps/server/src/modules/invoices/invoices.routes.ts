@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { audit } from '../../common/audit.js';
 import { withTenant, type Tx } from '../../common/db.js';
 import { requestHash, withIdempotency, type StoredResponse } from '../../common/idempotency.js';
-import { chains, invoiceStatusHistory, invoices, payments, tokens } from '../../db/schema.js';
+import { chains, forwards, invoiceStatusHistory, invoices, payments, tokens } from '../../db/schema.js';
 import type { Deps } from '../../deps.js';
 import { requireApiKey, type AuthedApiKey } from '../api-keys/api-keys.js';
 import { requirePermission, requireUser, requireVerifiedEmailForLive } from '../auth/guards.js';
@@ -62,6 +62,24 @@ async function paymentsView(tx: Tx, invoiceId: string, decimals: number) {
     confirmations_required: p.requiredConfirmations,
     confirmed_at: p.confirmedAt?.toISOString() ?? null,
   }));
+}
+
+/** Forwarder mode (D-097): the flushes that moved this invoice's funds to the merchant wallet (fee split on-chain). */
+async function forwardsView(tx: Tx, invoiceId: string, decimals: number, explorerUrl: string | null) {
+  const rows = await tx.select().from(forwards).where(eq(forwards.invoiceId, invoiceId)).orderBy(asc(forwards.createdAt));
+  return rows.map((f) => ({
+    status: f.status,
+    tx_hash: f.txHash,
+    explorer_url: f.txHash && explorerUrl ? `${explorerUrl.replace(/\/$/, '')}/tx/${f.txHash}` : null,
+    to_merchant: f.toMerchant === null ? null : fromMinorUnits(f.toMerchant, decimals),
+    fee: f.fee === null ? null : fromMinorUnits(f.fee, decimals),
+    confirmed_at: f.confirmedAt?.toISOString() ?? null,
+  }));
+}
+
+/** Only forwarder invoices carry `forwards` (other invoices keep their shape). */
+async function forwardsOf(tx: Tx, inv: { id: string; custodyMode: string }, decimals: number, explorerUrl: string | null) {
+  return inv.custodyMode === 'non_custodial_forwarder' ? { forwards: await forwardsView(tx, inv.id, decimals, explorerUrl) } : {};
 }
 
 const ListQuery = z.strictObject({
@@ -147,7 +165,11 @@ export function invoiceRoutes(deps: Deps): FastifyPluginAsyncZod {
         return withTenant(deps.db, k.merchantId, async (tx) => {
           const r = await loadInvoiceWithToken(tx, and(eq(invoices.id, req.params.id), eq(invoices.merchantId, k.merchantId), eq(invoices.livemode, k.livemode)) as SQL);
           if (!r) throw new AppError('not_found', 'invoice not found');
-          return { ...invoiceView(r.inv, r.token, r.chain, base), payments: await paymentsView(tx, r.inv.id, r.token.decimals) };
+          return {
+            ...invoiceView(r.inv, r.token, r.chain, base),
+            payments: await paymentsView(tx, r.inv.id, r.token.decimals),
+            ...(await forwardsOf(tx, r.inv, r.token.decimals, r.chain.explorerUrl)),
+          };
         });
       },
     );
@@ -199,6 +221,7 @@ export async function invoiceDetail(tx: Tx, where: SQL, base: string) {
     fee_amount: r.inv.feeAmount === null ? null : fromMinorUnits(r.inv.feeAmount, r.token.decimals),
     history: history.map((h) => ({ from: h.fromStatus, to: h.toStatus, reason: h.reason, at: h.at.toISOString() })),
     payments: await paymentsView(tx, r.inv.id, r.token.decimals),
+    ...(await forwardsOf(tx, r.inv, r.token.decimals, r.chain.explorerUrl)),
   };
 }
 

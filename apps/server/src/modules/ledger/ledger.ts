@@ -18,9 +18,9 @@
 //                           Dr merchant_pending R / Cr merchant_available R-F / Cr platform_fee_revenue F
 // The database allows each journal kind only its own account kinds (ledger_entry_guard).
 import { AppError, classifyPayment, computeFee, feeBase } from '@gw/core';
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, inArray, or, sql } from 'drizzle-orm';
 import type { Tx } from '../../common/db.js';
-import { feeTopups, ledgerAccounts, ledgerEntries, ledgerJournals, invoices, payments, sweeps } from '../../db/schema.js';
+import { feeTopups, forwards, ledgerAccounts, ledgerEntries, ledgerJournals, invoices, payments, sweeps } from '../../db/schema.js';
 import type { Deps } from '../../deps.js';
 import { transitionInvoice } from '../invoices/invoices.js';
 import { noticeFeeBalance } from './fee-balance.js';
@@ -29,6 +29,7 @@ type AccountKind = (typeof ledgerAccounts.$inferSelect)['kind'];
 type PaymentRow = typeof payments.$inferSelect;
 type FeeTopupRow = typeof feeTopups.$inferSelect;
 type SweepRow = typeof sweeps.$inferSelect;
+type ForwardRow = typeof forwards.$inferSelect;
 
 async function accountId(tx: Tx, kind: AccountKind, merchantId: string | null, livemode: boolean, tokenId: string): Promise<string> {
   await tx.insert(ledgerAccounts).values({ kind, merchantId, livemode, tokenId }).onConflictDoNothing();
@@ -49,7 +50,7 @@ async function accountId(tx: Tx, kind: AccountKind, merchantId: string | null, l
 }
 
 interface JournalHead {
-  kind: 'payment' | 'fee' | 'fee_topup' | 'settlement' | 'sweep' | 'withdrawal_hold' | 'withdrawal' | 'withdrawal_release';
+  kind: 'payment' | 'fee' | 'fee_topup' | 'settlement' | 'sweep' | 'withdrawal_hold' | 'withdrawal' | 'withdrawal_release' | 'forward_fee';
   merchantId: string;
   livemode: boolean;
   tokenId: string;
@@ -58,13 +59,14 @@ interface JournalHead {
   topupId?: string;
   sweepId?: string;
   withdrawalId?: string;
+  forwardId?: string;
 }
 
 /** Writes a journal and its lines. Returns false (and writes nothing) if this journal already exists. */
 async function post(tx: Tx, head: JournalHead, lines: [AccountKind, 'merchant' | 'platform', bigint][]): Promise<boolean> {
   const [j] = await tx
     .insert(ledgerJournals)
-    .values({ ...head, invoiceId: head.invoiceId ?? null, paymentId: head.paymentId ?? null, topupId: head.topupId ?? null, sweepId: head.sweepId ?? null, withdrawalId: head.withdrawalId ?? null })
+    .values({ ...head, invoiceId: head.invoiceId ?? null, paymentId: head.paymentId ?? null, topupId: head.topupId ?? null, sweepId: head.sweepId ?? null, withdrawalId: head.withdrawalId ?? null, forwardId: head.forwardId ?? null })
     .onConflictDoNothing()
     .returning({ id: ledgerJournals.id });
   if (!j) return false;
@@ -85,7 +87,8 @@ async function post(tx: Tx, head: JournalHead, lines: [AccountKind, 'merchant' |
 export async function postPayment(tx: Tx, p: PaymentRow): Promise<void> {
   const [inv] = await tx.select({ mode: invoices.custodyMode }).from(invoices).where(eq(invoices.id, p.invoiceId));
   const head = { kind: 'payment' as const, merchantId: p.merchantId, livemode: p.livemode, tokenId: p.tokenId, invoiceId: p.invoiceId, paymentId: p.id };
-  if (inv?.mode === 'non_custodial_xpub') {
+  // Non-custodial (xpub, forwarder): the funds are the merchant's from the start (memo pair).
+  if (inv?.mode === 'non_custodial_xpub' || inv?.mode === 'non_custodial_forwarder') {
     await post(tx, head, [
       ['merchant_received', 'merchant', p.amount],
       ['merchant_sales', 'merchant', -p.amount],
@@ -135,7 +138,13 @@ export async function settleInvoice(deps: Deps, tx: Tx, invoiceId: string): Prom
     await settleIfSwept(deps, tx, invoiceId);
     return;
   }
-  if (!inv || inv.custodyMode !== 'non_custodial_xpub' || (inv.status !== 'paid' && inv.status !== 'overpaid')) return;
+  // Forwarder invoices settle when their funds have been forwarded (settleIfForwarded), not here.
+  if (inv?.custodyMode === 'non_custodial_forwarder') {
+    await settleIfForwarded(deps, tx, invoiceId);
+    return;
+  }
+  // xpub from here on (custodial and forwarder returned above)
+  if (!inv || (inv.status !== 'paid' && inv.status !== 'overpaid')) return;
   const fee = computeFee(feeBase(inv.amountExpected, inv.amountReceived), inv.feeBps, inv.feeFixed);
   if (fee > 0n) {
     const head = { kind: 'fee' as const, merchantId: inv.merchantId, livemode: inv.livemode, tokenId: inv.tokenId, invoiceId: inv.id };
@@ -147,6 +156,52 @@ export async function settleInvoice(deps: Deps, tx: Tx, invoiceId: string): Prom
   }
   await tx.update(invoices).set({ feeAmount: fee }).where(eq(invoices.id, inv.id));
   await transitionInvoice(deps, tx, inv.id, 'settled', 'platform fee charged');
+}
+
+/**
+ * Forwarder mode (D-097): books a confirmed flush. The contract paid `fee` of what the merchant received into the
+ * platform fee wallet: merchant_received -fee / merchant_sales +fee (the merchant kept less), platform_fee_wallet +fee /
+ * platform_fee_revenue -fee. Idempotent per forward (one forward_fee journal each). No journal for a zero fee.
+ */
+export async function postForward(tx: Tx, f: ForwardRow): Promise<void> {
+  /* v8 ignore next -- only confirmed forwards (fee set, DB check) are posted */
+  if (f.status !== 'confirmed' || f.fee === null) throw new Error('only a confirmed forward can be posted');
+  if (f.fee === 0n) return;
+  await post(tx, { kind: 'forward_fee', merchantId: f.merchantId, livemode: f.livemode, tokenId: f.tokenId, invoiceId: f.invoiceId, forwardId: f.id }, [
+    ['merchant_received', 'merchant', -f.fee],
+    ['merchant_sales', 'merchant', f.fee],
+    ['platform_fee_wallet', 'platform', f.fee],
+    ['platform_fee_revenue', 'platform', -f.fee],
+  ]);
+}
+
+/**
+ * Forwarder settlement (D-097): a paid / overpaid forwarder invoice settles once confirmed forwards have moved at
+ * least everything its confirmed payments brought in. Its fee_amount is what the forwarders took (the contract caps it
+ * at the fee on the expected amount). Payments that arrive later are still forwarded and booked by postForward, but
+ * the settled invoice keeps its fee.
+ */
+export async function settleIfForwarded(deps: Deps, tx: Tx, invoiceId: string): Promise<boolean> {
+  const [inv] = await tx.select().from(invoices).where(eq(invoices.id, invoiceId)).for('update');
+  if (!inv || inv.custodyMode !== 'non_custodial_forwarder' || (inv.status !== 'paid' && inv.status !== 'overpaid')) return false;
+  const [r] = await tx
+    .select({
+      moved: sql<string>`coalesce(sum(${forwards.toMerchant} + ${forwards.fee}), 0)::text`,
+      fee: sql<string>`coalesce(sum(${forwards.fee}), 0)::text`,
+    })
+    .from(forwards)
+    .where(and(eq(forwards.invoiceId, inv.id), eq(forwards.status, 'confirmed')));
+  const [p] = await tx
+    .select({ received: sql<string>`coalesce(sum(${payments.amount}), 0)::text` })
+    .from(payments)
+    .where(and(eq(payments.invoiceId, inv.id), eq(payments.status, 'confirmed')));
+  /* v8 ignore next -- aggregates always return one row */
+  if (!r || !p) return false;
+  const received = BigInt(p.received);
+  if (received === 0n || BigInt(r.moved) < received) return false;
+  await tx.update(invoices).set({ feeAmount: BigInt(r.fee) }).where(eq(invoices.id, inv.id));
+  await transitionInvoice(deps, tx, inv.id, 'settled', 'funds forwarded to the merchant wallet');
+  return true;
 }
 
 /** Books a just-confirmed sweep (platform assets move from the deposit address to the hot wallet). Idempotent. */
@@ -288,23 +343,35 @@ export async function merchantBalances(tx: Tx, merchantId: string, livemode: boo
     if (r.kind === 'merchant_available') b.available = -BigInt(r.total);
     if (r.kind === 'merchant_withdrawing') b.withdrawing = -BigInt(r.total);
   }
-  // Custodial fees: per settlement journal, pending debit R + available credit -(R-F) = F. Read from the merchant's own
-  // lines: platform account rows are invisible in the merchant's tenant context (RLS).
+  // Fees taken out of the merchant's money, read from the merchant's own lines (platform account rows are invisible in
+  // the merchant's tenant context, RLS). Custodial, per settlement journal: pending debit R + available credit -(R-F) = F.
+  // Forwarder, per forward_fee journal: merchant_received -F (the fee went to the platform on-chain, D-097).
   const fees = await tx
-    .select({ tokenId: ledgerJournals.tokenId, total: sql<string>`coalesce(sum(${ledgerEntries.amount}), 0)::text` })
+    .select({ tokenId: ledgerJournals.tokenId, kind: ledgerJournals.kind, total: sql<string>`coalesce(sum(${ledgerEntries.amount}), 0)::text` })
     .from(ledgerJournals)
     .innerJoin(ledgerEntries, eq(ledgerEntries.journalId, ledgerJournals.id))
     .innerJoin(ledgerAccounts, eq(ledgerAccounts.id, ledgerEntries.accountId))
     .where(
       and(
-        eq(ledgerJournals.kind, 'settlement'),
         eq(ledgerJournals.merchantId, merchantId),
         eq(ledgerJournals.livemode, livemode),
-        inArray(ledgerAccounts.kind, ['merchant_pending', 'merchant_available']),
+        or(
+          and(eq(ledgerJournals.kind, 'settlement'), inArray(ledgerAccounts.kind, ['merchant_pending', 'merchant_available'])),
+          and(eq(ledgerJournals.kind, 'forward_fee'), eq(ledgerAccounts.kind, 'merchant_received')),
+        ),
       ),
     )
-    .groupBy(ledgerJournals.tokenId);
-  for (const f of fees) get(f.tokenId).feesCharged += BigInt(f.total);
+    .groupBy(ledgerJournals.tokenId, ledgerJournals.kind);
+  for (const f of fees) {
+    const b = get(f.tokenId);
+    if (f.kind === 'forward_fee') {
+      // Received stays the gross amount customers paid, as in the other modes; the fee is shown beside it.
+      b.feesCharged += -BigInt(f.total);
+      b.received += -BigInt(f.total);
+    } else {
+      b.feesCharged += BigInt(f.total);
+    }
+  }
   return out;
 }
 

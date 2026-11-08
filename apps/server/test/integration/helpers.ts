@@ -244,6 +244,8 @@ export const TEST_MNEMONIC = 'test test test test test test test test test test 
 export const CUSTODY_PATHS = { deposits: "m/44'/60'/1'", hot: "m/44'/60'/11'/0/0", gas: "m/44'/60'/21'/0/0" } as const;
 /** The test cold "multisig" (an external address; signers in tests allowlist it). */
 export const TEST_COLD = '0x000000000000000000000000000000000000c01d';
+/** The test platform fee wallet: where forwarders send the fee (D-097); address only, like cold. */
+export const TEST_FEE_WALLET = '0x0000000000000000000000000000000000f0e001';
 const LIVE_CUSTODY_PATHS = { deposits: "m/44'/60'/0'", hot: "m/44'/60'/10'/0/0", gas: "m/44'/60'/20'/0/0" } as const;
 
 /**
@@ -269,6 +271,10 @@ export async function ensurePlatformCustody(owner: pg.Pool) {
     await owner.query(
       `insert into platform_wallets (id, family, livemode, kind, address) values (gen_random_uuid(), 'evm', $1, 'cold', $2) on conflict do nothing`,
       [livemode, TEST_COLD],
+    );
+    await owner.query(
+      `insert into platform_wallets (id, family, livemode, kind, address) values (gen_random_uuid(), 'evm', $1, 'fee', $2) on conflict do nothing`,
+      [livemode, TEST_FEE_WALLET],
     );
   }
   const wallets = { hot: k.address(CUSTODY_PATHS.hot), gas: k.address(CUSTODY_PATHS.gas), liveHot: k.address(LIVE_CUSTODY_PATHS.hot) };

@@ -4,7 +4,8 @@ import { Login, ResetPassword, VerifyBanner, VerifyEmail, linkToken } from './au
 import { ApiKeys, Webhooks } from './developers';
 import { InvoiceDetail, Invoices } from './invoices';
 import { Sellers } from './sellers';
-import { Security, Xpubs } from './settings';
+import { PayoutWallet } from './payout-wallet';
+import { Security } from './settings';
 import { AcceptInvite, Team } from './team';
 import { Widget } from './widget';
 import { Withdrawals } from './withdrawals';
@@ -72,9 +73,10 @@ export function App() {
   const nav: { href: string; label: string; icon: IconName; show: boolean; group: 'Payments' | 'Developers' | 'Account' }[] = [
     { href: '#/invoices', label: 'Invoices', icon: 'invoice', show: true, group: 'Payments' },
     { href: '#/sellers', label: 'Sellers', icon: 'store', show: true, group: 'Payments' },
-    // Custodial accounts withdraw what we hold for them; non-custodial ones are paid straight into their own wallet.
-    { href: '#/withdrawals', label: 'Withdrawals', icon: 'wallet', show: custodial, group: 'Payments' },
-    { href: '#/xpub', label: 'Payout wallet', icon: 'wallet', show: !custodial, group: 'Payments' },
+    // Payout wallet: where the merchant turns custody on or off (D-098). Custody on: they withdraw what we hold for them;
+    // off: payments go straight into their own wallet.
+    { href: '#/xpub', label: 'Payout wallet', icon: 'wallet', show: true, group: 'Payments' },
+    { href: '#/withdrawals', label: 'Withdrawals', icon: 'coins', show: custodial, group: 'Payments' },
     { href: '#/api-keys', label: 'API keys', icon: 'key', show: dev, group: 'Developers' },
     { href: '#/webhooks', label: 'Webhooks', icon: 'zap', show: dev, group: 'Developers' },
     { href: '#/widget', label: 'Checkout widget', icon: 'widget', show: dev, group: 'Developers' },
@@ -89,8 +91,8 @@ export function App() {
   else if (page === 'sellers') body = <Sellers livemode={livemode} canWrite={role !== 'read_only'} />;
   else if (page === 'api-keys' && dev) body = <ApiKeys livemode={livemode} totp={totp} />;
   else if (page === 'webhooks' && dev) body = <Webhooks livemode={livemode} totp={totp} />;
-  else if (page === 'xpub') body = <Xpubs livemode={livemode} canManage={role === 'owner'} totp={totp} custodyMode={me.merchant.custody_mode} />;
-  else if (page === 'withdrawals' && custodial) body = <Withdrawals livemode={livemode} canRequest={role === 'owner' || role === 'finance'} canManageAddress={role === 'owner'} totp={totp} />;
+  else if (page === 'xpub') body = <PayoutWallet livemode={livemode} canManage={role === 'owner'} totp={totp} onModeChange={loadMe} />;
+  else if (page === 'withdrawals' && custodial) body = <Withdrawals livemode={livemode} enabled={me.merchant.withdrawals_enabled} canRequest={role === 'owner' || role === 'finance'} canManageAddress={role === 'owner'} totp={totp} />;
   else if (page === 'security') body = <Security totp={totp} onChange={loadMe} />;
   else if (page === 'team') body = <Team me={me.user} totp={totp} />;
   else if (page === 'widget' && dev) body = <Widget canManage={role === 'owner' || role === 'admin'} apiOrigin={me.api_origin} />;

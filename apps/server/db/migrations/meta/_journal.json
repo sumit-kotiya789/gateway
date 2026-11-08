@@ -302,6 +302,20 @@
       "when": 1793959700821,
       "tag": "0042_sub_merchants_security",
       "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1794139533880,
+      "tag": "0043_forwarder",
+      "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1794139641862,
+      "tag": "0044_forwarder_security",
+      "breakpoints": true
     }
   ]
 }

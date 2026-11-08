@@ -20,7 +20,9 @@ export function Invoices(props: { livemode: boolean; canWrite: boolean; canExpor
   }, [qs]);
   const more = useAction();
   const rows = [...(page.data?.data ?? []), ...extra];
-  const balances = useLoad(() => api<{ data: Balance[] }>('GET', `/balances/?livemode=${String(props.livemode)}`), [props.livemode]);
+  const balances = useLoad(() => api<{ custody_mode: string | null; data: Balance[] }>('GET', `/balances/?livemode=${String(props.livemode)}`), [props.livemode]);
+  // Wallet-address mode: the fee is split off on-chain in each forward, there is no prepaid balance (D-097).
+  const onChainFees = balances.data?.custody_mode === 'non_custodial_forwarder';
 
   return (
     <section>
@@ -37,7 +39,7 @@ export function Invoices(props: { livemode: boolean; canWrite: boolean; canExpor
             >
               <span>Fees {b.fees_charged}</span>
               <span>·</span>
-              {b.fee_status === 'not_enforced' && b.available !== '0' ? <span>Available {b.available}</span> : <span>Prepaid {b.prepaid_fees}</span>}
+              {onChainFees ? <span>taken on-chain</span> : b.fee_status === 'not_enforced' && b.available !== '0' ? <span>Available {b.available}</span> : <span>Prepaid {b.prepaid_fees}</span>}
               {b.fee_status !== 'not_enforced' && b.fee_status !== 'ok' && <span className={`badge s-${b.fee_status}`}>{b.fee_status === 'blocked' ? 'top up needed' : 'running low'}</span>}
             </Stat>
           ))}
@@ -245,6 +247,34 @@ export function InvoiceDetail(props: { id: string; canWrite: boolean }) {
                 </tbody>
               </table>
             </div>
+          )}
+          {i.forwards && (
+            <>
+              <h3>Forwarded to your wallet</h3>
+              {i.forwards.length === 0 ? (
+                <p className="muted">Confirmed payments are forwarded to your payout address automatically, minus the platform fee.</p>
+              ) : (
+                <div className="table-wrap">
+                  <table>
+                    <thead><tr><th>Transaction</th><th className="num">To you</th><th className="num">Fee</th><th>Status</th></tr></thead>
+                    <tbody>
+                      {i.forwards.map((f, n) => (
+                        <tr key={f.tx_hash ?? n}>
+                          <td>
+                            {f.tx_hash ? (
+                              f.explorer_url ? <a href={f.explorer_url} target="_blank" rel="noopener noreferrer"><code>{short(f.tx_hash, 8)}</code> <Icon name="external" size={12} /></a> : <code>{short(f.tx_hash, 8)}</code>
+                            ) : <span className="muted">—</span>}
+                          </td>
+                          <td className="num">{f.to_merchant ?? '—'}{f.to_merchant && ` ${i.symbol}`}</td>
+                          <td className="num">{f.fee ?? '—'}{f.fee && ` ${i.symbol}`}</td>
+                          <td><StatusBadge status={f.status} /></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </>
           )}
           <h3>History</h3>
           <div className="table-wrap">

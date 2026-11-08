@@ -6,7 +6,7 @@ import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import type { Config } from '../../common/config.js';
 
-export type IntentKind = 'gas_topup' | 'sweep' | 'withdrawal' | 'treasury';
+export type IntentKind = 'gas_topup' | 'sweep' | 'withdrawal' | 'treasury' | 'forward';
 
 export interface SignedTx {
   tx_hash: string;
