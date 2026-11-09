@@ -5,9 +5,10 @@ import { ApiKeys, Webhooks } from './developers';
 import { InvoiceDetail, Invoices } from './invoices';
 import { Sellers } from './sellers';
 import { PayoutWallet } from './payout-wallet';
-import { Security } from './settings';
-import { AcceptInvite, Team } from './team';
-import { Widget } from './widget';
+import { ApiKeyDetail } from './key-analytics';
+import { Overview } from './overview';
+import { SettingsHub } from './settings-hub';
+import { AcceptInvite } from './team';
 import { Withdrawals } from './withdrawals';
 import { UserDeposits } from './deposits';
 import { Alert, BrandMark, ErrorBox, Icon, Toaster, errorText, type IconName } from './ui';
@@ -72,6 +73,7 @@ export function App() {
   const totp = me.user.totp_enabled;
   const custodial = me.merchant.custody_mode === 'custodial';
   const nav: { href: string; label: string; icon: IconName; show: boolean; group: 'Payments' | 'Developers' | 'Account' }[] = [
+    { href: '#/overview', label: 'Overview', icon: 'trend', show: true, group: 'Payments' },
     { href: '#/invoices', label: 'Invoices', icon: 'invoice', show: true, group: 'Payments' },
     { href: '#/sellers', label: 'Sellers', icon: 'store', show: true, group: 'Payments' },
     // Users' permanent deposit addresses (D-101), for web3 projects.
@@ -82,25 +84,30 @@ export function App() {
     { href: '#/withdrawals', label: 'Withdrawals', icon: 'coins', show: custodial, group: 'Payments' },
     { href: '#/api-keys', label: 'API keys', icon: 'key', show: dev, group: 'Developers' },
     { href: '#/webhooks', label: 'Webhooks', icon: 'zap', show: dev, group: 'Developers' },
-    { href: '#/widget', label: 'Checkout widget', icon: 'widget', show: dev, group: 'Developers' },
-    { href: '#/team', label: 'Team', icon: 'users', show: true, group: 'Account' },
-    { href: '#/security', label: 'Security', icon: 'shield', show: true, group: 'Account' },
+    // Every account setting in one place (D-110): security, team, whitelists, payout wallet, widget.
+    { href: '#/settings', label: 'Settings', icon: 'sliders', show: true, group: 'Account' },
   ];
-  const [, page = 'invoices', id] = hash.split('/');
+  const [, rawPage = 'overview', id] = hash.split('/');
+  // Older links (emails, bookmarks) to pages that now live in Settings.
+  const LEGACY: Record<string, string> = { security: 'security', team: 'team', widget: 'widget' };
+  const legacy = LEGACY[rawPage];
+  const page = legacy ? 'settings' : rawPage || 'overview';
+  const section = legacy ?? id;
   const current = nav.find((n) => n.href === `#/${page}`) ?? nav[0];
 
   let body;
-  if (page === 'invoices' && id) body = <InvoiceDetail id={id} canWrite={role !== 'read_only'} />;
+  if (page === 'overview') body = <Overview livemode={livemode} me={me} />;
+  else if (page === 'invoices' && id) body = <InvoiceDetail id={id} canWrite={role !== 'read_only'} />;
   else if (page === 'sellers') body = <Sellers livemode={livemode} canWrite={role !== 'read_only'} />;
   else if (page === 'deposits') body = <UserDeposits livemode={livemode} />;
+  else if (page === 'api-keys' && dev && id) body = <ApiKeyDetail id={id} canManage={role === 'owner'} />;
   else if (page === 'api-keys' && dev) body = <ApiKeys livemode={livemode} totp={totp} />;
   else if (page === 'webhooks' && dev) body = <Webhooks livemode={livemode} totp={totp} />;
   else if (page === 'xpub') body = <PayoutWallet livemode={livemode} canManage={role === 'owner'} totp={totp} onModeChange={loadMe} />;
   else if (page === 'withdrawals' && custodial) body = <Withdrawals livemode={livemode} enabled={me.merchant.withdrawals_enabled} canRequest={role === 'owner' || role === 'finance'} canManageAddress={role === 'owner'} totp={totp} />;
-  else if (page === 'security') body = <Security totp={totp} onChange={loadMe} />;
-  else if (page === 'team') body = <Team me={me.user} totp={totp} />;
-  else if (page === 'widget' && dev) body = <Widget canManage={role === 'owner' || role === 'admin'} apiOrigin={me.api_origin} />;
-  else body = <Invoices livemode={livemode} canWrite={role !== 'read_only'} canExport={role !== 'developer'} />;
+  else if (page === 'settings') body = <SettingsHub section={section} me={me} livemode={livemode} onChange={loadMe} />;
+  else if (page === 'invoices') body = <Invoices livemode={livemode} canWrite={role !== 'read_only'} canExport={role !== 'developer'} />;
+  else body = <Overview livemode={livemode} me={me} />;
 
   return (
     <div className={livemode ? 'app live' : 'app test'}>
@@ -167,9 +174,9 @@ export function App() {
         </header>
         <main>
           {!me.user.email_verified && <VerifyBanner />}
-          {!totp && page !== 'security' && (
+          {!totp && !(page === 'settings' && section === 'security') && (
             <Alert tone="warning">
-              Protect your account: <a href="#/security">enable two-factor authentication</a>. It is required for API keys, webhooks, payout wallet and team changes.
+              Protect your account: <a href="#/settings/security">enable two-factor authentication</a>. It is required for API keys, webhooks, payout wallet and team changes.
             </Alert>
           )}
           {/* key: switching mode remounts the page so no state from the other mode leaks into forms or lists */}

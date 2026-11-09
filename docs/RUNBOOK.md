@@ -77,7 +77,19 @@ the user's sessions and recovery codes; the user signs in with the password and 
 - Compose service `admin` (nginx) serves the console at `/admin/` on :8080 (host port `ADMIN_HOST_PORT`, default 8081) and
   proxies `/admin/v1/*`. Its own origin, never the dashboard's (config refuses a shared origin); list it in `ADMIN_ORIGINS`.
   Restrict it at the edge (VPN / IP allowlist) and set `ADMIN_IP_ALLOWLIST` (non-listed IPs get 404).
-- Underpaid / late-payment invoices: the Invoices page lists them; "Mark as paid" (operator + TOTP) books the fee and
+- Settings page (superadmin + TOTP, D-106/D-107): "needs a decision" statuses, session idle/absolute limits, the admin IP
+  allowlist (on/off + entries), the two-admin withdrawal threshold (never above `WITHDRAWAL_TWO_PERSON_MIN`), merchant
+  sign-ups and new-merchant default fees. Every change is in the audit log (`admin.settings_updated`, before/after).
+- Merchant whitelists (D-109): a merchant whose servers moved and now get 403 `ip_not_whitelisted` can add the new IP
+  in Settings → Whitelist IPs (dashboard sessions are not affected; adding applies at once). Switching a whitelist off
+  takes `whitelist_disable_hours` by design; do not shortcut it in the database for a merchant without verifying the
+  request out of band (that is exactly what an account takeover would ask for).
+- Console IP allowlist locked everyone out (e.g. the office IP changed): switch it off from the database as the owner
+  role, then fix the list in Settings:
+  `docker compose exec postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "update admin_settings set ip_allowlist_enabled = false"`.
+  The allowlist is checked against the client IP after `TRUST_PROXY_HOPS`; if Settings shows a private address as
+  "your address", the hop count is wrong and the list would match the proxy, not the admins.
+- Underpaid / late-payment invoices: the Invoices page lists them (which statuses: Settings); "Mark as paid" (operator + TOTP) books the fee and
   settles. Use it only when the merchant confirms they accept the funds; it cannot be undone. Custodial underpaid
   invoices need no action: after their deadline the custody worker closes them as `partially_paid` and credits what
   arrived (D-099). Money arriving after an invoice closed shows in reconciliation (`custodial_settlement`): it is in
@@ -246,8 +258,9 @@ Operations:
   requests again if appropriate.
 
 ## Treasury (M7)
-- Policy: keep only what payouts need in the hot wallet. Alert `GatewayHotWalletAboveCap` (set the cap per token in
-  `infra/prometheus/alerts.yml`) means: move the excess to cold.
+- Policy: keep only what payouts need in the hot wallet: set the hot wallet limits below (D-105). The Prometheus alert
+  `GatewayHotWalletAboveCap` (cap per token in `infra/prometheus/alerts.yml`) stays as a backstop: it means the
+  automatic transfer is not running (signer paused, `SIGNER_AUTO_TO_COLD` off, gas).
 - Hot → cold: admin console → Custody → Treasury, "Move to cold" (TOTP); a second admin approves (TOTP). The signer
   only sends to addresses in its own `SIGNER_COLD_ADDRESSES`, which must match the registered cold wallet.
 - Cold → hot: the multisig signers send the tokens to the hot wallet themselves, then an admin records the transaction
@@ -255,6 +268,18 @@ Operations:
   check the hash and amount, record again). A refill can bring back at most what the ledger holds in cold.
 - Hourly reconciliation compares each hot wallet's token balance on chain with the ledger: `hot_wallet_shortfall`
   (less on chain) is an incident: pause the signer first. `hot_wallet_unchecked`: the RPC did not answer.
+
+### Hot wallet limits (D-105)
+- Admin console → Custody → **Hot wallet limits** → Set limits (`treasury:manage` + TOTP, audited): per mode and token
+  a **cap** and an **alert level**, in token units (e.g. cap 1500, alert 500). Empty = off.
+- Above the cap: the custody worker (every 15 s) creates an automatic hot → cold transfer for the excess (badge
+  "auto" under Treasury transfers). No approver. It is signed only when the signer runs with `SIGNER_AUTO_TO_COLD=true`
+  (signer host env; restart the signer after changing it) and only to `SIGNER_COLD_ADDRESSES`; without it the transfer
+  waits with `last_error = auto_disabled`. One in flight at a time; after a failed one, the next waits 30 minutes.
+- Below the alert level: every active superadmin and operator gets "Hot wallet balance is low", again every 24 h
+  while it stays low. Refill from cold storage (multisig → hot wallet address in the email), then record it: Custody →
+  Treasury transfer → "Cold storage → hot wallet" with the transaction hash, so the ledger books it.
+- The hot wallet also needs BNB for gas (each automatic transfer and payout): fund it with a little BNB.
 
 ## Hot wallet compromise (M7)
 1. Pause the signer (admin console → Custody → Pause; or `SIGNER_PAUSED=true` and restart it). Every sweep, payout and

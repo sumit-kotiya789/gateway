@@ -1,5 +1,7 @@
 // MONEY-CRITICAL
 // Treasury (M7e, D-091): platform funds between the hot wallet and the cold multisig.
+//   auto:    the hot wallet policy (D-105, hot-wallet-policy.ts) inserts to_cold already approved for the excess over
+//            its cap; the signer signs it only with SIGNER_AUTO_TO_COLD, and only to its allowlisted cold address.
 //   to_cold: admin proposes (TOTP) -> a different admin approves (TOTP) -> signer signs hot -> cold (allowlisted in
 //            the signer's own config) -> worker broadcasts -> confirmed: Dr custody_cold / Cr custody_hot.
 //   to_hot:  the cold multisig sent tokens to the hot wallet outside the system; an admin records the transaction ->
@@ -20,11 +22,12 @@ const BATCH = 20;
 const LEASE_MS = 60_000;
 const POLL_MS = 15_000;
 const MAX_BACKOFF_MS = 30 * 60_000;
+// Not fatal: `auto_disabled` (an automatic transfer waits, retried with backoff, until the signer opts in), paused, funds, gas.
 const FATAL = new Set(['wrong_status', 'not_found', 'not_approved', 'cold_not_allowlisted', 'wrong_source', 'wallet_mismatch']);
 const later = (deps: Deps, ms: number) => new Date(deps.clock() + ms);
 const backoff = (attempts: number) => Math.min(MAX_BACKOFF_MS, 30_000 * 2 ** Math.min(attempts, 10));
 
-async function wallets(tx: Tx, family: 'evm' | 'tron' | 'solana', livemode: boolean) {
+export async function wallets(tx: Tx, family: 'evm' | 'tron' | 'solana', livemode: boolean) {
   const rows = await tx
     .select()
     .from(platformWallets)
@@ -80,7 +83,7 @@ export async function createTreasuryTransfer(
 }
 
 /** A platform custody account's balance (debit) for one mode and token, in minor units. */
-async function custodyBalance(tx: Tx, kind: 'custody_hot' | 'custody_cold', livemode: boolean, tokenId: string): Promise<bigint> {
+export async function custodyBalance(tx: Tx, kind: 'custody_hot' | 'custody_cold', livemode: boolean, tokenId: string): Promise<bigint> {
   const [r] = await tx
     .select({ total: sql<string>`coalesce(sum(${ledgerEntries.amount}), 0)::text` })
     .from(ledgerEntries)
@@ -203,14 +206,23 @@ async function step(deps: Deps, env: SweeperEnv, t: Row, chain: typeof chains.$i
   return 'confirmed';
 }
 
-/** Advances due treasury transfers (SKIP LOCKED claim + lease, like sweeps). */
-export async function advanceTreasury(deps: Deps, env: SweeperEnv): Promise<Record<string, number>> {
+/**
+ * Advances due treasury transfers (SKIP LOCKED claim + lease, like sweeps). `chainIds` limits the run to some chains
+ * (tests that share one database; the worker passes none).
+ */
+export async function advanceTreasury(deps: Deps, env: SweeperEnv, opts: { chainIds?: string[] } = {}): Promise<Record<string, number>> {
   const now = deps.clock();
   const claimed = await withSystem(deps.db, async (tx) => {
     const rows = await tx
       .select()
       .from(treasuryTransfers)
-      .where(and(inArray(treasuryTransfers.status, ['approved', 'sent']), lte(treasuryTransfers.nextAttemptAt, new Date(now))))
+      .where(
+        and(
+          inArray(treasuryTransfers.status, ['approved', 'sent']),
+          lte(treasuryTransfers.nextAttemptAt, new Date(now)),
+          opts.chainIds ? inArray(treasuryTransfers.chainId, opts.chainIds) : undefined,
+        ),
+      )
       .orderBy(asc(treasuryTransfers.nextAttemptAt))
       .limit(BATCH)
       .for('update', { skipLocked: true });
@@ -244,6 +256,8 @@ export function treasuryView(t: Row, decimals: number, fmt: (v: bigint, d: numbe
     livemode: t.livemode,
     token: t.tokenId,
     direction: t.direction,
+    /** Created by the hot wallet policy (D-105), not proposed by an admin. */
+    auto: t.auto,
     amount: fmt(t.amount, decimals),
     cold_address: t.coldAddress,
     hot_address: t.hotAddress,

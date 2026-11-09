@@ -34,6 +34,12 @@ const MONEY_CRITICAL = [
   'apps/server/src/modules/custody/payout-addresses.ts',
   // Deposit accounts (D-101)
   'apps/server/src/modules/deposits/deposit-accounts.ts',
+  // Hot wallet policy (D-105)
+  'apps/server/src/modules/custody/hot-wallet-policy.ts',
+  // Console settings incl. the two-admin withdrawal threshold (D-107)
+  'apps/server/src/modules/admin/settings.ts',
+  // Merchant whitelists (D-109)
+  'apps/server/src/modules/security/whitelist.ts',
 ];
 const gate = { lines: 90, functions: 90, branches: 90, statements: 90 };
 
@@ -43,6 +49,7 @@ export default defineConfig({
       {
         test: {
           name: 'unit',
+          sequence: { groupOrder: 0 },
           include: ['packages/*/test/**/*.test.ts', 'apps/*/test/unit/**/*.test.ts'],
           exclude: ['**/node_modules/**', 'packages/*/test/integration/**'],
         },
@@ -55,6 +62,21 @@ export default defineConfig({
           globalSetup: ['apps/server/test/integration/global-setup.ts'],
           testTimeout: 30_000,
           hookTimeout: 180_000,
+          sequence: { groupOrder: 0 },
+        },
+      },
+      {
+        // Tests that change platform-wide console settings (sign-ups, the admin IP allowlist, the two-admin threshold,
+        // D-107): their own containers, one file at a time, after the parallel integration files, so they never
+        // change the rules under another test.
+        test: {
+          name: 'integration-global',
+          include: ['apps/server/test/global/**/*.test.ts'],
+          globalSetup: ['apps/server/test/integration/global-setup.ts'],
+          fileParallelism: false,
+          testTimeout: 30_000,
+          hookTimeout: 180_000,
+          sequence: { groupOrder: 1 },
         },
       },
     ],

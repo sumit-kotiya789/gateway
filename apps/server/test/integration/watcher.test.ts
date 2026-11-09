@@ -638,8 +638,19 @@ describe('ledger, fees, outbox', () => {
     await settle();
     const auditor = await adminAgent(t, owner, 'auditor');
     const op = await adminAgent(t, owner);
-    const listed = (await auditor.agent.req('GET', `/admin/v1/invoices?merchant_id=${m.merchantId}&livemode=false`)).json<{ data: unknown[] }>();
-    expect(listed.data).toEqual([expect.objectContaining({ id: inv.id, status: 'underpaid', merchant_id: m.merchantId, merchant_name: 'Shop' })]);
+    const list = async (qs = '') => (await auditor.agent.req('GET', `/admin/v1/invoices?merchant_id=${m.merchantId}&livemode=false${qs}`)).json<{ data: unknown[] }>().data;
+    const row = expect.objectContaining({ id: inv.id, status: 'underpaid', merchant_id: m.merchantId, merchant_name: 'Shop' });
+    // "Needs a decision" leaves underpaid out by default (D-106); the status filter and the console setting bring it back.
+    expect(await list()).toEqual([]);
+    expect(await list('&status=underpaid')).toEqual([row]);
+    const sa = await adminAgent(t, owner, 'superadmin');
+    const attention = (statuses: string[]) => sa.agent.req('PUT', '/admin/v1/settings', { attention_statuses: statuses, reason: 'queue test' }, sa.stepUp());
+    try {
+      expect((await attention(['underpaid', 'late_payment'])).json()).toMatchObject({ attention_statuses: ['late_payment', 'underpaid'] });
+      expect(await list()).toEqual([row]);
+    } finally {
+      await attention(['late_payment', 'held']);
+    }
 
     const url = `/admin/v1/invoices/${inv.id}/resolve`;
     const body = { reason: 'merchant accepts the shortfall' };

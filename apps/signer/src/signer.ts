@@ -268,16 +268,22 @@ export function createSigner(deps: SignerDeps) {
         hot_address: string;
         requested_by: string;
         approved_by: string | null;
+        auto: boolean;
         contract_address: string;
       }>(
-        `select x.status, x.direction, x.livemode, x.chain_id, x.token_id, x.amount::text, x.cold_address, x.hot_address, x.requested_by, x.approved_by, t.contract_address
+        `select x.status, x.direction, x.livemode, x.chain_id, x.token_id, x.amount::text, x.cold_address, x.hot_address, x.requested_by, x.approved_by, x.auto, t.contract_address
          from treasury_transfers x join tokens t on t.id = x.token_id where x.id = $1`,
         [id],
       );
       if (!t) throw new Refusal('not_found', 'treasury transfer not found');
       if (t.direction !== 'to_cold' || t.status !== 'approved') throw new Refusal('wrong_status', `transfer is ${t.direction} ${t.status}`);
-      /* v8 ignore next -- the treasury guard only approves with a second, different admin */
-      if (!t.approved_by || t.approved_by === t.requested_by) throw new Refusal('not_approved', 'two different admins must agree');
+      if (t.auto) {
+        // Hot wallet policy (D-105): no approver, by design; only with this signer's own opt-in.
+        if (!config.SIGNER_AUTO_TO_COLD) throw new Refusal('auto_disabled', 'automatic transfers to cold storage are off (SIGNER_AUTO_TO_COLD)');
+      } else if (!t.approved_by || t.approved_by === t.requested_by) {
+        /* v8 ignore next -- the treasury guard only approves with a second, different admin */
+        throw new Refusal('not_approved', 'two different admins must agree');
+      }
       // The signer's own allowlist decides where cold is, not the database.
       if (!config.SIGNER_COLD_ADDRESSES.includes(t.cold_address.toLowerCase())) throw new Refusal('cold_not_allowlisted', 'cold address is not in SIGNER_COLD_ADDRESSES');
       const { chain, rpc, gasPrice } = await chainOf(t.chain_id);

@@ -116,21 +116,31 @@ export type ReconciliationIssue = { check: keyof typeof CHECKS | 'hot_wallet_sho
  * Custodial (M7e): the hot wallet must hold on chain at least what the ledger says it holds, per mode and token. Less
  * means funds left it without a booking (key compromise, a bug, or a refill not recorded): an incident.
  */
-async function checkHotWallets(tx: Tx, chainTx: (chain: typeof chains.$inferSelect) => ChainTx, issues: ReconciliationIssue[], log: Deps['log']): Promise<void> {
+type HotRow = { livemode: boolean; token_id: string; booked: string; contract: string; hot: string | null; chain: typeof chains.$inferSelect | undefined };
+
+async function hotWalletRows(tx: Tx): Promise<HotRow[]> {
   const rows = await tx.execute<{ livemode: boolean; token_id: string; booked: string; chain_id: string; contract: string; hot: string | null }>(sql`
     select a.livemode, a.token_id, sum(e.amount)::text as booked, t.chain_id, t.contract_address as contract,
            (select w.address from platform_wallets w join chains c on c.family = w.family
             where c.id = t.chain_id and w.kind = 'hot' and w.livemode = a.livemode and w.retired_at is null) as hot
     from ledger_accounts a join ledger_entries e on e.account_id = a.id join tokens t on t.id = a.token_id
     where a.kind = 'custody_hot' group by a.livemode, a.token_id, t.chain_id, t.contract_address having sum(e.amount) > 0`);
-  const short: string[] = [];
-  const unchecked: string[] = [];
+  const out: HotRow[] = [];
   for (const r of rows.rows) {
     const [chain] = await tx.select().from(chains).where(eq(chains.id, r.chain_id));
+    out.push({ livemode: r.livemode, token_id: r.token_id, booked: r.booked, contract: r.contract, hot: r.hot, chain });
+  }
+  return out;
+}
+
+async function checkHotWallets(rows: HotRow[], chainTx: (chain: typeof chains.$inferSelect) => ChainTx, issues: ReconciliationIssue[], log: Deps['log']): Promise<void> {
+  const short: string[] = [];
+  const unchecked: string[] = [];
+  for (const r of rows) {
     try {
       /* v8 ignore next -- FK; and a booked hot balance implies a hot wallet once existed */
-      if (!chain || !r.hot) throw new Error('no chain or hot wallet');
-      const onchain = await chainTx(chain).tokenBalance(r.contract, r.hot);
+      if (!r.chain || !r.hot) throw new Error('no chain or hot wallet');
+      const onchain = await chainTx(r.chain).tokenBalance(r.contract, r.hot);
       if (onchain < BigInt(r.booked)) short.push(`${String(r.livemode)}:${r.token_id}`);
     } catch (err) {
       log.warn({ token: r.token_id, err: (err as Error).message }, 'hot wallet balance could not be checked');
@@ -143,15 +153,18 @@ async function checkHotWallets(tx: Tx, chainTx: (chain: typeof chains.$inferSele
 
 export async function reconcileLedger(deps: Deps, opts: { chainTx?: (chain: typeof chains.$inferSelect) => ChainTx } = {}): Promise<ReconciliationIssue[]> {
   const startedAt = new Date(deps.clock());
-  return withSystem(deps.db, async (tx) => {
-    const issues: ReconciliationIssue[] = [];
+  const issues: ReconciliationIssue[] = [];
+  const hot = await withSystem(deps.db, async (tx) => {
     for (const [check, query] of Object.entries(CHECKS) as [keyof typeof CHECKS, (typeof CHECKS)[keyof typeof CHECKS]][]) {
       const r = await tx.execute<{ id: string }>(query);
       if (r.rows.length > 0) issues.push({ check, count: r.rows.length, sample: r.rows.slice(0, 20).map((x) => x.id) });
     }
-    if (opts.chainTx) await checkHotWallets(tx, opts.chainTx, issues, deps.log);
-    await tx.insert(reconciliationRuns).values({ startedAt, finishedAt: new Date(deps.clock()), ok: issues.length === 0, issues });
-    if (issues.length > 0) deps.log.error({ issues }, 'RECONCILIATION MISMATCH');
-    return issues;
+    return opts.chainTx ? hotWalletRows(tx) : [];
   });
+  // RPC calls outside any transaction: a slow provider (10 s per URL, retries, fallbacks) must not keep a transaction
+  // open past idle_in_transaction_session_timeout (30 s), which kills the connection (it once took the worker down).
+  if (opts.chainTx) await checkHotWallets(hot, opts.chainTx, issues, deps.log);
+  await withSystem(deps.db, (tx) => tx.insert(reconciliationRuns).values({ startedAt, finishedAt: new Date(deps.clock()), ok: issues.length === 0, issues }));
+  if (issues.length > 0) deps.log.error({ issues }, 'RECONCILIATION MISMATCH');
+  return issues;
 }

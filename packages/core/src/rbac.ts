@@ -53,6 +53,8 @@ export const ADMIN_PERMISSIONS = {
   // Turning a chain or token back ON (turning it off is kill_switch:manage).
   'registry:enable': ['superadmin'],
   'admins:manage': ['superadmin'],
+  // Admin console settings: the "needs a decision" queue and admin session lengths (D-106). Step-up 2FA on top.
+  'settings:manage': ['superadmin'],
 } as const satisfies Record<string, readonly AdminRole[]>;
 
 export type AdminPermission = keyof typeof ADMIN_PERMISSIONS;

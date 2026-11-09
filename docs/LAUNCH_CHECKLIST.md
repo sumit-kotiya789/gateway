@@ -24,9 +24,9 @@ Every item needs an owner and a date before launch.
 - [ ] `DATA_KEK` held in the secret manager (or KMS provider implemented); KEK rotation rehearsed
 - [ ] `SMTP_URL` points at a real relay; sending domain has SPF, DKIM and DMARC; a test verification and reset email arrive (not in spam)
 - [ ] `DASHBOARD_URL` is the public https dashboard origin
-- [ ] Signup decision: email verification is live (M10, D-077), or `SIGNUP_ENABLED=false`
+- [ ] Signup decision: email verification is live (M10, D-077), or sign-ups off (Settings, or `SIGNUP_ENABLED=false`)
 - [ ] App DB user is a member of `gw_app` only; owner credentials used by migrations only
-- [ ] `ADMIN_IP_ALLOWLIST` set (VPN / office ranges)
+- [ ] Admin IP allowlist on (Settings) and/or `ADMIN_IP_ALLOWLIST` set (VPN / office ranges); `TRUST_PROXY_HOPS` right (Settings shows your public IP)
 - [ ] Fee model per merchant agreed and set (rate, fixed, grace); prepaid top-up process (how merchants pay, who records) agreed (D-076)
 
 ## Custodial only (M7)
@@ -36,7 +36,8 @@ Every item needs an owner and a date before launch.
 - [ ] `SIGNER_LIMITS` set per live token (per transaction, per 24 h) and reviewed; `SIGNER_MAX_GAS_PRICE_GWEI` / `SIGNER_MAX_GAS_TOPUP` reviewed
 - [ ] Cold wallet multisig set up, signers documented; address registered (`platform:register`) and in `SIGNER_COLD_ADDRESSES`
 - [ ] Gas wallet funded and a low-balance alert agreed; hot wallet cap set in `infra/prometheus/alerts.yml`
-- [ ] `WITHDRAWAL_TWO_PERSON_MIN` agreed; at least two superadmins and two operators for approvals
+- [ ] Hot wallet limits set per live token (admin console, D-105): cap and alert level agreed; `SIGNER_AUTO_TO_COLD` decided and documented; low-balance email received in a drill
+- [ ] `WITHDRAWAL_TWO_PERSON_MIN` (ceiling) and the Settings threshold agreed; at least two superadmins and two operators for approvals
 - [ ] Payout fee per merchant agreed (covers payout gas); merchants told that live user payouts need their limits (D-100)
 
 ## Wallet-address (forwarder) mode only (M12)

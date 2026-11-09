@@ -5,9 +5,10 @@ import { eq } from 'drizzle-orm';
 import type { FastifyRequest, preHandlerAsyncHookHandler } from 'fastify';
 import { hmacSha256Hex, randomBase62, safeEqual } from '../../common/crypto/random.js';
 import { withSystem } from '../../common/db.js';
-import { apiKeys, merchants } from '../../db/schema.js';
+import { apiKeys, merchantSecuritySettings, merchants } from '../../db/schema.js';
 import type { Deps } from '../../deps.js';
 import { ipAllowed } from '../auth/guards.js';
+import { ipWhitelistAllows } from '../security/whitelist.js';
 
 const KEY_RE = /^(sk|pk)_(live|test)_([0-9A-Za-z]{10})([0-9A-Za-z]{32})$/;
 const LAST_USED_RESOLUTION_MS = 60_000;
@@ -60,9 +61,10 @@ async function authenticate(deps: Deps, req: FastifyRequest): Promise<AuthedApiK
   const now = deps.clock();
   const row = await withSystem(deps.db, async (tx) => {
     const [r] = await tx
-      .select({ key: apiKeys, merchantStatus: merchants.status })
+      .select({ key: apiKeys, merchantStatus: merchants.status, security: merchantSecuritySettings })
       .from(apiKeys)
       .innerJoin(merchants, eq(merchants.id, apiKeys.merchantId))
+      .leftJoin(merchantSecuritySettings, eq(merchantSecuritySettings.merchantId, apiKeys.merchantId))
       .where(eq(apiKeys.prefix, parsed.prefix));
     return r;
   });
@@ -72,7 +74,13 @@ async function authenticate(deps: Deps, req: FastifyRequest): Promise<AuthedApiK
   if (!row || !matches) throw fail();
   const k = row.key;
   if (k.revokedAt || (k.expiresAt && k.expiresAt.getTime() <= now) || row.merchantStatus !== 'active') throw fail();
+  // From here the key is known: refused requests still count in its analytics (D-110).
+  req.apiKeyAttempt = { id: k.id, merchantId: k.merchantId };
   if (k.ipAllowlist && !ipAllowed(req.ip, k.ipAllowlist)) throw new AppError('forbidden', 'request IP not allowed for this key');
+  // Account IP whitelist (D-109): secret keys only; publishable keys run in browsers.
+  if (k.kind === 'secret' && !ipWhitelistAllows(row.security ?? undefined, req.ip, now)) {
+    throw new AppError('forbidden', 'request IP is not on the account IP whitelist', { reason: 'ip_not_whitelisted' });
+  }
   if (!k.lastUsedAt || now - k.lastUsedAt.getTime() > LAST_USED_RESOLUTION_MS) {
     await withSystem(deps.db, (tx) => tx.update(apiKeys).set({ lastUsedAt: new Date(now) }).where(eq(apiKeys.id, k.id)));
   }

@@ -59,22 +59,44 @@ export const STRINGS = {
     testMode: 'TEST MODE: testnet funds only',
     received: 'Received',
     remaining: 'Remaining',
+    // Status panel (D-108): a short title and a line under it. Safety advice ("do not send funds") stays in the line.
     status: {
-      pending: 'Waiting for payment',
-      detected: 'Payment detected, waiting for confirmations',
-      confirming: 'Confirming payment',
-      paid: 'Payment complete',
-      overpaid: 'Payment complete (overpaid)',
-      settled: 'Payment complete',
-      underpaid: 'Partial payment received: send the remaining amount',
-      expired: 'This invoice has expired. Do not send funds.',
-      cancelled: 'This invoice was cancelled. Do not send funds.',
-      late_payment: 'Payment received after expiry. The merchant will contact you.',
-      partially_paid: 'Partial payment received and the invoice is closed. Do not send more; the merchant will contact you.',
-      failed: 'This invoice is closed. Do not send funds.',
-      held: 'Payment received and under review. The merchant will contact you.',
       created: 'Preparing invoice',
+      pending: 'Waiting for payment',
+      detected: 'Payment detected',
+      confirming: 'Confirming payment',
+      paid: 'Payment received',
+      overpaid: 'Payment received',
+      settled: 'Payment complete',
+      underpaid: 'Partial payment received',
+      expired: 'Invoice expired',
+      cancelled: 'Invoice cancelled',
+      late_payment: 'Payment arrived late',
+      partially_paid: 'Partially paid',
+      failed: 'Invoice closed',
+      held: 'Payment under review',
     } as Record<string, string>,
+    sub: {
+      created: 'One moment while the invoice is prepared.',
+      pending: 'Scan the QR code or pay from your wallet. This page updates by itself.',
+      detected: 'We can see your transfer. Waiting for the network to confirm it.',
+      confirming: 'Blocks are being added on top of your payment. Almost there.',
+      paid: 'Confirmed on chain. Finishing up with the merchant: you can keep this page open.',
+      overpaid: 'Confirmed on chain. You sent more than the amount: the merchant can refund the difference.',
+      settled: 'Thank you! Your payment is complete.',
+      underpaid: 'Send the remaining amount to the same address before the invoice expires.',
+      expired: 'Do not send funds. If you already did, contact the merchant.',
+      cancelled: 'Do not send funds. If you already did, contact the merchant.',
+      late_payment: 'Your payment arrived after the invoice expired. The merchant will contact you.',
+      partially_paid: 'The invoice closed with a partial payment. Do not send more; the merchant will contact you.',
+      failed: 'This invoice is closed. Do not send funds.',
+      held: 'Your payment arrived and is being reviewed. The merchant will contact you.',
+    } as Record<string, string>,
+    thanks: 'Thank you!',
+    doneMessage: (amount: string, symbol: string, merchant: string) => `Your payment of ${amount} ${symbol} to ${merchant} is complete.`,
+    paidLabel: 'Paid',
+    reference: 'Reference',
+    closeHint: 'You can close this page now.',
     returnToMerchant: 'Return to merchant',
     cancel: 'Cancel and return',
     notFound: 'Invoice not found',
@@ -137,15 +159,6 @@ background:linear-gradient(180deg,#45e46c,var(--accent2));box-shadow:0 1px 0 rgb
 box-shadow:0 1px 0 rgba(255,255,255,.4) inset,0 16px 36px -10px rgba(52,214,92,.95)}
 #timer{font-family:var(--mono);font-size:13px;background:rgba(255,255,255,.05);border:1px solid var(--line);border-radius:999px;padding:3px 10px}
 #walletmsg{font-size:13px;margin-top:8px;text-align:center;color:#ffb4b4}#walletmsg:empty{display:none}
-.status{display:flex;align-items:center;gap:10px;margin-top:18px;padding:12px 14px;border-radius:14px;border:1px solid var(--line);
-background:rgba(255,255,255,.03);font-weight:500;font-size:14px}
-.status::before{content:"";flex:none;width:9px;height:9px;border-radius:50%;background:var(--accent);animation:ping 1.6s infinite}
-.status.ok{color:#b8ffc8;border-color:rgba(52,214,92,.4);background:var(--soft)}
-.status.ok::before{animation:none;box-shadow:0 0 12px var(--accent)}
-.status.bad{color:#ffd0d0;border-color:rgba(255,107,107,.4);background:rgba(255,107,107,.08)}
-.status.bad::before{animation:none;background:var(--bad)}
-.status:empty{display:none}
-@keyframes ping{0%{box-shadow:0 0 0 0 rgba(52,214,92,.6)}70%,100%{box-shadow:0 0 0 9px rgba(52,214,92,0)}}
 a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
 .cancel{text-align:center;margin:16px 0 0;font-size:14px}.cancel a{color:var(--muted)}
 .desc{color:var(--fg2);margin:0 0 4px}
@@ -158,8 +171,24 @@ a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
 // Our own static SVG (the dashboard's brand mark).
 const MARK = `<svg viewBox="0 0 40 40" aria-hidden="true"><defs><linearGradient id="gw-mark" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#7dff9b"/><stop offset="1" stop-color="#0d7f2a"/></linearGradient></defs><rect width="40" height="40" rx="12" fill="url(#gw-mark)"/><path d="M27.5 14.2A9 9 0 1 0 29 22h-8.5" fill="none" stroke="#031007" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 
+export interface PageOpts {
+  title: string;
+  body: (nonce: string) => SafeHtml;
+  status?: number;
+  frameAncestor?: string;
+  /** Extra CSS appended to the shared stylesheet (same nonce). */
+  style?: string;
+}
+
+/** The whole document for a page; the nonce must match the response's CSP. */
+export function pageHtml(opts: PageOpts, nonce: string): string {
+  return html`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex"><title>${opts.title}</title><style nonce="${nonce}">${raw(STYLE + (opts.style ?? ''))}</style></head>
+<body><main>${opts.body(nonce)}<footer class="foot">${raw(MARK)}<span>${STRINGS.en.securedBy}</span></footer></main></body></html>`.value;
+}
+
 /** `frameAncestor`: the one merchant-allowlisted origin that may embed this page (widget), else never framed. */
-export function sendPage(reply: FastifyReply, opts: { title: string; body: (nonce: string) => SafeHtml; status?: number; frameAncestor?: string }) {
+export function sendPage(reply: FastifyReply, opts: PageOpts) {
   const nonce = randomBytes(16).toString('base64');
   const csp = [
     "default-src 'none'",
@@ -171,12 +200,10 @@ export function sendPage(reply: FastifyReply, opts: { title: string; body: (nonc
     "base-uri 'none'",
     `frame-ancestors ${opts.frameAncestor ?? "'none'"}`,
   ].join('; ');
-  const page = html`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="robots" content="noindex"><title>${opts.title}</title><style nonce="${nonce}">${raw(STYLE)}</style></head>
-<body><main>${opts.body(nonce)}<footer class="foot">${raw(MARK)}<span>${STRINGS.en.securedBy}</span></footer></main></body></html>`;
+  const page = pageHtml(opts, nonce);
   reply.status(opts.status ?? 200).header('content-security-policy', csp).header('cache-control', 'no-store').type('text/html; charset=utf-8');
   // X-Frame-Options cannot name an origin: embeddable pages rely on frame-ancestors alone (helmet sets SAMEORIGIN).
   if (opts.frameAncestor) reply.removeHeader('x-frame-options');
   else reply.header('x-frame-options', 'DENY');
-  return reply.send(page.value);
+  return reply.send(page);
 }

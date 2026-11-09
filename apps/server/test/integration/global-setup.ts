@@ -15,10 +15,6 @@ declare module 'vitest' {
   }
 }
 
-let pgc: StartedPostgreSqlContainer | undefined;
-let rc: StartedRedisContainer | undefined;
-let ac: StartedTestContainer | undefined;
-
 /**
  * Without Docker: point TEST_PG_URL (superuser, empty database), TEST_REDIS_URL and TEST_ANVIL_URL at services you run
  * yourself (tests that need Anvil fail without TEST_ANVIL_URL). Containers are used unless both PG and Redis are set.
@@ -26,9 +22,10 @@ let ac: StartedTestContainer | undefined;
 async function services() {
   const env = process.env;
   if (env.TEST_PG_URL && env.TEST_REDIS_URL) {
-    return { ownerUrl: env.TEST_PG_URL, redisUrl: env.TEST_REDIS_URL, anvilUrl: env.TEST_ANVIL_URL ?? 'http://127.0.0.1:1' };
+    return { ownerUrl: env.TEST_PG_URL, redisUrl: env.TEST_REDIS_URL, anvilUrl: env.TEST_ANVIL_URL ?? 'http://127.0.0.1:1', stop: async () => {} };
   }
-  [pgc, rc, ac] = await Promise.all([
+  // Locals, not module state: each test project (integration, integration-global) runs this setup and owns its containers.
+  const [pgc, rc, ac]: [StartedPostgreSqlContainer, StartedRedisContainer, StartedTestContainer] = await Promise.all([
     new PostgreSqlContainer('postgres:17-alpine').start(),
     new RedisContainer('redis:8-alpine').start(),
     // Local EVM chain (chain id 31337), 1 block per transaction, standard test mnemonic.
@@ -43,17 +40,21 @@ async function services() {
     ownerUrl: pgc.getConnectionUri(),
     redisUrl: rc.getConnectionUrl(),
     anvilUrl: `http://${ac.getHost()}:${String(ac.getMappedPort(8545))}`,
+    stop: async () => {
+      await Promise.all([pgc.stop(), rc.stop(), ac.stop()]);
+    },
   };
 }
 
 export default async function setup(project: TestProject) {
-  const { ownerUrl, redisUrl, anvilUrl } = await services();
+  const { ownerUrl, redisUrl, anvilUrl, stop } = await services();
   await runMigrations(ownerUrl, resolve(import.meta.dirname, '../../db/migrations'));
 
   // App connects as a non-owner LOGIN user in gw_app, exactly like production.
   const c = new pg.Client({ connectionString: ownerUrl });
   await c.connect();
-  await c.query(`CREATE ROLE gateway_app LOGIN PASSWORD 'app' IN ROLE gw_app`);
+  // Idempotent: with TEST_PG_URL both test projects set up the same database.
+  await c.query(`DO $$ BEGIN CREATE ROLE gateway_app LOGIN PASSWORD 'app' IN ROLE gw_app; EXCEPTION WHEN duplicate_object THEN NULL; END $$`);
   await c.end();
   const appUrl = new URL(ownerUrl);
   appUrl.username = 'gateway_app';
@@ -64,7 +65,5 @@ export default async function setup(project: TestProject) {
   project.provide('redisUrl', redisUrl);
   project.provide('anvilUrl', anvilUrl);
 
-  return async () => {
-    await Promise.all([pgc?.stop(), rc?.stop(), ac?.stop()]);
-  };
+  return stop;
 }

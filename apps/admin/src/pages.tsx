@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Alert, CopyField, EmptyState, ErrorBox, Field, Icon, Modal, Skeleton, Stat, StatusBadge, Submit, TotpInput, fmtDate, short, toast, useAction, useLoad, type IconName } from '../../dashboard/src/ui';
-import { RISK_FLAGS, api, totpHeader, type AdminAccount, type AdminCredentials, type AdminRole, type AdminWithdrawal, type AuditRow, type CustodyOverview, type Forward, type TreasuryTransfer, type FeeTopup, type Invoice, type Merchant, type MerchantDetail as MerchantData, type Page, type Registry as RegistryData } from './api';
+import { RISK_FLAGS, api, totpHeader, type AdminAccount, type AdminSettings, type AdminCredentials, type AdminRole, type AdminWithdrawal, type AuditRow, type CustodyOverview, type Forward, type HotWalletPolicy, type TreasuryTransfer, type FeeTopup, type Invoice, type Merchant, type MerchantDetail as MerchantData, type Page, type Registry as RegistryData } from './api';
 
 /** First page of a list, plus "load more" via the server cursor. Refetches when `path` changes. */
 interface Paged<T> {
@@ -427,12 +427,15 @@ export function Invoices(props: { merchantId?: string | undefined }) {
   const [status, setStatus] = useState('');
   const qs = new URLSearchParams(Object.entries({ limit: '50', status, merchant_id: props.merchantId ?? '' }).filter(([, v]) => v !== '')).toString();
   const p = usePaged<Invoice>(`/invoices?${qs}`);
+  // Which statuses "needs a decision" covers is a console setting (D-106).
+  const settings = useLoad(() => api<AdminSettings>('GET', '/settings'), []);
+  const attention = (settings.data?.attention_statuses ?? []).map(label).join(', ');
   return (
     <section>
       <header className="page-head">
         <h2>Invoices</h2>
         <select value={status} onChange={(e) => { setStatus(e.target.value); }} aria-label="Status">
-          <option value="">Needs a decision (underpaid, late payment)</option>
+          <option value="">{attention ? `Needs a decision (${attention})` : 'Needs a decision'}</option>
           {STATUSES.map((s) => (
             <option key={s} value={s}>{label(s)}</option>
           ))}
@@ -441,7 +444,7 @@ export function Invoices(props: { merchantId?: string | undefined }) {
       {props.merchantId && <p className="muted">Merchant <code>{props.merchantId}</code> · <a href="#/invoices">all merchants</a></p>}
       <ErrorBox error={p.error} />
       <ListState busy={p.busy} count={p.rows.length} icon="invoice" empty={status === '' ? 'Nothing needs a decision' : 'No invoices with this status'}>
-        Underpaid and late payments show up here for manual resolution.
+        {status === '' ? 'Invoices that wait for an admin show up here. Which statuses count is set in Settings.' : 'Pick another status above.'}
       </ListState>
       {p.rows.length > 0 && (
         <div className="table-wrap">
@@ -653,6 +656,27 @@ export function Registry(props: { manage: boolean; superadmin: boolean }) {
 
 const WITHDRAWAL_FILTERS = ['pending_approval', 'approved', 'sent', 'confirmed', 'failed', 'rejected', 'cancelled'];
 
+/** Shown under the withdrawal queue: what to check before approving. */
+function ApprovalChecklist() {
+  const settings = useLoad(() => api<AdminSettings>('GET', '/settings'), []);
+  const min = settings.data?.withdrawal_two_person_effective;
+  const items = [
+    'The merchant and the amount match its history.',
+    'The payout address was not changed recently (audit log).',
+    min ? `Live withdrawals of ${min} or more need two different admins.` : 'Large live withdrawals need two different admins.',
+  ];
+  return (
+    <div className="card flat checklist">
+      <h4><Icon name="shield" size={16} />Before approving</h4>
+      <ul>
+        {items.map((x) => (
+          <li key={x}><Icon name="check" size={16} />{x}</li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 export function WithdrawalQueue(props: { selfId: string; canApprove: boolean }) {
   const [status, setStatus] = useState('pending_approval');
   const r = useLoad(() => api<{ data: AdminWithdrawal[] }>('GET', `/withdrawals/?status=${status}`), [status]);
@@ -664,10 +688,6 @@ export function WithdrawalQueue(props: { selfId: string; canApprove: boolean }) 
           {WITHDRAWAL_FILTERS.map((s) => <option key={s} value={s}>{label(s)}</option>)}
         </select>
       </header>
-      <Alert tone="info">
-        Before approving: check the merchant and the amount against its history, and that the payout address was not changed recently (audit
-        log). Large withdrawals need two different admins.
-      </Alert>
       <ErrorBox error={r.error} />
       {!r.data && !r.error && <Skeleton />}
       {r.data?.data.length === 0 && <EmptyState icon="wallet" title="Nothing here" />}
@@ -708,6 +728,7 @@ export function WithdrawalQueue(props: { selfId: string; canApprove: boolean }) 
           </table>
         </div>
       )}
+      {status === 'pending_approval' && <ApprovalChecklist />}
     </section>
   );
 }
@@ -775,16 +796,95 @@ function NewTreasury(props: { onDone: () => void }) {
   );
 }
 
+/** Cap and low-balance alert of the hot wallet for one mode and token (D-105). Empty = off. */
+function HotWalletPolicyForm(props: { initial?: HotWalletPolicy; onDone: () => void; label: string; sm?: boolean }) {
+  const init = props.initial;
+  const blank = { livemode: init?.livemode ?? false, token: init?.token ?? 'bsc-testnet:usdt', max_balance: init?.max_balance ?? '', low_balance: init?.low_balance ?? '', reason: '' };
+  const [open, setOpen] = useState(false);
+  const [form, setForm] = useState(blank);
+  const [code, setCode] = useState('');
+  const a = useAction();
+  const close = () => {
+    setOpen(false);
+    setCode('');
+  };
+  return (
+    <>
+      <button
+        type="button"
+        className={props.sm ? 'sm secondary' : 'sm'}
+        onClick={() => {
+          setForm(blank);
+          setOpen(true);
+        }}
+      >
+        <Icon name={init ? 'shield' : 'plus'} size={16} />
+        {props.label}
+      </button>
+      {open && (
+        <Modal title="Hot wallet limits" icon="lock" onClose={close}>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              void a.run(async () => {
+                const v = (x: string) => (x.trim() === '' ? null : x.trim());
+                await api('PUT', '/custody/hot-wallet-policies', { livemode: form.livemode, token: form.token.trim(), max_balance: v(form.max_balance), low_balance: v(form.low_balance), reason: form.reason.trim() }, totpHeader(code));
+                close();
+                toast.success('Hot wallet limits saved');
+                props.onDone();
+              });
+            }}
+          >
+            <div className="row">
+              <Field label="Mode">
+                <select value={String(form.livemode)} disabled={Boolean(init)} onChange={(e) => { setForm({ ...form, livemode: e.target.value === 'true' }); }}>
+                  <option value="false">test</option>
+                  <option value="true">live</option>
+                </select>
+              </Field>
+              <Field label="Token"><input value={form.token} readOnly={Boolean(init)} onChange={(e) => { setForm({ ...form, token: e.target.value }); }} required spellCheck={false} /></Field>
+            </div>
+            <div className="row">
+              <Field label="Cap (move the rest to cold)" hint="Above this, the excess goes to cold storage automatically. Empty = off.">
+                <input value={form.max_balance} onChange={(e) => { setForm({ ...form, max_balance: e.target.value }); }} inputMode="decimal" placeholder="e.g. 1500" />
+              </Field>
+              <Field label="Alert below" hint="Below this, treasury admins get an email (again every 24 h). Empty = off.">
+                <input value={form.low_balance} onChange={(e) => { setForm({ ...form, low_balance: e.target.value }); }} inputMode="decimal" placeholder="e.g. 500" />
+              </Field>
+            </div>
+            <Alert tone="info">Automatic transfers go only to the registered cold wallet, and only if the signer runs with SIGNER_AUTO_TO_COLD=true; otherwise they wait.</Alert>
+            <Field label="Reason" hint="Recorded in the audit log."><input value={form.reason} onChange={(e) => { setForm({ ...form, reason: e.target.value }); }} minLength={3} maxLength={500} required /></Field>
+            <TotpInput value={code} onChange={setCode} />
+            <ErrorBox error={a.error} />
+            <div className="row end">
+              <button type="button" className="secondary" onClick={close}>Cancel</button>
+              <Submit busy={a.busy}>Save</Submit>
+            </div>
+          </form>
+        </Modal>
+      )}
+    </>
+  );
+}
+
+const POLICY_STATE: Record<'low' | 'above_cap' | 'ok', [string, string]> = {
+  low: ['badge s-failed', 'below alert'],
+  above_cap: ['badge s-pending', 'above cap'],
+  ok: ['badge s-active', 'ok'],
+};
+
 export function Custody(props: { selfId: string; manage: boolean; superadmin: boolean }) {
   const r = useLoad(() => api<CustodyOverview>('GET', '/custody/'), []);
   const t = useLoad(() => api<{ data: TreasuryTransfer[] }>('GET', '/custody/treasury'), []);
   const fw = useLoad(() => api<{ data: Forward[] }>('GET', '/custody/forwards'), []);
+  const hp = useLoad(() => api<{ data: HotWalletPolicy[] }>('GET', '/custody/hot-wallet-policies'), []);
   if (r.error) return <ErrorBox error={r.error} />;
   if (!r.data) return <Skeleton />;
   const d = r.data;
   const reload = () => {
     r.reload();
     t.reload();
+    hp.reload();
   };
   return (
     <section>
@@ -865,6 +965,36 @@ export function Custody(props: { selfId: string; manage: boolean; superadmin: bo
         </>
       )}
 
+      <div className="page-head section-title">
+        <h3>Hot wallet limits</h3>
+        {props.manage && <HotWalletPolicyForm label="Set limits" onDone={reload} />}
+      </div>
+      <p className="muted">Above the cap, the excess moves to cold storage automatically. Below the alert level, treasury admins get an email so they can refill the hot wallet. Checked every 15 seconds by the custody worker.</p>
+      <ErrorBox error={hp.error} />
+      {hp.data?.data.length === 0 && <EmptyState icon="lock" title="No hot wallet limits yet" />}
+      {hp.data && hp.data.data.length > 0 && (
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Token</th><th className="num">Hot wallet now</th><th className="num">Cap</th><th className="num">Alert below</th><th>Last check</th><th>Last alert</th><th></th></tr>
+            </thead>
+            <tbody>
+              {hp.data.data.map((p) => (
+                <tr key={`${String(p.livemode)}:${p.token}`}>
+                  <td><code>{p.token}</code> {p.livemode ? <span className="badge s-active">live</span> : <span className="badge">test</span>}</td>
+                  <td className="num">{p.last_balance ?? '—'} {p.symbol} {p.state && <span className={POLICY_STATE[p.state][0]}>{POLICY_STATE[p.state][1]}</span>}</td>
+                  <td className="num">{p.max_balance ?? <span className="muted">off</span>}</td>
+                  <td className="num">{p.low_balance ?? <span className="muted">off</span>}</td>
+                  <td>{p.last_checked_at ? fmtDate(p.last_checked_at) : <span className="muted">not yet</span>}</td>
+                  <td>{p.low_alert_at ? fmtDate(p.low_alert_at) : <span className="muted">—</span>}</td>
+                  <td>{props.manage && <HotWalletPolicyForm initial={p} label="Edit" sm onDone={reload} />}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
       <h3 className="section-title">Platform wallets</h3>
       <div className="table-wrap">
         <table>
@@ -897,7 +1027,7 @@ export function Custody(props: { selfId: string; manage: boolean; superadmin: bo
               {t.data.data.map((x) => (
                 <tr key={x.id}>
                   <td>{fmtDate(x.created_at)} {x.livemode ? <span className="badge s-active">live</span> : <span className="badge">test</span>}</td>
-                  <td>{x.direction === 'to_cold' ? 'hot → cold' : 'cold → hot'}</td>
+                  <td>{x.direction === 'to_cold' ? 'hot → cold' : 'cold → hot'} {x.auto && <span className="badge">auto</span>}</td>
                   <td className="num">{x.amount} <code>{x.token}</code></td>
                   <td><StatusBadge status={x.status} />{x.last_error && <small className="muted"> {x.last_error}</small>}</td>
                   <td>{x.reason}</td>
@@ -1311,6 +1441,386 @@ export function BlockedPayers(props: { manage: boolean }) {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------- settings (D-106, D-107): one place for platform rules
+
+type Attention = AdminSettings['attention_statuses'][number];
+type IpRow = AdminSettings['ip_allowlist'][number];
+interface SettingsDraft {
+  attention_statuses: Attention[];
+  session_idle_minutes: number;
+  session_max_hours: number;
+  ip_allowlist_enabled: boolean;
+  ip_allowlist: IpRow[];
+  /** '' = the server limit. */
+  withdrawal_two_person_min: string;
+  signup_enabled: boolean;
+  merchant_defaults: { fee_bps: string; fee_fixed: string; fee_grace: string; payout_fee: string; underpay_tolerance_bps: string };
+  whitelist_activation_hours: number;
+  whitelist_disable_hours: number;
+}
+
+const draftOf = (s: AdminSettings): SettingsDraft => ({
+  attention_statuses: [...s.attention_statuses].sort(),
+  session_idle_minutes: s.session_idle_minutes,
+  session_max_hours: s.session_max_hours,
+  ip_allowlist_enabled: s.ip_allowlist_enabled,
+  ip_allowlist: s.ip_allowlist,
+  withdrawal_two_person_min: s.withdrawal_two_person_min ?? '',
+  signup_enabled: s.signup_enabled,
+  merchant_defaults: {
+    fee_bps: String(s.merchant_defaults.fee_bps),
+    fee_fixed: s.merchant_defaults.fee_fixed,
+    fee_grace: s.merchant_defaults.fee_grace,
+    payout_fee: s.merchant_defaults.payout_fee,
+    underpay_tolerance_bps: String(s.merchant_defaults.underpay_tolerance_bps),
+  },
+  whitelist_activation_hours: s.whitelist_activation_hours,
+  whitelist_disable_hours: s.whitelist_disable_hours,
+});
+
+/** Which card each draft field belongs to, for the save summary. */
+const SECTION_OF: Record<keyof SettingsDraft, string> = {
+  attention_statuses: 'Needs a decision',
+  session_idle_minutes: 'Sessions',
+  session_max_hours: 'Sessions',
+  ip_allowlist_enabled: 'Admin IP allowlist',
+  ip_allowlist: 'Admin IP allowlist',
+  withdrawal_two_person_min: 'Withdrawals',
+  signup_enabled: 'Merchants',
+  merchant_defaults: 'Merchants',
+  whitelist_activation_hours: 'Merchant whitelists',
+  whitelist_disable_hours: 'Merchant whitelists',
+};
+
+const ATTENTION_OPTIONS: { status: Attention; title: string; text: string }[] = [
+  { status: 'late_payment', title: 'Late payment', text: 'Paid after the invoice expired or was cancelled. Never credited automatically: an admin accepts it.' },
+  { status: 'held', title: 'Held for risk review', text: 'A risk rule (blocked payer, merchant limit) held a confirmed payment. Only an admin can release or reject it.' },
+  { status: 'underpaid', title: 'Underpaid', text: 'Less than the amount arrived. The customer can still top up until the deadline; custodial invoices then close by themselves as partially paid.' },
+];
+const IDLE_PRESETS = [15, 30, 60, 120, 240];
+const MAX_PRESETS = [4, 8, 12, 24];
+const WL_PRESETS = [1, 6, 12, 24, 48, 72];
+const fmtMinutes = (m: number) => (m % 60 === 0 ? `${String(m / 60)} h` : `${String(m)} min`);
+/** Presets plus the saved value when it is not one of them (set through the API). */
+const withValue = (presets: number[], v: number) => (presets.includes(v) ? presets : [...presets, v].sort((a, b) => a - b));
+
+const ipv4 = (s: string): number | null => {
+  const parts = s.split('.');
+  if (parts.length !== 4) return null;
+  let n = 0;
+  for (const x of parts) {
+    if (!/^\d{1,3}$/.test(x) || Number(x) > 255) return null;
+    n = n * 256 + Number(x);
+  }
+  return n;
+};
+/** UI hint only (the server decides): does an allowlist entry cover this address? IPv4 CIDRs, otherwise exact match. */
+function covers(entry: string, ip: string): boolean {
+  const [addr = '', bits] = entry.split('/');
+  const a = ipv4(addr);
+  const b = ipv4(ip.replace(/^::ffff:/i, ''));
+  if (a === null || b === null) return addr.toLowerCase() === ip.toLowerCase();
+  const size = 2 ** (32 - (bits === undefined ? 32 : Number(bits)));
+  return Math.floor(a / size) === Math.floor(b / size);
+}
+const PRIVATE_IP = /^(::ffff:)?(10\.|127\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)|^(::1|f[cd][0-9a-f]{2}:)/i;
+
+function Switch(props: { checked: boolean; disabled?: boolean; label: string; onChange: (v: boolean) => void }) {
+  return (
+    <label className="switch">
+      <input type="checkbox" role="switch" aria-label={props.label} checked={props.checked} disabled={props.disabled} onChange={(e) => { props.onChange(e.target.checked); }} />
+      <span className="track" aria-hidden="true" />
+    </label>
+  );
+}
+
+function Presets(props: { values: number[]; value: number; disabled: boolean; fmt: (v: number) => string; label: string; onChange: (v: number) => void }) {
+  return (
+    <div className="mode presets" role="group" aria-label={props.label}>
+      {props.values.map((v) => (
+        <button key={v} type="button" className={v === props.value ? 'on' : ''} aria-pressed={v === props.value} disabled={props.disabled} onClick={() => { props.onChange(v); }}>
+          {props.fmt(v)}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function CardHead(props: { icon: IconName; title: string; children: string }) {
+  return (
+    <header>
+      <span className="card-icon"><Icon name={props.icon} /></span>
+      <div>
+        <h3>{props.title}</h3>
+        <p>{props.children}</p>
+      </div>
+    </header>
+  );
+}
+
+const SETTINGS_SECTIONS: [string, string][] = [
+  ['set-queue', 'Needs a decision'],
+  ['set-sessions', 'Sessions'],
+  ['set-ip', 'IP allowlist'],
+  ['set-withdrawals', 'Withdrawals'],
+  ['set-merchants', 'Merchants'],
+  ['set-whitelists', 'Merchant whitelists'],
+];
+
+export function Settings(props: { superadmin: boolean }) {
+  const r = useLoad(() => api<AdminSettings>('GET', '/settings'), []);
+  const [draft, setDraft] = useState<SettingsDraft | null>(null);
+  const [newIp, setNewIp] = useState({ cidr: '', label: '' });
+  if (r.error) return <ErrorBox error={r.error} />;
+  if (!r.data) return <Skeleton />;
+  const saved = r.data;
+  const base = draftOf(saved);
+  const cur = draft ?? base;
+  const changed = (Object.keys(base) as (keyof SettingsDraft)[]).filter((k) => JSON.stringify(cur[k]) !== JSON.stringify(base[k]));
+  const locked = !props.superadmin;
+  const set = (patch: Partial<SettingsDraft>) => { setDraft({ ...cur, ...patch }); };
+  const setDefault = (k: keyof SettingsDraft['merchant_defaults'], v: string) => { set({ merchant_defaults: { ...cur.merchant_defaults, [k]: v } }); };
+  const p = saved.platform;
+  const me = saved.request_ip;
+  const selfAllowed = cur.ip_allowlist.some((e) => covers(e.cidr, me));
+  const addIp = (row: IpRow) => {
+    const cidr = row.cidr.trim().toLowerCase();
+    if (!cidr || cur.ip_allowlist.some((e) => e.cidr === cidr)) return;
+    set({ ip_allowlist: [...cur.ip_allowlist, { cidr, label: row.label.trim() }] });
+  };
+  const sections = [...new Set(changed.map((k) => SECTION_OF[k]))];
+
+  return (
+    <section className="settings">
+      <header className="page-head">
+        <h2>Settings</h2>
+        {saved.updated_at && <span className="page-meta"><Icon name="clock" size={14} />Last changed {fmtDate(saved.updated_at)}</span>}
+      </header>
+      <p className="lede">Every platform rule in one place. Changes need a superadmin and a fresh authenticator code, apply at once and are recorded in the audit log.</p>
+      <nav className="settings-nav" aria-label="Sections">
+        {SETTINGS_SECTIONS.map(([id, name]) => (
+          <button key={id} type="button" className="chip-link" onClick={() => { document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}>
+            {name}
+          </button>
+        ))}
+      </nav>
+      {locked && <Alert tone="info">Only a superadmin can change these settings. You can see them.</Alert>}
+
+      <div className="card setting-card" id="set-queue">
+        <CardHead icon="invoice" title="Needs a decision">Which invoices wait in the Invoices queue for an admin. The status filter there still shows any status.</CardHead>
+        {ATTENTION_OPTIONS.map((o) => {
+          const on = cur.attention_statuses.includes(o.status);
+          return (
+            <div className="setting-row" key={o.status}>
+              <div className="setting-text">
+                <strong>{o.title} <StatusBadge status={o.status} /></strong>
+                <span>{o.text}</span>
+              </div>
+              <Switch
+                label={o.title}
+                checked={on}
+                disabled={locked || (on && cur.attention_statuses.length === 1)}
+                onChange={(v) => { set({ attention_statuses: (v ? [...cur.attention_statuses, o.status] : cur.attention_statuses.filter((x) => x !== o.status)).sort() }); }}
+              />
+            </div>
+          );
+        })}
+        <div className="setting-foot"><Icon name="info" size={14} />At least one status stays on.</div>
+      </div>
+
+      <div className="card setting-card" id="set-sessions">
+        <CardHead icon="clock" title="Sessions">Working in the console keeps you signed in. Only idle time counts, up to the absolute limit.</CardHead>
+        <div className="setting-row">
+          <div className="setting-text">
+            <strong>Sign out after inactivity</strong>
+            <span>No request for this long ends the session.</span>
+          </div>
+          <Presets label="Sign out after inactivity" values={withValue(IDLE_PRESETS, cur.session_idle_minutes)} value={cur.session_idle_minutes} disabled={locked} fmt={fmtMinutes} onChange={(v) => { set({ session_idle_minutes: v }); }} />
+        </div>
+        <div className="setting-row">
+          <div className="setting-text">
+            <strong>Sign in again after</strong>
+            <span>However active, a session ends this long after sign-in.</span>
+          </div>
+          <Presets label="Sign in again after" values={withValue(MAX_PRESETS, cur.session_max_hours)} value={cur.session_max_hours} disabled={locked} fmt={(h) => `${String(h)} h`} onChange={(v) => { set({ session_max_hours: v }); }} />
+        </div>
+        <div className="setting-foot"><Icon name="info" size={14} />Applies to every open session from its next request.</div>
+      </div>
+
+      <div className="card setting-card" id="set-ip">
+        <CardHead icon="shield" title="Admin IP allowlist">When on, the admin console and its API answer only these addresses. Everyone else gets "not found", even on the sign-in page.</CardHead>
+        <div className="setting-row">
+          <div className="setting-text">
+            <strong>Only allow listed addresses {saved.ip_allowlist_enabled ? <span className="badge s-active">enforced</span> : <span className="badge">off</span>}</strong>
+            <span>{cur.ip_allowlist.length === 0 ? 'Add at least one address below first.' : `${String(cur.ip_allowlist.length)} ${cur.ip_allowlist.length === 1 ? 'address' : 'addresses'} on the list.`}</span>
+          </div>
+          <Switch label="Only allow listed addresses" checked={cur.ip_allowlist_enabled} disabled={locked || (!cur.ip_allowlist_enabled && cur.ip_allowlist.length === 0)} onChange={(v) => { set({ ip_allowlist_enabled: v }); }} />
+        </div>
+        <div className="setting-row">
+          <div className="setting-text">
+            <strong>Your address <code>{me}</code> {selfAllowed && <span className="badge s-active">on the list</span>}</strong>
+            <span>
+              {PRIVATE_IP.test(me)
+                ? 'This is a private address: the server probably sees its proxy, not you. Set TRUST_PROXY_HOPS on the server before relying on the allowlist.'
+                : 'As the server sees it. Add it before switching the allowlist on.'}
+            </span>
+          </div>
+          {!locked && (
+            <button type="button" className="secondary sm" disabled={cur.ip_allowlist.some((e) => e.cidr === me)} onClick={() => { addIp({ cidr: me, label: 'Added from the console' }); }}>
+              <Icon name="plus" size={14} />Add my address
+            </button>
+          )}
+        </div>
+        {cur.ip_allowlist.map((e) => (
+          <div className="setting-row ip-row" key={e.cidr}>
+            <div className="setting-text">
+              <strong><code>{e.cidr}</code> {covers(e.cidr, me) && <span className="badge s-current">you</span>}</strong>
+              <span>{e.label || 'No label'}</span>
+            </div>
+            {!locked && (
+              <button type="button" className="ghost icon-only" aria-label={`Remove ${e.cidr}`} title="Remove" onClick={() => { set({ ip_allowlist: cur.ip_allowlist.filter((x) => x.cidr !== e.cidr) }); }}>
+                <Icon name="trash" size={16} />
+              </button>
+            )}
+          </div>
+        ))}
+        {!locked && (
+          <form
+            className="setting-row ip-add"
+            onSubmit={(ev) => {
+              ev.preventDefault();
+              addIp(newIp);
+              setNewIp({ cidr: '', label: '' });
+            }}
+          >
+            <input value={newIp.cidr} onChange={(ev) => { setNewIp({ ...newIp, cidr: ev.target.value }); }} placeholder="203.0.113.7 or 203.0.113.0/24" aria-label="IP address or CIDR" spellCheck={false} required />
+            <input value={newIp.label} onChange={(ev) => { setNewIp({ ...newIp, label: ev.target.value }); }} placeholder="Label, e.g. Office" aria-label="Label" maxLength={60} />
+            <button type="submit" className="secondary sm"><Icon name="plus" size={14} />Add</button>
+          </form>
+        )}
+        {cur.ip_allowlist_enabled && !selfAllowed && <div className="setting-row"><Alert tone="warning">Your address is not on the list, so saving would lock you out. The server refuses that: add your address first.</Alert></div>}
+        <div className="setting-foot">
+          <Icon name="info" size={14} />
+          {p.admin_ip_allowlist_env > 0 ? `The server also enforces its own list (${String(p.admin_ip_allowlist_env)} entries): both apply.` : 'Locked out? The runbook shows how to switch it off from the database.'}
+        </div>
+      </div>
+
+      <div className="card setting-card" id="set-withdrawals">
+        <CardHead icon="wallet" title="Withdrawals">Who has to approve a merchant's live withdrawal before the signer sends it.</CardHead>
+        <div className="setting-row">
+          <div className="setting-text">
+            <strong>Two admins from <span className="badge s-pending">now {saved.withdrawal_two_person_effective} tokens</span></strong>
+            <span>
+              A live withdrawal of this many tokens or more needs two different admins; a smaller one needs one admin; test mode needs none. At most {p.withdrawal_two_person_max} (the server's limit), so the console can
+              only make this stricter. Applies to withdrawals requested after saving.
+            </span>
+          </div>
+          <div className="input-suffix">
+            <input
+              value={cur.withdrawal_two_person_min}
+              onChange={(e) => { set({ withdrawal_two_person_min: e.target.value.replace(/[^\d]/g, '') }); }}
+              placeholder={p.withdrawal_two_person_max}
+              inputMode="numeric"
+              aria-label="Two admins from (tokens)"
+              disabled={locked}
+            />
+            <span>tokens</span>
+          </div>
+        </div>
+        <div className="setting-foot"><Icon name="info" size={14} />Empty = the server's limit ({p.withdrawal_two_person_max}). Counted in token units, whatever the token: 10000 means 10,000 USDT.</div>
+      </div>
+
+      <div className="card setting-card" id="set-merchants">
+        <CardHead icon="store" title="Merchants">Who can join, and what a new merchant starts with.</CardHead>
+        <div className="setting-row">
+          <div className="setting-text">
+            <strong>New merchant sign-ups</strong>
+            <span>{p.signup_allowed ? 'When off, the dashboard sign-up form is refused; existing merchants are not affected.' : 'Closed by the server (SIGNUP_ENABLED=false), whatever this switch says.'}</span>
+          </div>
+          <Switch label="New merchant sign-ups" checked={cur.signup_enabled} disabled={locked} onChange={(v) => { set({ signup_enabled: v }); }} />
+        </div>
+        <div className="setting-row stack">
+          <div className="setting-text">
+            <strong>Defaults for new merchants</strong>
+            <span>Existing merchants keep their values; change those on the merchant page.</span>
+          </div>
+          <div className="form-grid">
+            <Field label="Fee rate (bps)" hint="100 bps = 1% of each invoice."><input value={cur.merchant_defaults.fee_bps} onChange={(e) => { setDefault('fee_bps', e.target.value); }} inputMode="numeric" disabled={locked} /></Field>
+            <Field label="Fixed fee per invoice" hint="Token units, added to the rate."><input value={cur.merchant_defaults.fee_fixed} onChange={(e) => { setDefault('fee_fixed', e.target.value); }} inputMode="decimal" disabled={locked} /></Field>
+            <Field label="Fee grace" hint="How far live prepaid fees may go below zero."><input value={cur.merchant_defaults.fee_grace} onChange={(e) => { setDefault('fee_grace', e.target.value); }} inputMode="decimal" disabled={locked} /></Field>
+            <Field label="Payout fee" hint="Per payout to a merchant's user, token units."><input value={cur.merchant_defaults.payout_fee} onChange={(e) => { setDefault('payout_fee', e.target.value); }} inputMode="decimal" disabled={locked} /></Field>
+            <Field label="Underpay tolerance (bps)" hint="Paid this much short still counts as paid. 50 = 0.5%."><input value={cur.merchant_defaults.underpay_tolerance_bps} onChange={(e) => { setDefault('underpay_tolerance_bps', e.target.value); }} inputMode="numeric" disabled={locked} /></Field>
+          </div>
+        </div>
+      </div>
+
+      <div className="card setting-card" id="set-whitelists">
+        <CardHead icon="lock" title="Merchant whitelists">The waits that protect merchants' payout address and API IP whitelists if their account is taken over.</CardHead>
+        <div className="setting-row">
+          <div className="setting-text">
+            <strong>New live payout address usable after</strong>
+            <span>A whitelisted address added in live mode waits this long before payouts can go there; owners are emailed at once. Test mode: no wait.</span>
+          </div>
+          <Presets label="New live payout address usable after" values={withValue(WL_PRESETS, cur.whitelist_activation_hours)} value={cur.whitelist_activation_hours} disabled={locked} fmt={(h) => `${String(h)} h`} onChange={(v) => { set({ whitelist_activation_hours: v }); }} />
+        </div>
+        <div className="setting-row">
+          <div className="setting-text">
+            <strong>Switching a whitelist off takes</strong>
+            <span>The merchant can cancel until then; owners are emailed when it is scheduled.</span>
+          </div>
+          <Presets label="Switching a whitelist off takes" values={withValue(WL_PRESETS, cur.whitelist_disable_hours)} value={cur.whitelist_disable_hours} disabled={locked} fmt={(h) => `${String(h)} h`} onChange={(v) => { set({ whitelist_disable_hours: v }); }} />
+        </div>
+        <div className="setting-foot"><Icon name="info" size={14} />Between 1 and 168 hours. Applies to additions and switch-offs requested after saving.</div>
+      </div>
+
+      {changed.length > 0 && (
+        <div className="savebar" role="region" aria-label="Unsaved changes">
+          <span className="savebar-text"><span className="dot" aria-hidden="true" />Unsaved: {sections.join(', ')}</span>
+          <div className="row">
+            <button type="button" className="ghost sm" onClick={() => { setDraft(null); }}>Discard</button>
+            <ReasonAction
+              label="Save changes"
+              totp
+              primary
+              sm
+              message={`Saves: ${sections.join(', ')}. Applies at once.`}
+              onSubmit={async (reason, h) => {
+                const d = cur.merchant_defaults;
+                await api(
+                  'PUT',
+                  '/settings',
+                  {
+                    attention_statuses: cur.attention_statuses,
+                    session_idle_minutes: cur.session_idle_minutes,
+                    session_max_hours: cur.session_max_hours,
+                    ip_allowlist_enabled: cur.ip_allowlist_enabled,
+                    ip_allowlist: cur.ip_allowlist,
+                    withdrawal_two_person_min: cur.withdrawal_two_person_min.trim() || null,
+                    signup_enabled: cur.signup_enabled,
+                    merchant_defaults: {
+                      fee_bps: Number(d.fee_bps),
+                      fee_fixed: d.fee_fixed.trim(),
+                      fee_grace: d.fee_grace.trim(),
+                      payout_fee: d.payout_fee.trim(),
+                      underpay_tolerance_bps: Number(d.underpay_tolerance_bps),
+                    },
+                    whitelist_activation_hours: cur.whitelist_activation_hours,
+                    whitelist_disable_hours: cur.whitelist_disable_hours,
+                    reason,
+                  },
+                  h,
+                );
+                setDraft(null);
+                r.reload();
+              }}
+            />
+          </div>
         </div>
       )}
     </section>

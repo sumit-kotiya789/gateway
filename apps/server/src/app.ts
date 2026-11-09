@@ -36,6 +36,11 @@ import { paymentLinkRoutes, publicPayRoutes } from './modules/payment-links/paym
 import { subMerchantDashboardRoutes, subMerchantRoutes } from './modules/sub-merchants/sub-merchants.routes.js';
 import { adminUserRoutes } from './modules/admin/admins.routes.js';
 import { adminRoutes } from './modules/admin/admin.routes.js';
+import { adminSettingsRoutes } from './modules/admin/settings.routes.js';
+import { recordApiUsage } from './modules/api-keys/usage.js';
+import { whitelistRoutes } from './modules/security/whitelist.routes.js';
+import { apiKeyAnalyticsRoutes } from './modules/api-keys/analytics.routes.js';
+import { overviewRoutes } from './modules/dashboard/overview.routes.js';
 import { adminAuthRoutes } from './modules/auth/admin-auth.routes.js';
 import { dashboardAuthRoutes } from './modules/auth/dashboard-auth.routes.js';
 import { requireAdminNetwork } from './modules/auth/guards.js';
@@ -64,6 +69,7 @@ export function buildApp(logger: FastifyBaseLogger, deps?: Deps) {
   app.decorateRequest('user', null);
   app.decorateRequest('admin', null);
   app.decorateRequest('apiKey', null);
+  app.decorateRequest('apiKeyAttempt', null);
 
   app.addHook('onRequest', async (req, reply) => {
     reply.header('x-request-id', req.id);
@@ -106,6 +112,8 @@ export function buildApp(logger: FastifyBaseLogger, deps?: Deps) {
   const http = new HttpMetrics();
   app.addHook('onResponse', async (req, reply) => {
     http.observe(req.method, req.routeOptions.url, reply.statusCode, reply.elapsedTime / 1000);
+    // API key analytics (D-110): after the response is sent.
+    if (req.apiKey || req.apiKeyAttempt) await recordApiUsage(deps, req, reply);
   });
   void app.register(metricsRoutes(deps, http));
 
@@ -159,6 +167,9 @@ export function buildApp(logger: FastifyBaseLogger, deps?: Deps) {
   void app.register(withdrawalDashboardRoutes(deps), { prefix: '/v1/dashboard/withdrawals' });
   void app.register(depositAccountDashboardRoutes(deps), { prefix: '/v1/dashboard/deposit-accounts' });
   void app.register(settingsDashboardRoutes(deps), { prefix: '/v1/dashboard/settings' });
+  void app.register(whitelistRoutes(deps), { prefix: '/v1/dashboard/security/whitelist' });
+  void app.register(apiKeyAnalyticsRoutes(deps), { prefix: '/v1/dashboard/api-keys' });
+  void app.register(overviewRoutes(deps), { prefix: '/v1/dashboard/overview' });
   void app.register(subMerchantDashboardRoutes(deps), { prefix: '/v1/dashboard/sub-merchants' });
   void app.register(inviteAuthRoutes(deps), { prefix: '/v1/dashboard/auth/invite' });
   void app.register(accountRoutes(deps), { prefix: '/v1' });
@@ -178,6 +189,7 @@ export function buildApp(logger: FastifyBaseLogger, deps?: Deps) {
       await admin.register(adminAuthRoutes(deps), { prefix: '/auth' });
       await admin.register(adminRoutes(deps));
       await admin.register(adminUserRoutes(deps), { prefix: '/admins' });
+      await admin.register(adminSettingsRoutes(deps), { prefix: '/settings' });
       await admin.register(withdrawalAdminRoutes(deps), { prefix: '/withdrawals' });
       await admin.register(custodyAdminRoutes(deps), { prefix: '/custody' });
     },

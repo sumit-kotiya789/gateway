@@ -60,6 +60,10 @@ const schema = z
     // Forwarder flushes (D-097): at most this many signed per 24 h, each at most this much gas (the gas wallet pays).
     SIGNER_MAX_FORWARDS_PER_DAY: z.coerce.number().int().min(1).max(1_000_000).default(10_000),
     SIGNER_MAX_FORWARD_GAS: z.coerce.number().int().min(100_000).max(5_000_000).default(1_500_000),
+    // Hot wallet policy (D-105): sign automatic hot -> cold transfers (no admin approval) for the excess over the cap
+    // an admin set. Off by default: the operator of the signer host opts in. They can still only reach
+    // SIGNER_COLD_ADDRESSES.
+    SIGNER_AUTO_TO_COLD: z.stringbool().default(false),
     // Emergency stop from the signer's own config, independent of the admin switch in the database.
     SIGNER_PAUSED: z.stringbool().default(false),
   })

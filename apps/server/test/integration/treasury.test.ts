@@ -31,9 +31,10 @@ afterAll(async () => {
   await owner.end();
 });
 
+// This file's chains only: hot-wallet-policy.test.ts creates treasury transfers too, in the same database.
 const tick = () => {
   clock.advance(31 * 60_000);
-  return advanceTreasury(deps, env);
+  return advanceTreasury(deps, env, { chainIds: ['evm-local', 'evm-mainsim'] });
 };
 const lines = async (id: string) =>
   (
@@ -106,7 +107,7 @@ describe('treasury', () => {
     expect((await a2.agent.req('POST', `${B}/${x.id}/approve`, { reason: 'looks right' }, a2.stepUp())).json()).toMatchObject({ status: 'approved' });
     const strict = custodyEnv(pool, chain); // no SIGNER_COLD_ADDRESSES
     clock.advance(31 * 60_000);
-    expect(await advanceTreasury(deps, strict)).toMatchObject({ failed: 1 });
+    expect(await advanceTreasury(deps, strict, { chainIds: ['evm-local', 'evm-mainsim'] })).toMatchObject({ failed: 1 });
     expect((await owner.query('select last_error from treasury_transfers where id = $1', [x.id])).rows[0]).toEqual({ last_error: 'cold_not_allowlisted' });
 
     const y = (await a1.agent.req('POST', B, { livemode: false, token: 'evm-local:usdt', direction: 'to_cold', amount: '1', reason: 'not now' }, a1.stepUp())).json<{ id: string }>();

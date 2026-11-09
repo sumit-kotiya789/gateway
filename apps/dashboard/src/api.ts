@@ -279,3 +279,84 @@ export interface DerivationReport {
   wallet_gap_limit: number;
   data: { index: number; address: string; path: string; chain: string; invoice_id: string | null; invoice_status: string | null; amount_received: string | null; symbol: string | null }[];
 }
+
+/** Dashboard home (D-110). Amounts in token units, per token symbol. */
+export interface Overview {
+  livemode: boolean;
+  days: number;
+  series: { t: string; created: number; paid: number; volume: Record<string, string> }[];
+  current: Period;
+  previous: Period;
+  statuses: Record<string, number>;
+  funnel: { created: number; seen: number; paid: number; settled: number };
+  open: number;
+  attention: number;
+  recent: { id: string; status: string; amount: string; amount_received: string; symbol: string; order_id: string | null; created_at: string }[];
+  api: { t: string; requests: number; errors: number }[];
+  security: { totp: boolean; email_verified: boolean; team_members: number; team_with_2fa: number; address_whitelist: boolean; ip_whitelist: boolean; api_keys: number; webhooks: number };
+}
+export interface Period {
+  created: number;
+  paid: number;
+  conversion: number;
+  volume: Record<string, string>;
+  fees: Record<string, string>;
+}
+
+/** API key analytics (D-110). */
+export interface KeyUsage {
+  key_id: string;
+  requests: number;
+  errors: number;
+  blocked: number;
+  error_rate: number;
+  clients: number;
+  new_clients: number;
+  last_ip: string | null;
+  last_seen: string | null;
+  spark: number[];
+}
+export interface KeyClient {
+  ip: string;
+  user_agent: string;
+  first_seen: string;
+  last_seen: string;
+  last_route: string;
+  requests: number;
+  errors: number;
+  blocked: number;
+  new: boolean;
+  in_key_allowlist: boolean | null;
+  in_ip_whitelist: boolean | null;
+}
+export interface KeyAnalytics {
+  key: { id: string; name: string; kind: string; livemode: boolean; prefix: string; scopes: string[]; ip_allowlist: string[] | null; created_at: string; last_used_at: string | null; revoked_at: string | null; expires_at: string | null };
+  days: number;
+  unit: 'hour' | 'day';
+  series: { t: string; ok: number; errors: number; blocked: number; avg_ms: number }[];
+  totals: { requests: number; errors: number; blocked: number; error_rate: number; avg_ms: number; clients: number; unique_ips: number };
+  routes: { route: string; requests: number; errors: number; avg_ms: number }[];
+  statuses: Record<string, number>;
+  clients: KeyClient[];
+  ip_whitelist_on: boolean;
+}
+
+/** Merchant whitelists (D-109). */
+export interface WhitelistState {
+  livemode: boolean;
+  addresses: { enabled: boolean; disable_at: string | null; active: number; pending: number };
+  ips: { enabled: boolean; disable_at: string | null; entries: { cidr: string; label: string }[] };
+  activation_hours: number;
+  disable_hours: number;
+  request_ip: string;
+}
+export interface WhitelistedAddress {
+  id: string;
+  livemode: boolean;
+  family: string;
+  address: string;
+  label: string;
+  status: 'active' | 'pending' | 'removed';
+  created_at: string;
+  activates_at: string;
+}

@@ -83,6 +83,8 @@ const ICONS = {
   store: 'M3 9l2-5h14l2 5 M3 9h18 M3 9a3 3 0 0 0 6 0a3 3 0 0 0 6 0a3 3 0 0 0 6 0 M5 12v9h14v-9 M10 21v-5h4v5',
   power: 'M18.36 6.64a9 9 0 1 1-12.73 0 M12 2v10',
   list: 'M8 6h13 M8 12h13 M8 18h13 M3 6h.01 M3 12h.01 M3 18h.01',
+  sliders: 'M4 21v-7 M4 10V3 M12 21v-9 M12 8V3 M20 21v-5 M20 12V3 M1 14h6 M9 8h6 M17 16h6',
+  clock: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20z M12 6v6l4 2',
 } as const;
 export type IconName = keyof typeof ICONS;
 

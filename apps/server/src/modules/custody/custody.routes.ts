@@ -6,8 +6,9 @@ import { and, asc, desc, eq, gt, inArray, isNull, sql } from 'drizzle-orm';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { audit } from '../../common/audit.js';
-import { withSystem } from '../../common/db.js';
-import { forwards, ledgerAccounts, ledgerEntries, platformWallets, signerControls, sweeps, tokens, treasuryTransfers, withdrawals } from '../../db/schema.js';
+import { withSystem, type Tx } from '../../common/db.js';
+import { forwards, hotWalletPolicies, ledgerAccounts, ledgerEntries, platformWallets, signerControls, sweeps, tokens, treasuryTransfers, withdrawals } from '../../db/schema.js';
+import { policyView, setHotWalletPolicy } from './hot-wallet-policy.js';
 import { approveTreasuryTransfer, createTreasuryTransfer, rejectTreasuryTransfer, treasuryView } from './treasury.js';
 import type { Deps } from '../../deps.js';
 import { requireAdmin, requireAdminTotp } from '../auth/guards.js';
@@ -158,6 +159,74 @@ export function custodyAdminRoutes(deps: Deps): FastifyPluginAsyncZod {
         }),
       );
     }
+
+    // ---------------------------------------------------------------- hot wallet policy (D-105)
+
+    const hotAddressOf = async (tx: Tx, livemode: boolean) => {
+      // Policies exist for EVM tokens only today; one hot wallet per family and mode.
+      const [w] = await tx
+        .select({ address: platformWallets.address })
+        .from(platformWallets)
+        .where(and(eq(platformWallets.kind, 'hot'), eq(platformWallets.family, 'evm'), eq(platformWallets.livemode, livemode), isNull(platformWallets.retiredAt)));
+      return w?.address ?? null;
+    };
+
+    app.get('/hot-wallet-policies', { preHandler: requireAdmin(deps, 'admin:read') }, async () =>
+      withSystem(deps.db, async (tx) => {
+        const rows = await tx
+          .select({ p: hotWalletPolicies, decimals: tokens.decimals, symbol: tokens.symbol })
+          .from(hotWalletPolicies)
+          .innerJoin(tokens, eq(tokens.id, hotWalletPolicies.tokenId))
+          .orderBy(asc(hotWalletPolicies.livemode), asc(hotWalletPolicies.tokenId));
+        const hot = { live: await hotAddressOf(tx, true), test: await hotAddressOf(tx, false) };
+        return { data: rows.map((r) => policyView(r.p, r, r.p.livemode ? hot.live : hot.test)) };
+      }),
+    );
+
+    const Amount = z.string().trim().min(1).max(100).nullable();
+    app.put(
+      '/hot-wallet-policies',
+      {
+        preHandler: [requireAdmin(deps, 'treasury:manage'), requireAdminTotp(deps)],
+        schema: {
+          body: z.strictObject({
+            livemode: z.boolean(),
+            token: z.string().regex(/^[a-z0-9-]+:[a-z0-9-]+$/),
+            max_balance: Amount,
+            low_balance: Amount,
+            reason: z.string().trim().min(3).max(500),
+          }),
+        },
+      },
+      async (req) => {
+        const admin = adminOf(req);
+        return withSystem(deps.db, async (tx) => {
+          const { before, after, token } = await setHotWalletPolicy(deps, tx, {
+            livemode: req.body.livemode,
+            tokenId: req.body.token,
+            maxBalance: req.body.max_balance,
+            lowBalance: req.body.low_balance,
+            adminId: admin.id,
+          });
+          const view = policyView(after, token, await hotAddressOf(tx, after.livemode));
+          const was = before ? policyView(before, token, view.hot_address) : null;
+          await audit(
+            tx,
+            {
+              actorType: 'admin',
+              actorId: admin.id,
+              action: 'custody.hot_wallet_policy_updated',
+              targetType: 'hot_wallet_policy',
+              targetId: after.id,
+              before: was && { max_balance: was.max_balance, low_balance: was.low_balance },
+              after: { livemode: view.livemode, token: view.token, max_balance: view.max_balance, low_balance: view.low_balance, reason: req.body.reason },
+            },
+            req,
+          );
+          return view;
+        });
+      },
+    );
 
     // ---------------------------------------------------------------- signer kill switch
 

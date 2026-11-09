@@ -365,6 +365,55 @@
       "when": 1794155090263,
       "tag": "0051_sweeps_open_index",
       "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "7",
+      "when": 1794210939619,
+      "tag": "0052_hot_wallet_policies",
+      "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "7",
+      "when": 1794210949200,
+      "tag": "0053_hot_wallet_policies_security",
+      "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "7",
+      "when": 1794227839919,
+      "tag": "0054_admin_settings",
+      "breakpoints": true
+    },
+    {
+      "idx": 55,
+      "version": "7",
+      "when": 1794227846595,
+      "tag": "0055_admin_settings_security",
+      "breakpoints": true
+    },
+    {
+      "idx": 56,
+      "version": "7",
+      "when": 1794229721097,
+      "tag": "0056_admin_settings_platform",
+      "breakpoints": true
+    },
+    {
+      "idx": 57,
+      "version": "7",
+      "when": 1794233226750,
+      "tag": "0057_merchant_whitelists_api_usage",
+      "breakpoints": true
+    },
+    {
+      "idx": 58,
+      "version": "7",
+      "when": 1794233228896,
+      "tag": "0058_merchant_whitelists_api_usage_security",
+      "breakpoints": true
     }
   ]
 }

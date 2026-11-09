@@ -123,6 +123,22 @@ Withdrawals.
   payouts need both. Checked at request, by the database guard and again by the signer (a lowered limit stops a
   queued payout: it fails with `merchant_limit` and the hold is released).
 
+## Hot wallet limits (D-105)
+Per mode and token an admin sets a **cap** (`max_balance`) and an **alert level** (`low_balance`) in the admin console
+(`treasury:manage` + TOTP, audited; table `hot_wallet_policies`). The custody worker checks them every run:
+- **Above the cap**: one automatic treasury transfer hot → cold for the excess, computed from the smaller of the
+  ledger's `custody_hot` and the hot wallet's on-chain token balance (no dust below the token minimum). It is inserted
+  `approved` with `auto = true`, no approver, `requested_by` = the admin who set the policy. Guards: the DB trigger
+  allows an auto row only hot → cold and at most `custody_hot − cap` by the ledger; one auto transfer in flight per
+  mode and token (unique index); the signer signs it only with `SIGNER_AUTO_TO_COLD=true` in its own env (otherwise it
+  waits, `auto_disabled`) and, as for every treasury transfer, only to an address in `SIGNER_COLD_ADDRESSES`. Moving
+  funds *to* cold cannot send them anywhere else, which is why it needs no second admin; the two-admin rule still
+  covers manual transfers. After a failed automatic transfer, the next waits 30 minutes.
+- **Below the alert level** (on-chain balance): one email to every active admin with `treasury:manage`, again every
+  24 hours while it stays low, re-armed once the balance is back at or above the level. Refill from cold and record it
+  (cold → hot treasury transfer) as before.
+- The hot wallet keys never change: it stays the signer's seed-derived wallet (`m/44'/60'/10'/0/0` live, `11'` test).
+
 ## Withdrawals (M7d, D-090)
 Only while custody is on (`FEATURE_CUSTODIAL`): with it off, requests and approvals are refused (`custody_off`) and the
 dashboard says withdrawals are paused; balances stay, and cancelling or rejecting still releases a hold.

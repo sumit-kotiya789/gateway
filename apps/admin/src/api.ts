@@ -119,6 +119,29 @@ export interface Invoice {
   payments?: { tx_hash: string; from: string; amount: string; status: string; block_number: string; block_time: string }[];
 }
 
+/** Console settings (D-106, D-107): the one place to manage platform behaviour. */
+export interface AdminSettings {
+  attention_statuses: ('late_payment' | 'underpaid' | 'held')[];
+  session_idle_minutes: number;
+  session_max_hours: number;
+  ip_allowlist_enabled: boolean;
+  ip_allowlist: { cidr: string; label: string }[];
+  /** The caller's address as the server sees it: what the allowlist is checked against. */
+  request_ip: string;
+  /** Whole token units; null = the server ceiling. */
+  withdrawal_two_person_min: string | null;
+  withdrawal_two_person_effective: string;
+  signup_enabled: boolean;
+  merchant_defaults: { fee_bps: number; fee_fixed: string; fee_grace: string; payout_fee: string; underpay_tolerance_bps: number };
+  /** Merchant whitelists (D-109): hours until a new live payout address works, and until a switch-off applies. */
+  whitelist_activation_hours: number;
+  whitelist_disable_hours: number;
+  updated_by: string | null;
+  updated_at: string | null;
+  /** Outer limits from the server environment; the console works inside them. */
+  platform: { withdrawal_two_person_max: string; signup_allowed: boolean; admin_ip_allowlist_env: number };
+}
+
 export interface Registry {
   chains: { id: string; name: string; family: string; testnet: boolean; enabled: boolean }[];
   tokens: { id: string; chain_id: string; symbol: string; name: string; enabled: boolean }[];
@@ -187,11 +210,29 @@ export interface CustodyOverview {
   withdrawals: Partial<Record<'pending_approval' | 'approved' | 'sent', number>>;
 }
 
+/** Hot wallet policy per mode and token (D-105). Amounts in token units; null = off. */
+export interface HotWalletPolicy {
+  livemode: boolean;
+  token: string;
+  symbol: string;
+  state: 'low' | 'above_cap' | 'ok' | null;
+  max_balance: string | null;
+  low_balance: string | null;
+  hot_address: string | null;
+  last_balance: string | null;
+  last_checked_at: string | null;
+  low_alert_at: string | null;
+  updated_by: string;
+  updated_at: string;
+}
+
 export interface TreasuryTransfer {
   id: string;
   livemode: boolean;
   token: string;
   direction: 'to_cold' | 'to_hot';
+  /** Created by the hot wallet policy (D-105), not proposed by an admin. */
+  auto: boolean;
   amount: string;
   cold_address: string;
   hot_address: string;

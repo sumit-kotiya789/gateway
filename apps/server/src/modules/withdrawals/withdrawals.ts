@@ -16,6 +16,8 @@ import { templates } from '../email/templates.js';
 import { resolveToken } from '../invoices/invoices.js';
 import { holdWithdrawal, releaseWithdrawal } from '../ledger/ledger.js';
 import { currentPayoutAddress } from '../custody/payout-addresses.js';
+import { effectiveTwoPersonMin, readAdminSettings } from '../admin/settings.js';
+import { assertPayoutWhitelisted } from '../security/whitelist.js';
 
 /** A new live payout address takes effect this long after it was added (owners are emailed meanwhile). */
 export const PAYOUT_ADDRESS_COOLDOWN_H = 24;
@@ -165,8 +167,10 @@ export async function requestWithdrawal(
     throw new AppError('conflict', `amount exceeds the available balance (${fromMinorUnits(available, token.decimals)} ${token.symbol})`, { reason: 'insufficient_balance' });
   }
   await assertWithinLimits(tx, { merchantId: p.merchantId, livemode: p.livemode, token, amount, requireBoth: false });
-  // Test mode moves testnet tokens only: no approval. Live: one admin, two at or above the threshold.
-  const approvalsRequired = !p.livemode ? 0 : amount >= toMinorUnits(deps.config.WITHDRAWAL_TWO_PERSON_MIN, token.decimals) ? 2 : 1;
+  // Test mode moves testnet tokens only: no approval. Live: one admin, two at or above the threshold (console
+  // setting, never above the server's WITHDRAWAL_TWO_PERSON_MIN; D-107).
+  const twoPersonMin = toMinorUnits(effectiveTwoPersonMin(await readAdminSettings(deps), deps.config.WITHDRAWAL_TWO_PERSON_MIN), token.decimals);
+  const approvalsRequired = !p.livemode ? 0 : amount >= twoPersonMin ? 2 : 1;
   const [w] = await tx
     .insert(withdrawals)
     .values({
@@ -211,6 +215,8 @@ export async function requestPayout(
   const to = getAddress(p.toAddress);
   const [ok] = await tx.execute<{ allowed: boolean }>(sql`select payout_destination_allowed(${to}) as allowed`).then((r) => r.rows);
   if (!ok?.allowed) throw new AppError('validation_error', 'this address cannot receive payouts (a gateway address or a blocked address)', { field: 'to_address', reason: 'bad_destination' });
+  // Address whitelist (D-109): while on for this mode, only active whitelisted addresses (the database checks too).
+  await assertPayoutWhitelisted(tx, { merchantId: p.merchantId, livemode: p.livemode, chainId: token.chainId, address: to, now: deps.clock() });
   await assertWithinLimits(tx, { merchantId: p.merchantId, livemode: p.livemode, token, amount, requireBoth: p.livemode });
   const fee = feeUnitsToMinor(m.payoutFee, token.decimals);
   const available = await availableBalance(tx, p.merchantId, p.livemode, token.id);

@@ -49,6 +49,10 @@ Every file with a `// MONEY-CRITICAL` header is listed here and in the coverage 
 | `apps/server/db/migrations/0045_partial_payments.sql`, `0046_partial_payments_security.sql` | `partially_paid` status: custodial only, `underpaid` edge only, settlement journal allowed for it | D-099 |
 | `apps/server/src/modules/custody/partials.ts` | closes underpaid custodial invoices after the deadline (scanned past it, fully swept) | D-099 |
 | `apps/server/db/migrations/0043_forwarder.sql`, `0044_forwarder_security.sql` | forwarder params (immutable, tied to current payout address, fee wallet, factory, token), forward guards and fee cap, set-once factory | M12 |
+| `apps/server/src/modules/custody/hot-wallet-policy.ts` | hot wallet cap (automatic hot → cold for the excess) and low-balance alerts | D-105 |
+| `apps/server/src/modules/admin/settings.ts` | console settings, incl. the two-admin withdrawal threshold (capped by the env ceiling) | D-107 |
+| `apps/server/src/modules/security/whitelist.ts` | merchant payout address whitelist and API IP whitelist (with the DB guard in migration 0058) | D-109 |
+| `apps/server/db/migrations/0052_hot_wallet_policies.sql`, `0053_hot_wallet_policies_security.sql` | policies (system-only, no delete), automatic treasury rows: hot → cold only, at most the excess over the cap, one in flight | D-105 |
 
 ## Security-critical files (mandatory human review)
 
@@ -116,7 +120,7 @@ Status: `planned` until the mitigation's milestone lands, then the test that pro
 | Webhook replay | Signed timestamp, receivers reject > 5 min skew; stable event id (`gateway-event-id`) for dedup | `webhooks.test.ts` | M6 |
 | SSRF via webhook URL | All resolved addresses must be public (IANA special-purpose v4/v6 ranges, metadata, NAT64, 6to4, mapped); connect to the vetted address (DNS rebinding); no redirects; 10 s, 64 KiB caps; dev override refused in production | `ssrf.test.ts`, `webhooks.test.ts` | M6 |
 | Insider tampering with audit trail | App role has no UPDATE/DELETE/TRUNCATE on `audit_logs`; trigger blocks even the owner; SHA-256 hash chain verified by `audit_verify()` | `db-security.test.ts` | M1 |
-| Insider misuse (approvals) | Admin RBAC; reason on every change, audited in the same transaction; step-up TOTP for actions that lower a control (D-064); withdrawals need an admin approval with TOTP, two different admins at or above `WITHDRAWAL_TWO_PERSON_MIN` (DB guard: approvals only grow, one per admin) | `admin.test.ts`, `watcher.test.ts` | M5b/M7 |
+| Insider misuse (approvals) | Admin RBAC; reason on every change, audited in the same transaction; step-up TOTP for actions that lower a control (D-064); withdrawals need an admin approval with TOTP, two different admins at or above the Settings threshold, which can never exceed `WITHDRAWAL_TWO_PERSON_MIN` (so one console account cannot loosen it; DB guard: approvals only grow, one per admin) | `admin.test.ts`, `watcher.test.ts`, `platform-settings.test.ts` | M5b/M7/D-107 |
 | Key theft | Seed only in the signer process (sealed file; in production its KEK only from a secret-manager file on tmpfs, never an env var; no KMS, D-010); signer takes intents not transactions, re-reads every record and re-derives every address from its own seed; hot/gas wallets must derive from that seed; per-token limits and cold allowlist in the signer's own env; kill switch (env + DB); HMAC on every request + mTLS in production, the HMAC secret held by the worker only (api and watcher never get it); seed file sealed with a pinned 16-byte GCM tag; signatures written only by the signer's DB role, append-only | `signer.test.ts`, `signer-unit.test.ts` | M7b |
 | Dust / address poisoning | Ignore below `min_amount`; never display unsolicited transfers | planned | M4 |
 | Invoice / index race | Atomic index allocation; unique `(family, address)`; one address per invoice (unique FK) | `custody.test.ts`, `invoices.test.ts` | M2/M3 |
@@ -154,6 +158,10 @@ Status: `planned` until the mitigation's milestone lands, then the test that pro
 | Cross-tenant access (IDOR) | Repository scoping by `merchant_id` + Postgres RLS (no context = no rows; wrong-tenant writes rejected) | `db-security.test.ts`, `api-keys.test.ts` | M1 (extended each milestone) |
 | Rogue or compromised admin account lingers | Superadmin-only management with step-up TOTP and audited reasons; role and disabled state re-read on every admin request; credential reset bumps a session epoch carried in admin tokens (old sessions die at once; epoch cannot go down, trigger); nobody manages their own account; last active superadmin kept by API check + deferred trigger | `admins.test.ts` | M9 |
 | Admin takeover via merchant session | Separate table, JWT secret, audience, cookie names/path and origin; password + TOTP every login; disabled admins cut off on next request; optional IP allowlist (404 outside) | `admin.test.ts` | M1 |
+| Merchant account taken over, payouts redirected | Payout address whitelist (D-109): payouts only to active whitelisted addresses (app + DB trigger); new live addresses wait `whitelist_activation_hours`; switching off is scheduled `whitelist_disable_hours` ahead and refused early by the DB; owners emailed on additions and scheduled switch-offs; all changes owner + 2FA, audited | `merchant-security.test.ts` | D-109 |
+| Stolen merchant API key | Account IP whitelist for secret keys (D-109) on top of per-key allowlists; per-key fingerprint of every IP + client with first/last seen and blocked attempts, new clients flagged in the dashboard (D-110) | `merchant-security.test.ts` | D-109/D-110 |
+| Admin console reached from anywhere | Console IP allowlist (D-107): off by default; when on, every `/admin/v1` route (login included) answers 404 outside it, checked before auth on each request; switching it on is refused unless the caller's own IP is listed (no self-lockout); env `ADMIN_IP_ALLOWLIST` applies as well; recovery by SQL (RUNBOOK) | `platform-settings.test.ts` | D-107 |
+| Unattended admin console left signed in | Sliding admin session (D-106): the JWT is re-issued per request and dies after the idle limit (default 30 min) and at the latest the absolute limit after sign-in (default 12 h, `ast` claim); only a superadmin with step-up 2FA changes the limits (5–240 min, 1–24 h, DB checks), audited | `admin.test.ts` | D-106 |
 | Privilege escalation (role) | Server-side permission matrix on every route; mass-assignment blocked by strict schemas | `ids-rbac.test.ts`, `api-keys.test.ts`, `auth.test.ts` | M1 |
 | Secret leakage via logs / audit | Key-name + value-pattern redaction applied to logs and audit payloads; config errors print key names only | `logger.test.ts`, `config.test.ts`, `db-security.test.ts` | M0/M1 |
 | Error detail leakage | Unknown errors → generic 500 `internal_error`; full error only in server logs | `app.test.ts` | M0 |
@@ -175,7 +183,7 @@ Status: `planned` until the mitigation's milestone lands, then the test that pro
 - **Access JWTs are not revocable** for their 10-minute lifetime (logout/reuse detection kill the refresh token only).
 - **Rate limiting fails open** if Redis is down (DB lockout still protects credentials). Alert on Redis health.
 - **Two tabs refreshing at the same instant** look like refresh-token reuse and log the user out. Safe failure.
-- **Signup has no email verification yet** (emails arrive in M10). Signup is rate limited and can be disabled (`SIGNUP_ENABLED`).
+- **Signup has no email verification yet** (emails arrive in M10). Signup is rate limited and can be disabled (Settings, or `SIGNUP_ENABLED`).
 
 ## Rules
 

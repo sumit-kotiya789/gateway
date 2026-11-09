@@ -11,6 +11,7 @@ import { generateTotpSecret, totpUri, verifyTotp } from '../../common/crypto/tot
 import { withSystem, withTenant, type Tx } from '../../common/db.js';
 import { merchantUsers, merchants, recoveryCodes, sessions } from '../../db/schema.js';
 import type { Deps } from '../../deps.js';
+import { loadAdminSettings } from '../admin/settings.js';
 import { enqueueEmail } from '../email/outbox.js';
 import { templates } from '../email/templates.js';
 import { TOKEN_RESEND_MS, findEmailToken, issueEmailToken, lastTokenAt, useEmailToken } from '../email/tokens.js';
@@ -69,7 +70,14 @@ export function dashboardAuthRoutes(deps: Deps): FastifyPluginAsyncZod {
             .from(merchantUsers)
             .where(sql`lower(${merchantUsers.email}) = ${email}`);
           if (exists.length > 0) throw new AppError('conflict', 'email already registered');
-          const [m] = await tx.insert(merchants).values({ name: merchant_name }).returning();
+          // Sign-ups and what a new merchant starts with are console settings (D-107).
+          const s = await loadAdminSettings(tx);
+          if (!s.signupEnabled) throw new AppError('forbidden', 'signup is disabled');
+          const d = s.merchantDefaults;
+          const [m] = await tx
+            .insert(merchants)
+            .values({ name: merchant_name, feeBps: d.feeBps, feeFixed: d.feeFixed, feeGrace: d.feeGrace, payoutFee: d.payoutFee, underpayToleranceBps: d.underpayToleranceBps })
+            .returning();
           if (!m) throw new Error('merchant insert failed');
           const [u] = await tx.insert(merchantUsers).values({ merchantId: m.id, email, passwordHash, role: 'owner' }).returning();
           if (!u) throw new Error('user insert failed');

@@ -48,6 +48,8 @@ services:
   api:
     <<: *hardened
     build: { context: ., dockerfile: apps/server/Dockerfile }
+    # Back up by itself after a crash; a stopped worker silently stops invoice expiry, emails, webhooks and custody.
+    restart: unless-stopped
     environment:
       <<: *app-env
       PORT: "3000"
@@ -60,6 +62,7 @@ services:
     <<: *hardened
     build: { context: ., dockerfile: apps/server/Dockerfile }
     command: ["node", "--enable-source-maps", "main-worker.cjs"]
+    restart: unless-stopped
     environment:
       <<: [*app-env, *rpc-env]
       # Custodial only. The worker is the one process that talks to the signer (the api never gets this secret).
@@ -74,6 +77,7 @@ services:
     <<: *hardened
     build: { context: ., dockerfile: apps/server/Dockerfile }
     command: ["node", "--enable-source-maps", "main-watcher.cjs"]
+    restart: unless-stopped
     environment:
       <<: [*app-env, *rpc-env]
     healthcheck: { disable: true }
@@ -145,6 +149,7 @@ services:
       SIGNER_SEED_KEK: ${SIGNER_SEED_KEK:-}
       SIGNER_LIMITS: ${SIGNER_LIMITS:-{}}
       SIGNER_COLD_ADDRESSES: ${SIGNER_COLD_ADDRESSES:-}
+      SIGNER_AUTO_TO_COLD: ${SIGNER_AUTO_TO_COLD:-false}
       SIGNER_MAX_GAS_PRICE_GWEI: ${SIGNER_MAX_GAS_PRICE_GWEI:-20}
       SIGNER_MAX_GAS_TOPUP: ${SIGNER_MAX_GAS_TOPUP:-0.005}
       SIGNER_PAUSED: ${SIGNER_PAUSED:-false}

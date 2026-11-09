@@ -1,5 +1,6 @@
 // Admin auth domain: separate table, JWT secret, audience, cookies and origin. Password AND TOTP required; only a
-// development config (ADMIN_LOGIN_TOTP_DISABLED, refused in production) lets login skip the TOTP code.
+// development config (ADMIN_LOGIN_TOTP_DISABLED, refused in production) lets login skip the TOTP code. Sessions slide
+// within the idle and absolute limits from the console settings (D-106; see setAdminSession).
 import { AppError } from '@gw/core';
 import { eq, sql } from 'drizzle-orm';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
@@ -12,12 +13,9 @@ import { withSystem } from '../../common/db.js';
 import { adminUsers } from '../../db/schema.js';
 import type { Deps } from '../../deps.js';
 import { AUTH_RATE_LIMIT } from './dashboard-auth.routes.js';
-import { ADMIN_COOKIE, adminTotpAad, checkOrigin, requireAdmin } from './guards.js';
+import { loadAdminSettings } from '../admin/settings.js';
+import { adminTotpAad, checkOrigin, clearAdminSession, requireAdmin, setAdminSession } from './guards.js';
 import { isLocked, lockoutUntil } from './lockout.js';
-import { cookieBase, signToken } from './session.js';
-
-const ADMIN_TTL_S = 900;
-const COOKIE_PATH = '/admin';
 
 const TotpCode = z.string().regex(/^\d{6}$/);
 
@@ -42,7 +40,7 @@ export function adminAuthRoutes(deps: Deps): FastifyPluginAsyncZod {
       async (req, reply) => {
         checkOrigin(req, deps.config.ADMIN_ORIGINS);
         const now = deps.clock();
-        const admin = await withSystem(deps.db, async (tx) => {
+        const signedIn = await withSystem(deps.db, async (tx) => {
           const [a] = await tx.select().from(adminUsers).where(sql`lower(${adminUsers.email}) = ${req.body.email}`).for('update');
           if (!a || a.disabledAt || isLocked(a.lockedUntil, now)) return burnPasswordCheck(req.body.password);
           const pwOk = await verifyPassword(a.passwordHash, req.body.password);
@@ -59,14 +57,13 @@ export function adminAuthRoutes(deps: Deps): FastifyPluginAsyncZod {
           }
           await tx.update(adminUsers).set({ failedLogins: 0, lockedUntil: null, totpLastStep: step }).where(eq(adminUsers.id, a.id));
           await audit(tx, { actorType: 'admin', actorId: a.id, action: 'admin.login', ...(totpRequired ? {} : { after: { mfa: 'skipped' } }) }, req);
-          return a;
+          return { admin: a, settings: await loadAdminSettings(tx) };
         });
-        if (!admin) throw new AppError('unauthorized', 'invalid credentials');
-        const token = await signToken(deps.config.ADMIN_JWT_SECRET, 'admin', ADMIN_TTL_S, { role: admin.role, sv: admin.sessionEpoch }, admin.id);
-        const base = cookieBase(deps);
-        reply.setCookie(ADMIN_COOKIE.access, token, { ...base, path: COOKIE_PATH, maxAge: ADMIN_TTL_S });
+        if (!signedIn) throw new AppError('unauthorized', 'invalid credentials');
+        const { admin, settings } = signedIn;
+        // Sliding session (D-106): renewed by every request, signed out when idle or at the absolute limit.
         const csrf = randomBase62(32);
-        reply.setCookie(ADMIN_COOKIE.csrf, csrf, { ...base, httpOnly: false, path: COOKIE_PATH, maxAge: ADMIN_TTL_S });
+        await setAdminSession(deps, reply, { id: admin.id, role: admin.role, epoch: admin.sessionEpoch }, Math.floor(Date.now() / 1000), settings, csrf);
         return { admin: { id: admin.id, email: admin.email, role: admin.role }, csrf_token: csrf };
       },
     );
@@ -74,9 +71,7 @@ export function adminAuthRoutes(deps: Deps): FastifyPluginAsyncZod {
     app.post('/logout', { preHandler: requireAdmin(deps, 'admin:read') }, async (req, reply) => {
       const admin = req.admin;
       if (admin) await withSystem(deps.db, (tx) => audit(tx, { actorType: 'admin', actorId: admin.id, action: 'admin.logout' }, req));
-      const base = cookieBase(deps);
-      reply.clearCookie(ADMIN_COOKIE.access, { ...base, path: COOKIE_PATH });
-      reply.clearCookie(ADMIN_COOKIE.csrf, { ...base, httpOnly: false, path: COOKIE_PATH });
+      clearAdminSession(deps, reply);
       return reply.status(204).send();
     });
 

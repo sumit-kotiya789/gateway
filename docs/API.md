@@ -43,7 +43,7 @@ OpenAPI 3.1 is generated from route schemas and served at `GET /v1/openapi.json`
 | Merchant API `/v1/*` | `Authorization: Bearer sk_live_…` / `sk_test_…` | Scopes: `read`, `invoices:write`, `refunds:write`, `withdrawals:write`, `webhooks:write`. Optional IP allowlist and expiry. |
 | Widget | `pk_live_…` / `pk_test_…` | Scope `checkout` only. |
 | Dashboard `/v1/dashboard/*` | `gw_at` cookie (10-min JWT) + `gw_rt` refresh cookie | State-changing requests need `x-csrf-token` = `gw_csrf` cookie, and an allowlisted `Origin`. |
-| Admin `/admin/v1/*` | `gw_admin_at` cookie (15-min JWT) | Password + TOTP on every login; `x-csrf-token` = `gw_admin_csrf`; optional IP allowlist. |
+| Admin `/admin/v1/*` | `gw_admin_at` cookie (sliding JWT: renewed on every request, ends after the idle limit or the absolute limit from the console settings, D-106) | Password + TOTP on every login; `x-csrf-token` = `gw_admin_csrf`; optional IP allowlist. |
 
 Step-up: endpoints marked **2FA** need header `x-totp-code` with a fresh code (a code is accepted once).
 
@@ -140,6 +140,15 @@ fields; credit the user on `invoice.settled`.
 | GET | `/v1/dashboard/api-keys/` | session | `api_keys:read` | M1 |
 | POST | `/v1/dashboard/api-keys/` | session + **2FA** | `api_keys:write` (returns full key once) | M1 |
 | DELETE | `/v1/dashboard/api-keys/:id` | session | `api_keys:write` | M1 |
+| GET | `/v1/dashboard/api-keys/usage` | session | `api_keys:read` (`livemode`, `days` 1/7/30/90: per key requests, errors, blocked, clients, last IP, daily sparkline) | D-110 |
+| GET | `/v1/dashboard/api-keys/:id/analytics` | session | `api_keys:read` (`days` 1/7/30/90: series per hour or day, endpoints, status mix, latency, and the key's fingerprint: every IP + user agent with first/last seen, requests, errors, blocked, flagged against the allowlists) | D-110 |
+| GET | `/v1/dashboard/overview` | session | `account:read` (`livemode`, `days` 7/30/90: daily series, period vs previous period, statuses, funnel, recent invoices, API traffic, security posture) | D-110 |
+| GET | `/v1/dashboard/security/whitelist/` | session | `account:read` (`livemode`: address whitelist state and counts, IP whitelist state and entries, activation/disable hours, `request_ip`) | D-109 |
+| PUT | `/v1/dashboard/security/whitelist/addresses` | session + **2FA** | `payouts:manage` (`livemode`, `enabled`: on at once; off scheduled `disable_hours` ahead, owners emailed, on again cancels; audited) | D-109 |
+| GET | `/v1/dashboard/security/whitelist/addresses` | session | `account:read` (`livemode`, `q`: address or label) | D-109 |
+| POST | `/v1/dashboard/security/whitelist/addresses` | session + **2FA** | `payouts:manage` (`livemode`, `entries` ≤ 500 `{address, label}`; returns `added`, `skipped` (already listed), `invalid` (with reason); live addresses usable after `activation_hours`; owners emailed; audited) | D-109 |
+| POST | `/v1/dashboard/security/whitelist/addresses/:id/remove` | session | `payouts:manage` (immediate; audited) | D-109 |
+| PUT | `/v1/dashboard/security/whitelist/ips` | session + **2FA** | `payouts:manage` (`entries` ≤ 100 `{cidr, label}` replace, and/or `enabled`; on needs an entry; off scheduled; audited) | D-109 |
 | GET | `/v1/dashboard/audit-logs/` | session | `audit:read` | M1 |
 | GET | `/v1/dashboard/invoices/` | session | `invoices:read` (`livemode`, `limit`, `starting_after`, `status`, `external_order_id`) | M3b |
 | GET | `/v1/dashboard/invoices/:id` | session | `invoices:read` (includes status `history`) | M3b |
@@ -183,7 +192,7 @@ fields; credit the user on `invoice.settled`.
 | GET | `/admin/v1/merchants/:id/fee-topups` | admin session | `admin:read` (`livemode`, default true) | M8 |
 | POST | `/admin/v1/merchants/:id/fee-topups` | admin session + **2FA** | `fees:manage` (`livemode`, `token`, `amount`, `reference`, `reason`; posts a ledger journal; append-only) | M8 |
 | POST | `/admin/v1/merchants/:id/users/:userId/reset-2fa` | admin session + **2FA** | `merchants:manage` (`reason`; revokes sessions, deletes recovery codes) | M5b |
-| GET | `/admin/v1/invoices`, `/admin/v1/invoices/:id` | admin session | `admin:read` (default list: `held` + `underpaid` + `late_payment`; `status`, `merchant_id`, `livemode`) | M5b |
+| GET | `/admin/v1/invoices`, `/admin/v1/invoices/:id` | admin session | `admin:read` (default list: the "needs a decision" statuses from `/admin/v1/settings`, initially `late_payment` + `held`; `status`, `merchant_id`, `livemode`) | M5b/D-106 |
 | POST | `/admin/v1/invoices/:id/resolve` | admin session + **2FA** | `invoices:resolve` (`reason`, `action` release (default) / reject; underpaid/late_payment -> paid -> settled; held -> its classification, or reject -> failed) | M5b/M9 |
 | GET | `/admin/v1/risk/blocked-addresses` | admin session | `admin:read` (`q` address search) | M9 |
 | POST | `/admin/v1/risk/blocked-addresses` | admin session | `risk:manage` (`family` evm, `address`, `reason`; 409 if listed) | M9 |
@@ -193,6 +202,8 @@ fields; credit the user on `invoice.settled`.
 | GET | `/admin/v1/registry` | admin session | `admin:read` (chains and tokens with `enabled`) | M5b |
 | POST | `/admin/v1/registry/:kind/:id/disable` | admin session | `kill_switch:manage` (`kind`: chain or token; `reason`) | M5b |
 | POST | `/admin/v1/registry/:kind/:id/enable` | admin session + **2FA** | `registry:enable` (`reason`) | M5b |
+| GET | `/admin/v1/settings` | admin session | `admin:read` (every console setting, `request_ip` (the caller's IP as the server sees it), `withdrawal_two_person_effective`; `platform`: the env outer limits) | D-106/D-107 |
+| PUT | `/admin/v1/settings` | admin session + **2FA** | `settings:manage` (superadmin; partial: any of `attention_statuses` (1+ of `late_payment`, `underpaid`, `held`), `session_idle_minutes` 5–240, `session_max_hours` 1–24, `ip_allowlist_enabled`, `ip_allowlist` (≤ 50 `{cidr, label}`; on needs 1+ entry and the caller's own IP on it, else 409 `self_lockout`), `withdrawal_two_person_min` (whole tokens ≤ `WITHDRAWAL_TWO_PERSON_MIN`, or null), `signup_enabled`, `merchant_defaults` {`fee_bps`, `fee_fixed`, `fee_grace`, `payout_fee`, `underpay_tolerance_bps`}, plus `reason`; audited before/after) | D-106/D-107 |
 | GET | `/admin/v1/admins/` | admin session | `admins:manage` (every admin account) | M9 |
 | POST | `/admin/v1/admins/` | admin session + **2FA** | `admins:manage` (`email`, `role`, `reason`; returns `password`, `totp_uri`, `qr_svg` once) | M9 |
 | PUT | `/admin/v1/admins/:id/role` | admin session + **2FA** | `admins:manage` (`role`, `reason`; not yourself; a superadmin remains; applies to open sessions at once) | M9 |
@@ -200,7 +211,7 @@ fields; credit the user on `invoice.settled`.
 | POST | `/admin/v1/admins/:id/enable` | admin session + **2FA** | `admins:manage` (`reason`; clears lockout) | M9 |
 | POST | `/admin/v1/admins/:id/reset-credentials` | admin session + **2FA** | `admins:manage` (`reason`; new password + TOTP shown once; signs the admin out everywhere) | M9 |
 | GET | `/admin/v1/withdrawals/` | admin session | `admin:read` (`status`, default `pending_approval`; `merchant_id`) | M7 |
-| POST | `/admin/v1/withdrawals/:id/approve` | admin session + **2FA** | `withdrawals:approve` (`reason`; two different admins at or above `WITHDRAWAL_TWO_PERSON_MIN`; 403 `custody_off` while custody is off) | M7 |
+| POST | `/admin/v1/withdrawals/:id/approve` | admin session + **2FA** | `withdrawals:approve` (`reason`; two different admins at or above the Settings threshold (never above `WITHDRAWAL_TWO_PERSON_MIN`); 403 `custody_off` while custody is off) | M7 |
 | POST | `/admin/v1/withdrawals/:id/reject` | admin session | `withdrawals:approve` (`reason`; releases the hold) | M7 |
 | GET | `/admin/v1/custody/` | admin session | `admin:read` (signer state, platform wallets, custody totals, open sweeps, withdrawal queue, forwards open / failed 24 h) | M7 |
 | GET | `/admin/v1/custody/forwards` | admin session | `admin:read` (`status` filter; last 100 forwarder flushes, D-097) | M12 |
@@ -210,6 +221,8 @@ fields; credit the user on `invoice.settled`.
 | POST | `/admin/v1/custody/treasury` | admin session + **2FA** | `treasury:manage` (`livemode`, `token`, `direction` to_cold / to_hot, `amount`, `tx_hash` for to_hot, `reason`) | M7 |
 | POST | `/admin/v1/custody/treasury/:id/approve` | admin session + **2FA** | `treasury:manage` (a different admin than the proposer) | M7 |
 | POST | `/admin/v1/custody/treasury/:id/reject` | admin session | `treasury:manage` | M7 |
+| GET | `/admin/v1/custody/hot-wallet-policies` | admin session | `admin:read` (per mode and token: `max_balance`, `low_balance`, `last_balance`, `state` low / above_cap / ok, `last_checked_at`, `low_alert_at`, `hot_address`) | D-105 |
+| PUT | `/admin/v1/custody/hot-wallet-policies` | admin session + **2FA** | `treasury:manage` (`livemode`, `token`, `max_balance`, `low_balance` token units or null = off, `reason`; low < max; audited) | D-105 |
 | GET | `/admin/v1/audit-logs` | admin session | `audit:read` (`merchant_id`, `actor_id`, `action` prefix, `limit`, `starting_after` seq) | M5b |
 | GET | `/admin/v1/audit-logs/verify` | admin session | `audit:read` (`{ intact, first_bad_seq }`) | M5b |
 

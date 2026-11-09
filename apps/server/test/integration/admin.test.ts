@@ -1,4 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { withSystem, withTenant } from '../../src/common/db.js';
+import { loadAdminSettings } from '../../src/modules/admin/settings.js';
+import { signToken } from '../../src/modules/auth/session.js';
 import {
   ADMIN_ORIGIN,
   Agent,
@@ -88,6 +91,97 @@ describe('admin auth domain', () => {
     const agent = new Agent(app, ADMIN_ORIGIN);
     expect((await agent.req('GET', '/admin/v1/auth/options')).json()).toEqual({ totp_required: true });
     expect((await adminLogin(agent, { email: a.email, password: a.password })).statusCode).toBe(400);
+  });
+});
+
+// ---------------------------------------------------------------- D-106: console settings, sliding sessions
+
+describe('admin settings and sessions (D-106)', () => {
+  const B = '/admin/v1';
+  type Settings = { attention_statuses: string[]; session_idle_minutes: number; session_max_hours: number; updated_by: string | null };
+  const cookie = (r: { cookies: { name: string; value: string; maxAge?: number }[] }, name: string) => r.cookies.find((c) => c.name === name);
+  const nowS = () => Math.floor(Date.now() / 1000);
+
+  it('every admin reads the settings; only a superadmin with step-up changes them, audited; partial updates', async () => {
+    const auditor = await adminAgent(t, owner, 'auditor');
+    const got = (await auditor.agent.req('GET', `${B}/settings`)).json<Settings>();
+    expect(got).toMatchObject({
+      attention_statuses: ['late_payment', 'held'],
+      ip_allowlist_enabled: false,
+      request_ip: auditor.agent.ip,
+      withdrawal_two_person_effective: '10000',
+      signup_enabled: true,
+      merchant_defaults: { fee_bps: 100, fee_fixed: '0', fee_grace: '0', payout_fee: '0', underpay_tolerance_bps: 50 },
+      platform: { withdrawal_two_person_max: '10000', signup_allowed: true, admin_ip_allowlist_env: 0 },
+    });
+    const body = { session_idle_minutes: 45, session_max_hours: 8, reason: 'longer shifts' };
+    expect((await auditor.agent.req('PUT', `${B}/settings`, body, auditor.stepUp())).statusCode).toBe(403);
+    const op = await adminAgent(t, owner);
+    expect((await op.agent.req('PUT', `${B}/settings`, body, op.stepUp())).statusCode).toBe(403);
+    const sa = await adminAgent(t, owner, 'superadmin');
+    expect((await sa.agent.req('PUT', `${B}/settings`, body)).statusCode).toBe(403); // step-up
+    for (const bad of [
+      { reason: 'nothing at all' },
+      { attention_statuses: [], reason: 'empty queue' },
+      { attention_statuses: ['paid'], reason: 'not a decision' },
+      { session_idle_minutes: 2, reason: 'too short' },
+      { session_max_hours: 48, reason: 'too long' },
+    ]) {
+      expect((await sa.agent.req('PUT', `${B}/settings`, bad, sa.stepUp())).statusCode).toBe(400);
+    }
+    try {
+      const r = await sa.agent.req('PUT', `${B}/settings`, body, sa.stepUp());
+      expect(r.json<Settings>()).toMatchObject({ attention_statuses: got.attention_statuses, session_idle_minutes: 45, session_max_hours: 8, updated_by: sa.id });
+      const a = await owner.query(`select before, after from audit_logs where action = 'admin.settings_updated' and actor_id = $1`, [sa.id]);
+      expect(a.rows).toEqual([
+        {
+          before: expect.objectContaining({ attention_statuses: got.attention_statuses, session_idle_minutes: got.session_idle_minutes, session_max_hours: got.session_max_hours }),
+          after: expect.objectContaining({ attention_statuses: got.attention_statuses, session_idle_minutes: 45, session_max_hours: 8, signup_enabled: true, reason: 'longer shifts' }),
+        },
+      ]);
+      // New and renewed sessions follow the new idle limit.
+      const fresh = await adminAgent(t, owner, 'auditor');
+      expect(cookie(await fresh.agent.req('GET', `${B}/auth/me`), 'gw_admin_at')?.maxAge).toBe(45 * 60);
+    } finally {
+      await sa.agent.req('PUT', `${B}/settings`, { session_idle_minutes: 30, session_max_hours: 12, reason: 'test cleanup' }, sa.stepUp());
+    }
+  });
+
+  it('a tenant transaction cannot see the settings row: reading it there throws instead of falling back', async () => {
+    const { merchantId } = await signup(app);
+    await expect(withTenant(deps.db, merchantId, loadAdminSettings)).rejects.toThrow('system context');
+    await expect(withSystem(deps.db, loadAdminSettings)).resolves.toMatchObject({ attentionStatuses: ['late_payment', 'held'] });
+  });
+
+  it('sliding session: every request renews the cookies (same CSRF value); logout still signs out', async () => {
+    const a = await createAdmin();
+    clock.advance(30_000);
+    const agent = new Agent(app, ADMIN_ORIGIN);
+    const login = await adminLogin(agent, { email: a.email, password: a.password, code: totpNow(a.secret, clock()) });
+    expect(cookie(login, 'gw_admin_at')?.maxAge).toBe(30 * 60);
+    const csrf = agent.cookies.get('gw_admin_csrf');
+    const me = await agent.req('GET', `${B}/auth/me`);
+    expect(me.statusCode).toBe(200);
+    expect(cookie(me, 'gw_admin_at')?.maxAge).toBe(30 * 60);
+    expect(cookie(me, 'gw_admin_csrf')).toMatchObject({ value: csrf, maxAge: 30 * 60 });
+    expect((await agent.req('POST', `${B}/auth/logout`)).statusCode).toBe(204);
+    expect((await agent.req('GET', `${B}/auth/me`)).statusCode).toBe(401);
+  });
+
+  it('absolute limit: a session ends session_max_hours after sign-in however active; renewals never go past it', async () => {
+    const a = await createAdmin();
+    const withToken = async (claims: Record<string, unknown>) => {
+      const agent = new Agent(app, ADMIN_ORIGIN);
+      agent.cookies.set('gw_admin_at', await signToken(deps.config.ADMIN_JWT_SECRET, 'admin', 600, { role: 'operator', sv: 0, ...claims }, a.id));
+      return agent.req('GET', `${B}/auth/me`);
+    };
+    expect((await withToken({ ast: nowS() - 12 * 3600 - 5 })).statusCode).toBe(401);
+    const nearEnd = await withToken({ ast: nowS() - 12 * 3600 + 100 });
+    expect(nearEnd.statusCode).toBe(200);
+    expect(cookie(nearEnd, 'gw_admin_at')?.maxAge).toBeLessThanOrEqual(100);
+    expect(cookie(nearEnd, 'gw_admin_at')?.maxAge).toBeGreaterThan(80);
+    // Tokens from before D-106 have no ast: the sign-in time is their iat.
+    expect((await withToken({})).statusCode).toBe(200);
   });
 });
 

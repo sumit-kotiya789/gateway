@@ -23,6 +23,7 @@ import { closeUnderpaidInvoices } from './modules/custody/partials.js';
 import { createSignerClient } from './modules/custody/signer-client.js';
 import { advanceWithdrawals } from './modules/custody/payouts.js';
 import { advanceTreasury } from './modules/custody/treasury.js';
+import { runHotWalletPolicies } from './modules/custody/hot-wallet-policy.js';
 import { advanceSweeps, planSweeps, type SweeperEnv } from './modules/custody/sweeper.js';
 import { advanceForwards, planForwards, type ForwarderEnv } from './modules/custody/forwarder.js';
 
@@ -93,7 +94,10 @@ export async function runCustodyJob(deps: Deps, env: SweeperEnv): Promise<Record
   const swept = await advanceSweeps(deps, env);
   // After the sweeps: an underpaid invoice swept this tick closes in the same run (D-099).
   const partial = (await closeUnderpaidInvoices(deps)).length;
-  return { planned, sweeps: swept, partial, withdrawals: await advanceWithdrawals(deps, env), treasury: await advanceTreasury(deps, env) };
+  const withdrawn = await advanceWithdrawals(deps, env);
+  // Hot wallet policy (D-105) after this tick's sweeps and payouts; a transfer it creates is advanced right away.
+  const hotWallet = await runHotWalletPolicies(deps, env);
+  return { planned, sweeps: swept, partial, withdrawals: withdrawn, hot_wallet: hotWallet, treasury: await advanceTreasury(deps, env) };
 }
 
 /** Plans new forwards, then moves due forwards one step forward (forwarder mode, D-097). */

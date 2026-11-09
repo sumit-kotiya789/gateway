@@ -1183,6 +1183,64 @@ export const signerControls = pgTable(
   (t) => [check('signer_controls_single', sql`${t.id} = 1`)],
 );
 
+/** Invoice statuses the admin console's "Needs a decision" queue can show (D-106). */
+export const ATTENTION_STATUSES = ['late_payment', 'underpaid', 'held'] as const;
+
+/**
+ * Single row: admin console settings (D-106), changed by a superadmin (settings:manage + 2FA, audited).
+ * `attention_statuses`: the invoice statuses in the "Needs a decision" queue. Sessions slide: an admin is signed out
+ * after `session_idle_minutes` without a request, and at the latest `session_max_hours` after signing in.
+ */
+export const adminSettings = pgTable(
+  'admin_settings',
+  {
+    id: integer('id').primaryKey().default(1),
+    attentionStatuses: text('attention_statuses').array().notNull().default(sql`'{late_payment,held}'`),
+    sessionIdleMinutes: integer('session_idle_minutes').notNull().default(30),
+    sessionMaxHours: integer('session_max_hours').notNull().default(12),
+    // D-107. Admin IP allowlist: when on, admin routes answer 404 to every other address (env ADMIN_IP_ALLOWLIST,
+    // if set, is checked as well). Entries: an IP or CIDR with a label.
+    ipAllowlistEnabled: boolean('ip_allowlist_enabled').notNull().default(false),
+    ipAllowlist: jsonb('ip_allowlist').$type<{ cidr: string; label: string }[]>().notNull().default([]),
+    // Live withdrawals at or above this (whole token units) need two different admins. Null = the server's
+    // WITHDRAWAL_TWO_PERSON_MIN, which is also the ceiling: the console can tighten the rule, never loosen it.
+    withdrawalTwoPersonMin: numeric('withdrawal_two_person_min', { precision: 20, scale: 0 }),
+    // New merchant sign-ups on the dashboard (env SIGNUP_ENABLED=false closes them regardless).
+    signupEnabled: boolean('signup_enabled').notNull().default(true),
+    // What a merchant gets when it signs up; existing merchants keep theirs (same ranges as the merchants table).
+    defaultFeeBps: integer('default_fee_bps').notNull().default(100),
+    defaultFeeFixed: numeric('default_fee_fixed', { precision: 20, scale: 6 }).notNull().default('0'),
+    defaultFeeGrace: numeric('default_fee_grace', { precision: 20, scale: 6 }).notNull().default('0'),
+    defaultPayoutFee: numeric('default_payout_fee', { precision: 20, scale: 6 }).notNull().default('0'),
+    defaultUnderpayToleranceBps: integer('default_underpay_tolerance_bps').notNull().default(50),
+    // Merchant whitelists (D-109): a new live payout address is usable this many hours after it was added; switching a
+    // whitelist off takes effect this many hours after the request.
+    whitelistActivationHours: integer('whitelist_activation_hours').notNull().default(24),
+    whitelistDisableHours: integer('whitelist_disable_hours').notNull().default(48),
+    updatedBy: uuid('updated_by').references(() => adminUsers.id),
+    updatedAt: tstz('updated_at').notNull().defaultNow(),
+  },
+  (t) => [
+    check('admin_settings_single', sql`${t.id} = 1`),
+    check(
+      'admin_settings_ip_allowlist',
+      sql`jsonb_typeof(${t.ipAllowlist}) = 'array' and jsonb_array_length(${t.ipAllowlist}) <= 50 and (not ${t.ipAllowlistEnabled} or jsonb_array_length(${t.ipAllowlist}) > 0)`,
+    ),
+    check('admin_settings_two_person', sql`${t.withdrawalTwoPersonMin} is null or ${t.withdrawalTwoPersonMin} >= 1`),
+    check('admin_settings_whitelist', sql`${t.whitelistActivationHours} between 1 and 168 and ${t.whitelistDisableHours} between 1 and 168`),
+    check(
+      'admin_settings_merchant_defaults',
+      sql`${t.defaultFeeBps} between 0 and 10000 and ${t.defaultFeeFixed} between 0 and 1000 and ${t.defaultFeeGrace} between 0 and 100000
+        and ${t.defaultPayoutFee} between 0 and 1000 and ${t.defaultUnderpayToleranceBps} between 0 and 500`,
+    ),
+    check(
+      'admin_settings_attention',
+      sql`cardinality(${t.attentionStatuses}) between 1 and 3 and ${t.attentionStatuses} <@ array['late_payment', 'underpaid', 'held']::text[]`,
+    ),
+    check('admin_settings_session', sql`${t.sessionIdleMinutes} between 5 and 240 and ${t.sessionMaxHours} between 1 and 24`),
+  ],
+);
+
 export const sweepStatus = pgEnum('sweep_status', ['pending', 'gas_sent', 'sweep_sent', 'confirmed', 'failed']);
 
 /**
@@ -1395,13 +1453,52 @@ export const treasuryTransfers = pgTable(
     lastError: text('last_error'),
     confirmedAt: tstz('confirmed_at'),
     createdAt: createdAt(),
+    // D-105: created by the hot wallet policy (hot -> cold above the cap), not proposed by an admin. Inserted as
+    // `approved` without an approver; `requested_by` is the admin who set the policy. The DB guard caps the amount
+    // at the excess over the policy, and the signer signs it only with SIGNER_AUTO_TO_COLD.
+    auto: boolean('auto').notNull().default(false),
   },
   (t) => [
     index('treasury_transfers_due_idx').on(t.nextAttemptAt).where(sql`${t.status} in ('approved', 'sent')`),
     uniqueIndex('treasury_transfers_tx_uq').on(t.chainId, sql`lower(${t.txHash})`).where(sql`${t.txHash} is not null`),
+    // One automatic transfer in flight per mode and token.
+    uniqueIndex('treasury_transfers_auto_open_uq').on(t.livemode, t.tokenId).where(sql`${t.auto} and ${t.status} in ('approved', 'sent')`),
     check('treasury_transfers_amount', sql`${t.amount} > 0`),
     check('treasury_transfers_two_people', sql`${t.approvedBy} is null or ${t.approvedBy} <> ${t.requestedBy}`),
     check('treasury_transfers_to_hot_tx', sql`${t.direction} <> 'to_hot' or ${t.txHash} is not null`),
+    check('treasury_transfers_auto_to_cold', sql`not ${t.auto} or (${t.direction} = 'to_cold' and ${t.approvedBy} is null)`),
+  ],
+);
+
+/**
+ * Hot wallet policy per mode and token (D-105), set by an admin (treasury:manage + 2FA, audited). `max_balance`: above
+ * it the worker moves the excess to cold storage automatically. `low_balance`: below it the admins who manage treasury
+ * get an email (again every 24 h while it stays low), so they can refill the hot wallet. Minor units; null = off.
+ */
+export const hotWalletPolicies = pgTable(
+  'hot_wallet_policies',
+  {
+    id: id(),
+    livemode: boolean('livemode').notNull(),
+    tokenId: text('token_id')
+      .notNull()
+      .references(() => tokens.id),
+    maxBalance: money('max_balance'),
+    lowBalance: money('low_balance'),
+    /** On-chain token balance of the hot wallet at the last check. */
+    lastBalance: money('last_balance'),
+    lastCheckedAt: tstz('last_checked_at'),
+    /** Last low-balance email; cleared once the balance is back at or above `low_balance`. */
+    lowAlertAt: tstz('low_alert_at'),
+    updatedBy: uuid('updated_by')
+      .notNull()
+      .references(() => adminUsers.id),
+    updatedAt: tstz('updated_at').notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('hot_wallet_policies_uq').on(t.livemode, t.tokenId),
+    check('hot_wallet_policies_positive', sql`coalesce(${t.maxBalance}, 1) > 0 and coalesce(${t.lowBalance}, 0) >= 0`),
+    check('hot_wallet_policies_order', sql`${t.maxBalance} is null or ${t.lowBalance} is null or ${t.lowBalance} < ${t.maxBalance}`),
   ],
 );
 
@@ -1501,5 +1598,123 @@ export const forwards = pgTable(
     uniqueIndex('forwards_tx_uq').on(t.chainId, sql`lower(${t.txHash})`).where(sql`${t.txHash} is not null`),
     check('forwards_amount', sql`${t.amount} > 0`),
     check('forwards_result', sql`(${t.status} = 'confirmed') = (${t.toMerchant} is not null and ${t.fee} is not null)`),
+  ],
+);
+
+/**
+ * Funds security per merchant (D-109), one row, set by the owner (payouts:manage + 2FA). Address whitelist per mode:
+ * when on, payouts to the merchant's users go only to whitelisted addresses. IP whitelist (both modes): when on, the
+ * merchant's secret API keys work only from these addresses. Switching one on applies at once; switching it off is
+ * scheduled (`*_disable_at`, the console's whitelist_disable_hours later) and can be cancelled until then.
+ */
+export const merchantSecuritySettings = pgTable(
+  'merchant_security_settings',
+  {
+    merchantId: uuid('merchant_id')
+      .primaryKey()
+      .references(() => merchants.id),
+    addressesLive: boolean('addresses_live').notNull().default(false),
+    addressesLiveDisableAt: tstz('addresses_live_disable_at'),
+    addressesTest: boolean('addresses_test').notNull().default(false),
+    addressesTestDisableAt: tstz('addresses_test_disable_at'),
+    ips: boolean('ips').notNull().default(false),
+    ipsDisableAt: tstz('ips_disable_at'),
+    ipEntries: jsonb('ip_entries').$type<{ cidr: string; label: string }[]>().notNull().default([]),
+    updatedBy: uuid('updated_by').references(() => merchantUsers.id),
+    updatedAt: tstz('updated_at').notNull().defaultNow(),
+  },
+  (t) => [
+    check(
+      'merchant_security_ip_entries',
+      sql`jsonb_typeof(${t.ipEntries}) = 'array' and jsonb_array_length(${t.ipEntries}) <= 100 and (not ${t.ips} or jsonb_array_length(${t.ipEntries}) > 0)`,
+    ),
+    check(
+      'merchant_security_disable_pending',
+      sql`(${t.addressesLiveDisableAt} is null or ${t.addressesLive}) and (${t.addressesTestDisableAt} is null or ${t.addressesTest}) and (${t.ipsDisableAt} is null or ${t.ips})`,
+    ),
+  ],
+);
+
+/**
+ * A payout destination the merchant trusts (D-109). Usable from `activates_at` (live: the console's
+ * whitelist_activation_hours after it was added; test: at once). Removed, never deleted.
+ */
+export const whitelistedAddresses = pgTable(
+  'whitelisted_addresses',
+  {
+    id: id(),
+    merchantId: uuid('merchant_id')
+      .notNull()
+      .references(() => merchants.id),
+    livemode: boolean('livemode').notNull(),
+    family: text('family').notNull().default('evm'),
+    address: text('address').notNull(),
+    label: text('label').notNull().default(''),
+    createdBy: uuid('created_by').references(() => merchantUsers.id),
+    createdAt: createdAt(),
+    activatesAt: tstz('activates_at').notNull(),
+    removedAt: tstz('removed_at'),
+    removedBy: uuid('removed_by').references(() => merchantUsers.id),
+  },
+  (t) => [
+    uniqueIndex('whitelisted_addresses_uq').on(t.merchantId, t.livemode, t.family, sql`lower(${t.address})`).where(sql`${t.removedAt} is null`),
+    index('whitelisted_addresses_merchant_idx').on(t.merchantId, t.livemode),
+    check('whitelisted_addresses_evm', sql`${t.family} <> 'evm' or ${t.address} ~ '^0x[0-9a-fA-F]{40}$'`),
+    check('whitelisted_addresses_label', sql`char_length(${t.label}) <= 60`),
+  ],
+);
+
+/**
+ * API key traffic in hourly buckets per endpoint and status class (D-110): what the dashboard's key analytics draw.
+ * `status_class` 2, 3, 4 or 5 (hundreds); `blocked` requests never reached the endpoint (IP not allowed).
+ */
+export const apiKeyUsage = pgTable(
+  'api_key_usage',
+  {
+    keyId: uuid('key_id')
+      .notNull()
+      .references(() => apiKeys.id),
+    merchantId: uuid('merchant_id')
+      .notNull()
+      .references(() => merchants.id),
+    bucket: tstz('bucket').notNull(),
+    route: text('route').notNull(),
+    statusClass: integer('status_class').notNull(),
+    requests: integer('requests').notNull().default(0),
+    totalMs: bigint('total_ms', { mode: 'number' }).notNull().default(0),
+  },
+  (t) => [
+    uniqueIndex('api_key_usage_uq').on(t.keyId, t.bucket, t.route, t.statusClass),
+    index('api_key_usage_merchant_idx').on(t.merchantId, t.bucket),
+    check('api_key_usage_status', sql`${t.statusClass} between 0 and 5`),
+  ],
+);
+
+/**
+ * Every distinct client (IP + user agent) that used an API key (D-110): its digital fingerprint. First and last seen,
+ * requests, errors (4xx/5xx) and blocked requests (IP not allowed).
+ */
+export const apiKeyClients = pgTable(
+  'api_key_clients',
+  {
+    keyId: uuid('key_id')
+      .notNull()
+      .references(() => apiKeys.id),
+    merchantId: uuid('merchant_id')
+      .notNull()
+      .references(() => merchants.id),
+    ip: text('ip').notNull(),
+    userAgent: text('user_agent').notNull().default(''),
+    firstSeen: tstz('first_seen').notNull().defaultNow(),
+    lastSeen: tstz('last_seen').notNull().defaultNow(),
+    lastRoute: text('last_route').notNull().default(''),
+    requests: integer('requests').notNull().default(0),
+    errors: integer('errors').notNull().default(0),
+    blocked: integer('blocked').notNull().default(0),
+  },
+  (t) => [
+    uniqueIndex('api_key_clients_uq').on(t.keyId, t.ip, sql`md5(${t.userAgent})`),
+    index('api_key_clients_merchant_idx').on(t.merchantId),
+    check('api_key_clients_ua_len', sql`char_length(${t.userAgent}) <= 300`),
   ],
 );

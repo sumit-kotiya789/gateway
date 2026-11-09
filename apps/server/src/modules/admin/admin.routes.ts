@@ -28,6 +28,7 @@ import { invoiceDetail } from '../invoices/invoices.routes.js';
 import { invoiceView } from '../invoices/invoices.js';
 import { balancesView, feeTopupsView } from '../ledger/ledger.routes.js';
 import { recordFeeTopup, resolveInvoice } from '../ledger/ledger.js';
+import { loadAdminSettings } from './settings.js';
 import { enqueueEmail } from '../email/outbox.js';
 import { templates } from '../email/templates.js';
 
@@ -35,12 +36,10 @@ const Reason = z.string().trim().min(3).max(500);
 const ReasonBody = z.strictObject({ reason: Reason });
 const IdParams = z.strictObject({ id: z.uuid() });
 const Page = { limit: z.coerce.number().int().min(1).max(100).default(50), starting_after: z.uuid().optional() };
-/** Invoices an admin may need to act on (manual resolve; held = risk review, D-094). */
-const ATTENTION = ['held', 'underpaid', 'late_payment'] as const;
 
 const like = (s: string) => `%${s.replace(/[\\%_]/g, '\\$&')}%`;
-/** Token-unit setting (stablecoin units, up to 6 decimals), bounded like the DB check. */
-const feeUnits = (max: number) =>
+/** Token-unit setting (stablecoin units, up to 6 decimals), bounded like the DB check. Also used by settings.routes.ts. */
+export const feeUnits = (max: number) =>
   z
     .string()
     .trim()
@@ -457,7 +456,8 @@ export function adminRoutes(deps: Deps): FastifyPluginAsyncZod {
         preHandler: requireAdmin(deps, 'admin:read'),
         schema: {
           querystring: z.strictObject({
-            status: z.enum(INVOICE_STATUSES).optional(), // default: the statuses that need an admin decision
+            // Default: the "needs a decision" statuses picked in the console settings (D-106).
+            status: z.enum(INVOICE_STATUSES).optional(),
             merchant_id: z.uuid().optional(),
             livemode: z.stringbool().optional(),
             ...Page,
@@ -466,8 +466,9 @@ export function adminRoutes(deps: Deps): FastifyPluginAsyncZod {
       },
       async (req) => {
         const q = req.query;
-        const rows = await withSystem(deps.db, (tx) =>
-          tx
+        const rows = await withSystem(deps.db, async (tx) => {
+          const status = q.status ? eq(invoices.status, q.status) : inArray(invoices.status, (await loadAdminSettings(tx)).attentionStatuses);
+          return tx
             .select({ inv: invoices, token: tokens, chain: chains, merchantName: merchants.name })
             .from(invoices)
             .innerJoin(tokens, eq(tokens.id, invoices.tokenId))
@@ -475,15 +476,15 @@ export function adminRoutes(deps: Deps): FastifyPluginAsyncZod {
             .innerJoin(merchants, eq(merchants.id, invoices.merchantId))
             .where(
               and(
-                q.status ? eq(invoices.status, q.status) : inArray(invoices.status, [...ATTENTION]),
+                status,
                 q.merchant_id ? eq(invoices.merchantId, q.merchant_id) : undefined,
                 q.livemode === undefined ? undefined : eq(invoices.livemode, q.livemode),
                 q.starting_after ? lt(invoices.id, q.starting_after) : undefined,
               ),
             )
             .orderBy(desc(invoices.id))
-            .limit(q.limit + 1),
-        );
+            .limit(q.limit + 1);
+        });
         const page = rows.slice(0, q.limit);
         return {
           data: page.map((r) => ({ ...invoiceView(r.inv, r.token, r.chain, base), merchant_id: r.inv.merchantId, merchant_name: r.merchantName })),

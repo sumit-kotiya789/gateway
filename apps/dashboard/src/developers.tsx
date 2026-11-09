@@ -1,13 +1,15 @@
 import { useState } from 'react';
 import { SellerSelect } from './sellers';
-import { api, totpHeader, type ApiKey, type Page, type WebhookDelivery, type WebhookEndpoint } from './api';
+import { api, totpHeader, type ApiKey, type KeyUsage, type Page, type WebhookDelivery, type WebhookEndpoint } from './api';
+import { Sparkline } from './charts';
+import { ago, fmtCompact, fmtPct } from './format';
 import { Alert, ConfirmButton, EmptyState, ErrorBox, Field, Icon, SecretOnce, Skeleton, StatusBadge, Submit, TotpInput, fmtDate, short, toast, useAction, useLoad } from './ui';
 
 const SECRET_SCOPES = ['read', 'invoices:write', 'refunds:write', 'withdrawals:write', 'payouts:write', 'webhooks:write'];
 
 const Needs2fa = () => (
   <Alert tone="warning">
-    Creating this needs two-factor authentication. <a href="#/security">Enable it in Security.</a>
+    Creating this needs two-factor authentication. <a href="#/settings/security">Enable it in Security.</a>
   </Alert>
 );
 
@@ -19,6 +21,9 @@ function keyState(k: ApiKey): string {
 
 export function ApiKeys(props: { livemode: boolean; totp: boolean }) {
   const keys = useLoad(() => api<{ data: ApiKey[] }>('GET', '/api-keys/'), []);
+  // Traffic per key over 7 days (D-110): sparkline, error rate and where it was last used from.
+  const usage = useLoad(() => api<{ data: KeyUsage[] }>('GET', `/api-keys/usage?livemode=${String(props.livemode)}&days=7`), [props.livemode]);
+  const use = new Map((usage.data?.data ?? []).map((u) => [u.key_id, u]));
   const [created, setCreated] = useState<string>();
   const [form, setForm] = useState({ name: '', kind: 'secret' as 'secret' | 'publishable', scopes: ['read', 'invoices:write'], code: '' });
   const a = useAction();
@@ -37,15 +42,18 @@ export function ApiKeys(props: { livemode: boolean; totp: boolean }) {
       {rows.length > 0 ? (
         <div className="table-wrap">
           <table>
-            <thead><tr><th>Name</th><th>Key</th><th>Scopes</th><th>Last used</th><th>Created</th><th>State</th><th /></tr></thead>
+            <thead><tr><th>Name</th><th>Key</th><th>Traffic · 7d</th><th className="num">Errors</th><th>Fingerprint</th><th>Last used</th><th>State</th><th /></tr></thead>
             <tbody>
-              {rows.map((k) => (
-                <tr key={k.id}>
-                  <td>{k.name}</td>
+              {rows.map((k) => {
+                const u = use.get(k.id);
+                return (
+                <tr key={k.id} className="clickable" onClick={(e) => { if (!(e.target as HTMLElement).closest('button')) location.hash = `#/api-keys/${k.id}`; }}>
+                  <td><a href={`#/api-keys/${k.id}`}>{k.name}</a><small className="muted key-scopes">{k.scopes.join(', ')}</small></td>
                   <td><code>{k.prefix}…</code></td>
-                  <td>{k.scopes.join(', ')}</td>
-                  <td>{fmtDate(k.last_used_at)}</td>
-                  <td>{fmtDate(k.created_at)}</td>
+                  <td><div className="traffic-cell">{u && <Sparkline values={u.spark} tone={u.error_rate > 0.05 ? 'danger' : 'accent'} />}<span>{fmtCompact(u?.requests ?? 0)}</span></div></td>
+                  <td className="num">{u && u.requests > 0 ? <span className={u.error_rate > 0.05 ? 'bad' : ''}>{fmtPct(u.error_rate)}</span> : <span className="muted">—</span>}</td>
+                  <td>{u && u.clients > 0 ? <span>{u.clients} client{u.clients === 1 ? '' : 's'}{u.new_clients > 0 && <span className="badge s-pending">{u.new_clients} new</span>}<small className="muted key-scopes">{u.last_ip}</small></span> : <span className="muted">not used</span>}</td>
+                  <td title={fmtDate(k.last_used_at)}>{ago(k.last_used_at)}</td>
                   <td><StatusBadge status={keyState(k)} /></td>
                   <td>
                     {keyState(k) === 'active' && (
@@ -59,7 +67,8 @@ export function ApiKeys(props: { livemode: boolean; totp: boolean }) {
                     )}
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>

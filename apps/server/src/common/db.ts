@@ -11,6 +11,12 @@ export function createDb(url: string): { db: Db; pool: pg.Pool } {
   // An idle client dropped by the server (DB restart, failover, admin kill) is emitted here. Unhandled, it would crash
   // the process; pg already discards that client and the next query opens a new one. Query errors surface at callers.
   pool.on('error', () => {});
+  // Same for a client that is checked out: if the server ends its session (idle-in-transaction timeout, restart), the
+  // client emits 'error', and an unhandled 'error' event would crash the process. The query in flight still rejects,
+  // and pg-pool drops the broken client on release.
+  pool.on('connect', (client) => {
+    client.on('error', () => {});
+  });
   return { pool, db: drizzle(pool, { schema }) };
 }
 

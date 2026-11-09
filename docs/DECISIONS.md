@@ -722,3 +722,109 @@ Web3 projects give each user one address to deposit to, any amount, any time; it
   say 2.8.
 - **Merchant go-live checklist** in INTEGRATION.md replaces its "Still to come" placeholder (the website's guide has
   the same list).
+
+## D-105 Hot wallet limits: automatic hot -> cold above a cap, email below a low mark (2026-11-09, owner)
+- **Ask**: an admin-configurable cap on the hot wallet (e.g. 1500): anything above it goes to cold storage by itself;
+  and a low mark (e.g. 500): below it the admins get an email to refill. Per mode and token, in the admin console.
+- **Keys unchanged** (owner's choice): the hot wallet stays the signer's seed-derived wallet; no private key import.
+  Refilling never needs the hot wallet's key, only its address.
+- **No second admin for the automatic transfer**: it can only move funds *to* the cold address in the signer's own
+  allowlist, so the worst a bug or a database attacker can do is park too much in cold (payouts then wait). Guards:
+  DB trigger (hot -> cold only, at most ledger `custody_hot` - cap, requested by the policy's admin), one in flight per
+  mode and token, and an opt-in in the signer's env, `SIGNER_AUTO_TO_COLD` (off by default; without it the transfer
+  waits with `auto_disabled`). Manual transfers keep the two-admin rule.
+- **Amount**: the smaller of the ledger's and the chain's count of the hot wallet, minus the cap; nothing below the
+  token minimum; after a failure, 30 minutes before the next.
+- **Alert**: on-chain balance below the mark -> one email to every active admin with `treasury:manage`, again every
+  24 h while low, re-armed when it recovers. Gas (BNB) of the hot wallet is not covered yet: Prometheus alerts.
+- `advanceTreasury` takes an optional chain filter (tests share one database; the worker passes none).
+
+## D-106 Admin console settings: "needs a decision" queue and sliding admin sessions (2026-11-09, owner)
+- **Ask**: underpaid invoices out of "Needs a decision", only late payments there by default, and a Settings page to
+  change it; admins should not be signed out while they work.
+- **Queue**: the default invoice list shows the statuses in `admin_settings.attention_statuses` (one row), initially
+  `late_payment` + `held`. Underpaid is out: custodial underpaid invoices close by themselves at the deadline
+  (D-099) and the customer can still top up until then. `held` stays on because only an admin can release or reject a
+  risk hold; hiding it would strand the payment. Any status is still one filter away; underpaid can still be resolved.
+- **Sessions** (amends D-032's "re-login every 15 min"): still no refresh token, but every authenticated request
+  re-issues the admin JWT and its cookies. Idle limit `session_idle_minutes` (default 30), absolute limit
+  `session_max_hours` after sign-in (default 12, claim `ast` carried across renewals). The CSRF cookie keeps its value.
+  The console does not poll, so idle time is real idle time. Disabling, role changes and credential resets still cut
+  a session off at its next request (checked on every request, as before).
+- **Who**: a superadmin (`settings:manage`) with step-up 2FA, audited with before/after. Every admin can read them.
+- **Not a console setting** (superseded by D-107): `WITHDRAWAL_TWO_PERSON_MIN` and the other env controls were shown
+  read-only.
+
+## D-107 Settings is the one place for platform rules; nothing new gets hardcoded (2026-11-09, owner)
+- **Owner rule from now on**: platform behaviour an operator may need to change lives in the admin console's Settings
+  page, not in code constants or env. Exceptions, each stated where it applies: secrets, infrastructure wiring, and
+  outer safety limits a single console account must not be able to loosen (those stay env, as ceilings).
+- **Removed from Settings**: the read-only rows for login 2FA (`ADMIN_LOGIN_TOTP_DISABLED`, dev only) and custodial /
+  forwarder mode (`FEATURE_*`, deployment features).
+- **Admin IP allowlist** (new, off by default): IPs/CIDRs with labels and an on/off switch. When on, every
+  `/admin/v1` route (login included) answers 404 outside it, checked before authentication on every request.
+  Switching it on is refused unless the caller's own IP is on the list (no self-lockout); recovery is one SQL update
+  (RUNBOOK). The env `ADMIN_IP_ALLOWLIST` still applies as an outer layer. Settings shows the caller's IP as the server
+  sees it, so a wrong `TRUST_PROXY_HOPS` (private address shown) is visible before relying on the list.
+- **Two-admin withdrawal threshold**: set in Settings (whole tokens), but never above `WITHDRAWAL_TWO_PERSON_MIN`, which
+  becomes the ceiling. The console can make the two-person rule stricter, not looser: a single superadmin raising it
+  would defeat the rule alone. Captured per withdrawal at request time (`approvals_required`), so changes apply to new
+  requests only.
+- **Merchant sign-ups** (switch; env `SIGNUP_ENABLED=false` still closes them) and **new-merchant defaults** (fee rate,
+  fixed fee, grace, payout fee, underpay tolerance; existing merchants keep theirs).
+- **Settings reads are system context**: the row is RLS system-only. A tenant transaction (e.g. a merchant's withdrawal
+  request) reads it with its own short system transaction (`readAdminSettings`), and a missing row throws instead of
+  falling back to defaults: the first version silently fell back to the ceiling inside tenant transactions.
+- **Tests**: settings that change rules platform-wide (sign-ups, allowlist, threshold) run in the `integration-global`
+  vitest project: own containers, one file at a time, after the parallel integration files.
+- Not moved (engineering internals, not operator choices): batch sizes, poll intervals, leases, rate-limit windows,
+  RPC quorum. Security timers (payout-address cooldown 24 h, login lockout, token lifetimes) are candidates only with a
+  floor, owner to decide.
+
+## D-108 Hosted checkout: a 3D model per state, confetti on confirmation, a thank-you screen on settlement (2026-11-09, owner)
+- **Ask**: proper animation for every checkout state, a small 3D model per loading state, a celebration "rain" when
+  the payment confirms, one calm animation while it still settles, and a premium thank-you once complete.
+- **Models** (`checkout/scene.ts`): waiting = spinning coin with radar rings; detected = fast coin with sparks;
+  confirming = blocks stacking; confirmed (paid, settlement pending) = medal with an orbit; settled = big medal with
+  rays and a halo on the thank-you screen; underpaid = coin in a progress ring; expired = hourglass; cancelled/failed =
+  red medal; held/late/partial = amber shield. Short title plus a line under it per status; the "do not send funds"
+  advice stays in that line.
+- **Celebrations fire only on a transition seen live**: confetti rain when the page watches the payment confirm, a
+  burst when it then settles. A page opened on an already settled invoice shows the thank-you screen without confetti.
+  After confirmation the page keeps polling for settlement (custodial and forwarder invoices settle minutes later;
+  non-custodial at once) and shows the thank-you screen anyway after 10 minutes.
+- **How**: pure CSS 3D (shapes extruded from 9 stacked layers, real cubes) and a canvas for confetti. No library and
+  nothing fetched, so the nonce-only CSP stays as it is and it works in the widget iframe. No style attributes (CSP):
+  every transform is in the stylesheet. Never animate opacity on a 3D model: opacity < 1 flattens preserve-3d.
+  prefers-reduced-motion disables all of it.
+
+## D-109 Merchant whitelists: payout addresses and API IPs (2026-11-09, owner)
+- **Ask**: a whitelist like the big processors have: trusted payout addresses (add manually or from a CSV), and the IPs
+  API keys may be used from.
+- **Address whitelist**, per mode, owner + 2FA: while on, payouts to the merchant's users (D-100) go only to active
+  whitelisted addresses; the app refuses (403 `address_not_whitelisted` / `address_pending`) and so does the database
+  (trigger on `withdrawals`, 0058). Live addresses become usable `whitelist_activation_hours` after they are added
+  (admin console setting, default 24 h, database clock); test addresses at once. Owners are emailed when live
+  addresses are added. Removing is immediate and needs no code. EVM addresses cover every token on EVM networks.
+- **IP whitelist**, both modes, owner + 2FA: while on, secret API keys only work from the listed IPs/CIDRs (403
+  `ip_not_whitelisted`); publishable keys run in browsers and are exempt. Checked at authentication with the key's
+  own allowlist; both apply.
+- **Switching off is slow, on is instant**: off is scheduled `whitelist_disable_hours` ahead (admin setting, default
+  48 h), owners are emailed, and it can be cancelled until then. The database refuses an early switch-off. A schedule
+  whose time has passed reads as off everywhere (no worker needed).
+- Merchant withdrawals to their own payout address are unchanged (they already have the 24 h address wait).
+
+## D-110 Merchant dashboard v2: overview, API key analytics and fingerprint, one Settings page (2026-11-09, owner)
+- **Overview** is the new home: KPIs with the change against the previous period (volume per token, successful
+  payments, conversion, average payment), an interactive volume/payments chart (7/30/90 days), status donut, payment
+  funnel with drop-off, API traffic, a security posture score with links to fix each item, recent invoices.
+- **API key analytics**: every request made with a key (or refused for it: IP not allowed) is counted after the
+  response, in hourly buckets per endpoint and status class (`api_key_usage`), and per client IP + user agent
+  (`api_key_clients`: the key's digital fingerprint, first/last seen, requests, errors, blocked). The key page shows
+  traffic, success rate, latency, endpoints, and the fingerprint with flags (new in 24 h, blocked, outside the
+  whitelist) and a one-click "add to the IP whitelist". The list shows a 7-day sparkline, error rate and clients.
+- **Settings**: one page with a section list (General, Security, Team, Whitelist addresses, Whitelist IPs, Payout
+  wallet, Checkout widget, links to API keys and webhooks). Old links to Security, Team and Widget land there.
+- Charts are plain SVG (no library, no style attributes: the dashboard CSP is style-src 'self'); amounts are drawn
+  as numbers for display only.
+

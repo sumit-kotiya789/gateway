@@ -56,6 +56,14 @@ export const templates = {
     subject: 'A new payout address was added',
     text: `A new ${mode(p.livemode)} payout address was added to your account: ${p.address}\n\nWithdrawals go there from ${p.activatesAt}. Until then nothing changes.\n\nIf you did not do this, cancel it now under Withdrawals and change your password:\n${p.dashboardUrl}/#/withdrawals${footer}`,
   }),
+  whitelistAddressesAdded: (p: { livemode: boolean; count: number; activatesAt: string; dashboardUrl: string }): Rendered => ({
+    subject: 'Addresses were added to your payout whitelist',
+    text: `${String(p.count)} ${mode(p.livemode)} ${p.count === 1 ? 'address was' : 'addresses were'} added to your payout whitelist. ${p.livemode ? `Payouts can go there from ${p.activatesAt}.` : 'They work at once.'}\n\nIf you did not do this, remove them now under Settings > Whitelist addresses and change your password:\n${p.dashboardUrl}/#/settings/whitelist-addresses${footer}`,
+  }),
+  whitelistDisableScheduled: (p: { what: string; at: string; dashboardUrl: string }): Rendered => ({
+    subject: 'A whitelist will be switched off',
+    text: `Your ${p.what} whitelist will be switched off on ${p.at}. Until then it stays on, and you can cancel this in the dashboard.\n\nIf you did not ask for this, cancel it now and change your password:\n${p.dashboardUrl}/#/settings${footer}`,
+  }),
   withdrawalRequested: (p: { livemode: boolean; amount: string; symbol: string; address: string }): Rendered => ({
     subject: 'Withdrawal requested',
     text: `A ${mode(p.livemode)} withdrawal of ${p.amount} ${p.symbol} to ${p.address} was requested.\n\nIf you did not do this, cancel it in the dashboard (while it awaits approval), change your password and contact support.${footer}`,
@@ -73,5 +81,15 @@ export const templates = {
       p.status === 'blocked'
         ? `Your prepaid fee balance for ${p.token} is used up (${p.prepaid} ${p.symbol}). New live invoices in this token are refused until you top up.${footer}`
         : `Your prepaid fee balance for ${p.token} is ${p.prepaid} ${p.symbol}. Top up soon so new live invoices keep working.${footer}`,
+  }),
+  /** Platform admins (D-105): the hot wallet fell below its alert level. */
+  hotWalletLow: (p: { livemode: boolean; token: string; symbol: string; balance: string; threshold: string; address: string }): Rendered => ({
+    subject: 'Hot wallet balance is low',
+    text:
+      `The ${mode(p.livemode)} hot wallet holds ${p.balance} ${p.symbol} (${p.token}), below its alert level of ${p.threshold} ${p.symbol}.\n\n` +
+      `Withdrawals and payouts to users wait while it cannot cover them. Refill it from cold storage: send ${p.symbol} on the ` +
+      `same network to\n\n${p.address}\n\nthen record the refill in the admin console (Custody > Treasury transfer > ` +
+      `Cold storage -> hot wallet) so the ledger books it.\n\nThis email repeats every 24 hours while the balance stays low.` +
+      `\n\n-- \nGateway admin alert. You get this email because you can manage treasury.`,
   }),
 };
