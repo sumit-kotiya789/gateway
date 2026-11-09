@@ -158,7 +158,7 @@ kept: `select started_at, ok, issues from reconciliation_runs order by started_a
   Growing = worker down, Redis down, or many slow endpoints (10 s timeout each, 10 in parallel). Add worker processes:
   claims are `SKIP LOCKED`.
 - One merchant failing: `select endpoint_id, count(*), max(last_error) from webhook_deliveries where status <> 'succeeded'
-  group by 1 order by 2 desc limit 20;`. Their endpoint is down or rejects the signature; deliveries fail after ~2.4 days.
+  group by 1 order by 2 desc limit 20;`. Their endpoint is down or rejects the signature; deliveries fail after ~2.8 days.
   After they fix it, resend from the dashboard, or in bulk:
   `update webhook_deliveries set status = 'pending', attempts = 0, next_attempt_at = now() where endpoint_id = '…' and status = 'failed';`
 - `... resolves to a non-public address` = the URL points at a private network (SSRF guard). Expected; the merchant

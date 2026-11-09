@@ -710,3 +710,15 @@ Web3 projects give each user one address to deposit to, any amount, any time; it
 - **Same CSP** as before (`script-src 'self'; style-src 'self'; font-src 'self'`): no inline style attributes (runtime
   values go through the CSSOM), no textures from URLs, and `assetsInlineLimit: 0` because Vite would otherwise inline
   small font subsets as `data:` URIs, which `font-src 'self'` blocks.
+
+## D-104 Payout event fee in token units; retry window and merchant go-live checklist (2026-11-09, owner)
+- **Bug fixed**: `payout.*` / `withdrawal.*` events carried `fee` in minor units (`"500000000000000000"` for 0.5
+  USDT) while `amount` was in token units: the event view (`GET /v1/events` and webhook bodies, `eventsView`) did not
+  list `fee` among its amount fields. It does now. Only migration 0048's trigger writes a `fee` key, so no other event
+  changes, and stored rows stay raw, so past events read correctly too. Receivers that parsed the raw value must
+  switch to token units. Covered in `payouts.test.ts`.
+- **Retry window**: `RETRY_DELAYS_S` sums to 243,360 s (67.6 h), so a delivery fails after about 2.8 days, not the
+  ~2.4 days stated in D-070 and earlier docs; INTEGRATION, RUNBOOK, the dashboard and the code comment now
+  say 2.8.
+- **Merchant go-live checklist** in INTEGRATION.md replaces its "Still to come" placeholder (the website's guide has
+  the same list).

@@ -226,7 +226,7 @@ export function Webhooks(props: { livemode: boolean; totp: boolean }) {
       <header className="page-head"><h2>Webhooks</h2></header>
       <p className="muted">
         Every invoice status change is POSTed to each endpoint of this mode, signed in the <code>gateway-signature</code> header.
-        Failed deliveries are retried for about 2.4 days. See the integration guide for verification code.
+        Failed deliveries are retried for about 2.8 days. See the integration guide for verification code.
       </p>
       <ErrorBox error={list.error} />
       {secret && <SecretOnce label={secret.label} value={secret.value} onDone={() => { setSecret(undefined); }} />}

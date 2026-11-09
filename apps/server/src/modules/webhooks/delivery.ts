@@ -13,7 +13,7 @@ import { eventsView } from '../ledger/ledger.routes.js';
 import { resolveTarget } from './ssrf.js';
 import { secretAad } from './webhooks.routes.js';
 
-/** Wait after failed attempt n (1-based) before attempt n+1: 12 attempts over ~2.4 days, then the delivery fails. */
+/** Wait after failed attempt n (1-based) before attempt n+1: 12 attempts over ~2.8 days (67.6 h), then the delivery fails. */
 export const RETRY_DELAYS_S = [60, 300, 1800, 7200, 18_000, 36_000, 36_000, 36_000, 36_000, 36_000, 36_000] as const;
 export const MAX_ATTEMPTS = RETRY_DELAYS_S.length + 1;
 export const BATCH = 50;

@@ -144,6 +144,9 @@ describe('payouts to users (D-100)', () => {
     ]);
     const events = await owner.query<{ type: string }>("select type from outbox_events where merchant_id = $1 and (type like 'payout.%' or type like 'withdrawal.%') order by seq", [m.merchantId]);
     expect(events.rows.map((e) => e.type)).toEqual(['payout.approved', 'payout.sent', 'payout.confirmed']);
+    // The event view (GET /v1/events and webhook bodies) carries amount and fee in token units, like the payout.
+    const ev = (await m.api('GET', '/v1/events?type=payout.confirmed')).json<{ data: { data: Record<string, unknown> }[] }>().data;
+    expect(ev[0]?.data).toMatchObject({ withdrawal_id: p.id, kind: 'customer', customer_ref: 'user-42', status: 'confirmed', amount: '10', fee: '0.5' });
 
     // Listed as payouts (filterable by user), not as the merchant's own withdrawals.
     expect((await m.api('GET', '/v1/payouts?customer_ref=user-42')).json<{ data: View[] }>().data.map((x) => x.id)).toEqual([p.id]);

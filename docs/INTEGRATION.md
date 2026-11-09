@@ -63,7 +63,7 @@ The same objects are listed by `GET /v1/events`.
 - **Verify** the `gateway-signature` header (`t=<unix>,v1=<hex>[,v1=<hex>]`): HMAC-SHA256 of `"<t>.<raw body>"` keyed
   with your `whsec_…` secret; accept if any `v1` matches and `t` is within 5 minutes. Use the raw body bytes.
 - **Respond 2xx within 10 s**, then do the work. Anything else (including redirects) is retried: 1 m, 5 m, 30 m, 2 h,
-  5 h, then every 10 h, 12 attempts over about 2.4 days. The dashboard shows each delivery and can resend it.
+  5 h, then every 10 h, 12 attempts over about 2.8 days. The dashboard shows each delivery and can resend it.
 - **Deduplicate** on the event `id` (also in the `gateway-event-id` header): delivery is at-least-once.
 - **Order is not guaranteed.** Act on `data.status`, or fetch `GET /v1/invoices/:id` for the current state.
 - **Rotating the secret** (dashboard): the old secret keeps signing alongside the new one for the window you choose.
@@ -224,5 +224,26 @@ unused addresses; set your wallet's gap limit to the value the dashboard shows (
 Plugin in `integrations/woocommerce/` (install and settings in its README): adds "Pay with USDT" to classic and block
 checkout, creates one invoice per order, verifies webhooks and moves orders from the invoice's current state.
 
-## Still to come
-Go-live checklist for merchants before launch.
+## Go-live checklist (merchants)
+Live mode runs on BSC mainnet once the platform has enabled it (see `LAUNCH_CHECKLIST.md`). Before your first live
+payment:
+
+- [ ] **Verified email** on the account: live keys, xpubs, dashboard invoices and webhook endpoints need it (`403`,
+      `details.reason = "email_unverified"`).
+- [ ] **Receiving mode chosen deliberately**: it locks after your first live invoice (`mode_locked`). Wallet address:
+      a live payout address activates after 24 hours and every owner is emailed. Xpub: a different key than in test
+      mode, with the ownership proof; replacing a live xpub also waits 24 hours.
+- [ ] **Live secret key** (`sk_live_…`) with only the scopes you use, kept in your secret manager; optionally an IP
+      allowlist and an expiry.
+- [ ] **Live webhook endpoint** added and verified with the live `whsec_…` secret (test events never reach it).
+- [ ] **Token id switched** from `bsc-testnet:usdt` to `bsc:usdt`; addresses shown with "BNB Smart Chain (BEP-20)";
+      amounts handled as decimal strings with 18 decimals.
+- [ ] **Fulfilment rules**: orders on `paid` / `overpaid` (or `settled`), deposits credited once on `invoice.settled`
+      keyed by the invoice id; `held`, `underpaid`, `late_payment` and `partially_paid` handled (never shipped as paid).
+- [ ] **Custody on, paying users out**: one-time and daily limits set for every token you pay out (live payouts are
+      refused without them, `limits_required`); users debited before `POST /v1/payouts` and refunded on `payout.failed`.
+- [ ] **Xpub mode**: prepaid fee balance topped up (`GET /v1/balances`, `fee_status`; live invoices get `402
+      insufficient_fee_balance` when it runs out) and your wallet's gap limit set as the dashboard shows.
+- [ ] **Checkout widget**: your live https origins listed (dashboard, Checkout widget).
+- [ ] **Team**: everyone on 2FA with the least role they need; recovery codes stored.
+- [ ] **One small live payment** end to end: invoice or deposit, webhook received and verified, credited once.
