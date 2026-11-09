@@ -18,11 +18,10 @@ import {
   LineSegments,
   Mesh,
   MeshBasicMaterial,
-  MeshPhysicalMaterial,
+  MeshPhongMaterial,
   type Object3D,
   OctahedronGeometry,
   PerspectiveCamera,
-  PMREMGenerator,
   PointLight,
   Points,
   PointsMaterial,
@@ -36,9 +35,9 @@ import {
   Vector3,
   WebGLRenderer,
 } from 'three';
-import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 
 export interface HeroScene { dispose(): void }
+export interface HeroOptions { reducedMotion: boolean; onReady?: () => void }
 
 const GREEN = 0x34d65c;
 const MINT = 0x8dffb0;
@@ -108,23 +107,25 @@ void main() {
   #include <colorspace_fragment>
 }`;
 
-export function createHeroScene(canvas: HTMLCanvasElement, opts: { reducedMotion: boolean }): HeroScene {
+export function createHeroScene(canvas: HTMLCanvasElement, opts: HeroOptions): HeroScene {
   const host = canvas.parentElement ?? canvas;
-  const renderer = new WebGLRenderer({ canvas, antialias: true, alpha: true, powerPreference: 'high-performance' });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.75));
+  // Fill rate is the cost here (a full-viewport canvas). Retina: 1.5× without MSAA (density hides the edges);
+  // standard screens: 1× with MSAA. The loop steps the resolution down further if frames run slow.
+  const highDpi = window.devicePixelRatio >= 1.5;
+  const renderer = new WebGLRenderer({ canvas, antialias: !highDpi, alpha: true, powerPreference: 'high-performance' });
+  let pixelRatio = highDpi ? 1.5 : 1;
+  renderer.setPixelRatio(pixelRatio);
   renderer.outputColorSpace = SRGBColorSpace;
   renderer.toneMapping = ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.05;
   renderer.setClearColor(0x000000, 0);
+  // Error checks read shader logs synchronously and stall the main thread until the driver has compiled everything.
+  renderer.debug.checkShaderErrors = import.meta.env.DEV;
 
   const scene = new Scene();
   const camera = new PerspectiveCamera(38, 1, 0.1, 100);
   camera.position.set(0, 0, 10);
 
-  const pmrem = new PMREMGenerator(renderer);
-  const room = new RoomEnvironment();
-  const env = pmrem.fromScene(room, 0.04).texture;
-  scene.environment = env;
   const rand = rng(7);
   const textures: CanvasTexture[] = [];
   const glow = glowTexture('rgba(255,255,255,1)', 'rgba(140,255,176,0.35)');
@@ -136,22 +137,18 @@ export function createHeroScene(canvas: HTMLCanvasElement, opts: { reducedMotion
   const tilt = new Group();
   root.add(tilt);
 
-  // Core: faceted, iridescent crystal with lit edges and a halo.
+  // Core: faceted crystal with lit edges and a halo. Phong with flat shading: each facet catches the lights as it
+  // turns, at a fraction of the cost of PBR + an environment map (which also needed seconds of setup on weak GPUs).
   const coreGeo = new IcosahedronGeometry(1.12, 0);
   const core = new Mesh(
     coreGeo,
-    new MeshPhysicalMaterial({
-      color: 0x1d9a45,
-      metalness: 0.4,
-      roughness: 0.14,
-      clearcoat: 1,
-      clearcoatRoughness: 0.06,
-      iridescence: 0.85,
-      iridescenceIOR: 1.7,
-      envMapIntensity: 1.5,
+    new MeshPhongMaterial({
+      color: 0x1f9a46,
+      specular: 0xc8ffd9,
+      shininess: 80,
       flatShading: true,
-      emissive: 0x05391a,
-      emissiveIntensity: 0.7,
+      emissive: 0x06401d,
+      emissiveIntensity: 0.9,
     }),
   );
   const coreEdges = new LineSegments(new EdgesGeometry(coreGeo), new LineBasicMaterial({ color: MINT, transparent: true, opacity: 0.6, blending: AdditiveBlending, depthWrite: false }));
@@ -218,7 +215,7 @@ export function createHeroScene(canvas: HTMLCanvasElement, opts: { reducedMotion
   // Chain blocks drifting around the core.
   const blockGeo = new BoxGeometry(0.34, 0.34, 0.34);
   const blockEdgeGeo = new EdgesGeometry(blockGeo);
-  const blockMat = new MeshPhysicalMaterial({ color: 0x0e2c17, metalness: 0.6, roughness: 0.25, transparent: true, opacity: 0.6, envMapIntensity: 1.2 });
+  const blockMat = new MeshPhongMaterial({ color: 0x0e2c17, specular: 0x5cf57f, shininess: 60, transparent: true, opacity: 0.6 });
   const blockLine = new LineBasicMaterial({ color: 0x6dfa8e, transparent: true, opacity: 0.75 });
   const blocks: { m: Mesh; base: Vector3; phase: number; spin: Vector3 }[] = [];
   for (let i = 0; i < 11; i++) {
@@ -236,8 +233,8 @@ export function createHeroScene(canvas: HTMLCanvasElement, opts: { reducedMotion
   }
 
   // Deposit streams: particles riding quadratic curves from far away into the core (computed on the GPU).
-  const STREAMS = 18;
-  const PER = 46;
+  const STREAMS = 14;
+  const PER = 34;
   const N = STREAMS * PER;
   const aStart = new Float32Array(N * 3);
   const aCtrl = new Float32Array(N * 3);
@@ -284,7 +281,7 @@ export function createHeroScene(canvas: HTMLCanvasElement, opts: { reducedMotion
   tilt.add(streams);
 
   // Dust.
-  const DUST = 1300;
+  const DUST = 600;
   const dust = new Float32Array(DUST * 3);
   for (let i = 0; i < DUST; i++) {
     const v = new Vector3(rand() * 2 - 1, rand() * 2 - 1, rand() * 2 - 1).normalize().multiplyScalar(8 + rand() * 20);
@@ -296,7 +293,7 @@ export function createHeroScene(canvas: HTMLCanvasElement, opts: { reducedMotion
   scene.add(dustPts);
 
   // Light.
-  scene.add(new AmbientLight(0x88aa99, 0.35));
+  scene.add(new AmbientLight(0x88aa99, 0.8));
   const key = new PointLight(GREEN, 45, 0, 2);
   key.position.set(4, 3, 5);
   const rim = new PointLight(TEAL, 32, 0, 2);
@@ -307,9 +304,13 @@ export function createHeroScene(canvas: HTMLCanvasElement, opts: { reducedMotion
 
   // Layout, input, loop.
   let wide = true;
+  let hostH = 1;
+  let compiled = false;
+  let disposed = false;
   const resize = () => {
     const w = Math.max(1, host.clientWidth);
     const h = Math.max(1, host.clientHeight);
+    hostH = h;
     renderer.setSize(w, h, false);
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
@@ -320,7 +321,7 @@ export function createHeroScene(canvas: HTMLCanvasElement, opts: { reducedMotion
     const s = wide ? 1 : Math.min(0.82, camera.aspect * 1.05);
     root.userData.scale = s;
     if (opts.reducedMotion) root.scale.setScalar(s);
-    if (opts.reducedMotion) renderer.render(scene, camera);
+    if (opts.reducedMotion && compiled) renderer.render(scene, camera);
   };
 
   const pointer = { x: 0, y: 0, tx: 0, ty: 0 };
@@ -334,11 +335,33 @@ export function createHeroScene(canvas: HTMLCanvasElement, opts: { reducedMotion
   let visible = true;
   let last = performance.now();
   let time = 0;
-  const t0 = last;
+  let t0 = last;
+  // At most ~60 fps: 120 Hz displays would otherwise render twice as often for no visible gain.
+  const MIN_FRAME_MS = 1000 / 60 - 2;
+  // Adaptive quality: when most frames in a 90-frame window miss ~40 fps, render at a lower resolution.
+  let sampled = 0;
+  let slow = 0;
+  const adapt = (elapsed: number, now: number) => {
+    if (now - t0 < 2500 || elapsed > 1000) return; // skip the intro and real pauses (tab switches)
+    sampled++;
+    if (elapsed > 25) slow++;
+    if (sampled < 90) return;
+    if (slow > 30 && pixelRatio > 0.75) {
+      pixelRatio = Math.max(0.75, pixelRatio - 0.25);
+      renderer.setPixelRatio(pixelRatio);
+      const pr = streamMat.uniforms.uPixelRatio;
+      if (pr) pr.value = pixelRatio;
+    }
+    sampled = 0;
+    slow = 0;
+  };
 
   const frame = (now: number) => {
-    raf = 0;
-    const dt = Math.min(0.05, (now - last) / 1000);
+    raf = running ? requestAnimationFrame(frame) : 0;
+    const elapsed = now - last;
+    if (elapsed < MIN_FRAME_MS) return;
+    adapt(elapsed, now);
+    const dt = Math.min(0.05, elapsed / 1000);
     last = now;
     time += dt;
     const intro = Math.min(1, (now - t0) / 1800);
@@ -348,7 +371,7 @@ export function createHeroScene(canvas: HTMLCanvasElement, opts: { reducedMotion
 
     pointer.x += (pointer.tx - pointer.x) * 0.045;
     pointer.y += (pointer.ty - pointer.y) * 0.045;
-    const scroll = Math.min(1, window.scrollY / Math.max(1, host.clientHeight));
+    const scroll = Math.min(1, window.scrollY / hostH);
     tilt.rotation.x = pointer.y * 0.35 + scroll * 0.5;
     tilt.rotation.y = pointer.x * 0.55 + scroll * 0.9;
     camera.position.z = 10 + scroll * 3.5;
@@ -371,13 +394,12 @@ export function createHeroScene(canvas: HTMLCanvasElement, opts: { reducedMotion
     if (u) u.value = time;
 
     renderer.render(scene, camera);
-    if (running) raf = requestAnimationFrame(frame);
   };
 
   const start = () => {
-    if (running || opts.reducedMotion || !visible || document.hidden) return;
+    if (!compiled || running || opts.reducedMotion || !visible || document.hidden) return;
     running = true;
-    last = performance.now();
+    last = performance.now() - MIN_FRAME_MS;
     raf = requestAnimationFrame(frame);
   };
   const stop = () => {
@@ -388,11 +410,17 @@ export function createHeroScene(canvas: HTMLCanvasElement, opts: { reducedMotion
 
   const ro = new ResizeObserver(resize);
   ro.observe(host);
-  const io = new IntersectionObserver((es) => {
-    visible = es.some((e) => e.isIntersecting);
-    if (visible) start();
-    else stop();
-  });
+  // Render only while most of the hero is on screen: past that it has faded under the next section, and the
+  // GPU is better spent on scrolling.
+  const io = new IntersectionObserver(
+    (es) => {
+      const e = es[es.length - 1];
+      visible = e !== undefined && e.isIntersecting && e.intersectionRatio >= 0.35;
+      if (visible) start();
+      else stop();
+    },
+    { threshold: [0, 0.35, 0.6] },
+  );
   io.observe(host);
   const onVis = () => {
     if (document.hidden) stop();
@@ -402,17 +430,28 @@ export function createHeroScene(canvas: HTMLCanvasElement, opts: { reducedMotion
   if (!opts.reducedMotion) window.addEventListener('pointermove', onPointer, { passive: true });
 
   resize();
-  if (opts.reducedMotion) {
-    // A still, slightly turned frame.
-    core.rotation.set(0.4, 0.6, 0);
-    tilt.rotation.set(0.12, -0.25, 0);
-    const u = streamMat.uniforms.uTime;
-    if (u) u.value = 3;
-    renderer.render(scene, camera);
-  } else start();
+  // Compile every shader before the first frame, off the main thread where the browser supports it
+  // (KHR_parallel_shader_compile), then fade the canvas in.
+  const begin = () => {
+    if (disposed) return;
+    compiled = true;
+    t0 = performance.now();
+    if (opts.reducedMotion) {
+      // A still, slightly turned frame.
+      core.rotation.set(0.4, 0.6, 0);
+      tilt.rotation.set(0.12, -0.25, 0);
+      const u = streamMat.uniforms.uTime;
+      if (u) u.value = 3;
+      root.scale.setScalar(typeof root.userData.scale === 'number' ? root.userData.scale : 1);
+      renderer.render(scene, camera);
+    } else start();
+    opts.onReady?.();
+  };
+  void renderer.compileAsync(scene, camera).then(begin, begin);
 
   return {
     dispose() {
+      disposed = true;
       stop();
       ro.disconnect();
       io.disconnect();
@@ -426,9 +465,6 @@ export function createHeroScene(canvas: HTMLCanvasElement, opts: { reducedMotion
         else mat?.dispose();
       });
       for (const t of textures) t.dispose();
-      env.dispose();
-      pmrem.dispose();
-      room.dispose();
       renderer.dispose();
     },
   };

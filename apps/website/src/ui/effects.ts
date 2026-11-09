@@ -61,7 +61,18 @@ export function usePointerEffects() {
       tiltEl.style.setProperty('--ry', '0deg');
       tiltEl = null;
     };
+    // Mice report up to 1000 moves/s: keep the latest and apply it once per frame.
+    let pending: PointerEvent | null = null;
+    let raf = 0;
     const onMove = (e: PointerEvent) => {
+      pending = e;
+      if (!raf) raf = requestAnimationFrame(apply);
+    };
+    const apply = () => {
+      raf = 0;
+      const e = pending;
+      pending = null;
+      if (!e) return;
       const target = e.target instanceof Element ? e.target : null;
       const spot = target?.closest<HTMLElement>('.spot');
       if (spot) {
@@ -91,6 +102,7 @@ export function usePointerEffects() {
     return () => {
       document.removeEventListener('pointermove', onMove);
       document.documentElement.removeEventListener('pointerleave', onLeave);
+      if (raf) cancelAnimationFrame(raf);
     };
   }, []);
 }
@@ -146,29 +158,49 @@ export function useInView<T extends Element>(threshold = 0.3): [RefObject<T | nu
   return [ref, seen];
 }
 
-/** Animated number for stat tiles (display only). */
-export function useCountUp(to: number, run: boolean, ms = 1600): number {
-  const [v, setV] = useState(0);
+/** True while the element is on screen (unlike useInView, which latches): pauses offscreen loops. */
+export function useVisible<T extends Element>(threshold = 0.15): [RefObject<T | null>, boolean] {
+  const ref = useRef<T>(null);
+  const [visible, setVisible] = useState(false);
   useEffect(() => {
-    if (!run) return;
+    const el = ref.current;
+    if (!el) return;
+    const io = new IntersectionObserver(
+      (es) => {
+        const e = es[es.length - 1];
+        if (e) setVisible(e.isIntersecting);
+      },
+      { threshold },
+    );
+    io.observe(el);
+    return () => {
+      io.disconnect();
+    };
+  }, [threshold]);
+  return [ref, visible];
+}
+
+/** Counts a stat tile's number up once, writing the text node directly (no React render per frame). */
+export function useCountUpText(ref: RefObject<HTMLElement | null>, to: number, run: boolean, ms = 1600) {
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || !run) return;
     if (prefersReducedMotion()) {
-      setV(to);
+      el.textContent = String(to);
       return;
     }
     let raf = 0;
     const t0 = performance.now();
     const step = (t: number) => {
       const k = Math.min(1, (t - t0) / ms);
-      const eased = 1 - Math.pow(1 - k, 4);
-      setV(to * eased);
+      el.textContent = String(Math.round(to * (1 - Math.pow(1 - k, 4))));
       if (k < 1) raf = requestAnimationFrame(step);
     };
     raf = requestAnimationFrame(step);
     return () => {
       cancelAnimationFrame(raf);
     };
-  }, [to, run, ms]);
-  return v;
+  }, [ref, to, run, ms]);
 }
 
 /** Highlights the section currently under the header; ids in document order. */

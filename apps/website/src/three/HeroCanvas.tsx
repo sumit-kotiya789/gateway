@@ -23,17 +23,31 @@ export function HeroCanvas() {
     }
     let disposed = false;
     let scene: { dispose(): void } | undefined;
-    import('./heroScene')
-      .then((m) => {
-        if (disposed) return;
-        scene = m.createHeroScene(canvas, { reducedMotion: prefersReducedMotion() });
-        setState('ready');
-      })
-      .catch(() => {
-        if (!disposed) setState('fallback');
-      });
+    const load = () => {
+      import('./heroScene')
+        .then((m) => {
+          if (disposed) return;
+          scene = m.createHeroScene(canvas, {
+            reducedMotion: prefersReducedMotion(),
+            onReady: () => {
+              if (!disposed) setState('ready');
+            },
+          });
+        })
+        .catch(() => {
+          if (!disposed) setState('fallback');
+        });
+    };
+    // Text, fonts and layout first; the 3D chunk (and its shader compile) when the main thread is idle.
+    // Safari has no requestIdleCallback.
+    const w = window as Partial<Window>;
+    const ric = w.requestIdleCallback?.bind(window);
+    const cic = w.cancelIdleCallback?.bind(window);
+    const handle = ric ? ric(load, { timeout: 1200 }) : window.setTimeout(load, 250);
     return () => {
       disposed = true;
+      if (ric && cic) cic(handle);
+      else window.clearTimeout(handle);
       scene?.dispose();
     };
   }, []);

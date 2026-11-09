@@ -9,7 +9,7 @@
   overflow: hidden;
   min-width: 0;
 }
-.codewin.glow { box-shadow: var(--shadow), 0 0 80px -30px rgba(52, 214, 92, 0.45); }
+.codewin.glow { box-shadow: var(--shadow), 0 0 48px -24px rgba(52, 214, 92, 0.45); }
 .codewin-head {
   display: flex;
   align-items: center;

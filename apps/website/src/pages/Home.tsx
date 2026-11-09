@@ -4,7 +4,7 @@ import { DEMO, SIGNUP, href } from '../router';
 import { HeroCanvas } from '../three/HeroCanvas';
 import { Faq, PseudoQr, SectionHead, type Qa } from '../ui/bits';
 import { CodeWindow } from '../ui/Code';
-import { prefersReducedMotion, useCountUp, useInView, useTicker } from '../ui/effects';
+import { prefersReducedMotion, useCountUpText, useInView, useTicker, useVisible } from '../ui/effects';
 import {
   IActivity, IArrow, IBell, IBook, ICheck, ICode, ICoins, ICpu, IDatabase, IFingerprint, IFlask, IGamepad, IGauge, IGlobe, IHistory, IKey,
   ILayers, ILock, IPlay, IReceipt, IRefresh, IScale, ISend, IShield, IStore, IUsers, IWallet, IWebhook, IZap,
@@ -144,12 +144,13 @@ function UseCases() {
 
 function Stat(props: { to: number; suffix?: string; prefix?: string; label: string; detail: string; delay: string }) {
   const [ref, seen] = useInView<HTMLDivElement>(0.4);
-  const v = useCountUp(props.to, seen);
+  const num = useRef<HTMLSpanElement>(null);
+  useCountUpText(num, props.to, seen);
   return (
     <div ref={ref} className={`stat reveal ${props.delay}`}>
       <div className="stat-num">
         {props.prefix}
-        {Math.round(v)}
+        <b ref={num}>0</b>
         <span>{props.suffix}</span>
       </div>
       <div className="stat-label">{props.label}</div>
@@ -339,8 +340,8 @@ const FLOW: { icon: ReactNode; title: string; text: string }[] = [
 ];
 
 function Flow() {
-  const [ref, seen] = useInView<HTMLDivElement>(0.35);
-  const step = useTicker(FLOW.length, 1700, seen);
+  const [ref, visible] = useVisible<HTMLDivElement>(0.25);
+  const step = useTicker(FLOW.length, 1700, visible);
   const active = prefersReducedMotion() ? FLOW.length - 1 : step;
   return (
     <section className="section flow-section" id="flow">
@@ -525,12 +526,12 @@ function makeRow(n: number): FeedRow {
 }
 
 function LiveFeed() {
-  const [ref, seen] = useInView<HTMLDivElement>(0.25);
+  const [ref, visible] = useVisible<HTMLDivElement>(0.15);
   const [rows, setRows] = useState<FeedRow[]>(() => [4, 3, 2, 1, 0].map((n, i) => ({ ...makeRow(n), stage: Math.min(4, i) as Stage, conf: i >= 2 ? 15 : i * 6 })));
   const [next, setNext] = useState(5);
   const counter = useRef(5);
   useEffect(() => {
-    if (!seen || prefersReducedMotion()) return;
+    if (!visible || prefersReducedMotion()) return;
     const t = window.setInterval(() => {
       setRows((rs) => rs.map((r) => {
         if (r.stage === 1 && r.conf < 15) return { ...r, conf: Math.min(15, r.conf + 3) };
@@ -548,7 +549,7 @@ function LiveFeed() {
       window.clearInterval(t);
       window.clearInterval(t2);
     };
-  }, [seen]);
+  }, [visible]);
   return (
     <section className="section">
       <div className="container feed-wrap">

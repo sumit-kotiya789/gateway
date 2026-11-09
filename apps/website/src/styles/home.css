@@ -86,8 +86,7 @@
   padding: 14px 16px;
   border-radius: 16px;
   border: 1px solid var(--line-2);
-  background: linear-gradient(180deg, rgba(20, 28, 22, 0.78), rgba(10, 14, 11, 0.7));
-  backdrop-filter: blur(16px) saturate(1.3);
+  background: linear-gradient(180deg, rgba(20, 29, 23, 0.94), rgba(10, 14, 11, 0.92));
   box-shadow: 0 30px 60px -20px rgba(0, 0, 0, 0.9), 0 1px 0 rgba(255, 255, 255, 0.08) inset;
   animation: float-in 1.2s var(--ease-out) both, bob 7s ease-in-out infinite;
 }
@@ -143,6 +142,7 @@
 .stat + .stat { border-left: 1px solid var(--line); }
 .stat-num { font: 600 clamp(2.6rem, 5vw, 3.6rem)/1 var(--display); letter-spacing: -0.04em; background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
 .stat-num span { font-size: 0.6em; margin-left: 2px; }
+.stat-num b { font-weight: inherit; font-variant-numeric: tabular-nums; }
 .stat-label { margin-top: 0.75rem; font-weight: 600; color: var(--text); }
 .stat-detail { margin-top: 0.35rem; color: var(--muted); font-size: 0.88rem; line-height: 1.55; }
 @media (max-width: 900px) {
@@ -234,9 +234,8 @@
 
 /* Signature */
 .sig { margin-top: auto; padding: 0.9rem 1rem; border-radius: 12px; background: #070b08; border: 1px solid var(--line); font: 500 0.76rem/1.7 var(--mono); color: var(--text-2); overflow: hidden; }
-.sig .typing { display: inline-block; white-space: nowrap; overflow: hidden; border-right: 2px solid var(--accent); width: 0; animation: typing 3.2s steps(26) 0.8s infinite alternate, caret 0.8s step-end infinite; max-width: 100%; }
+.sig .typing { display: inline-block; white-space: nowrap; overflow: hidden; border-right: 2px solid var(--accent); width: 0; animation: typing 2.6s steps(26) 0.8s forwards; max-width: 100%; }
 @keyframes typing { to { width: 26ch; } }
-@keyframes caret { 50% { border-color: transparent; } }
 
 /* Ledger */
 .ledger { margin-top: auto; display: grid; gap: 6px; font: 500 0.78rem/1 var(--mono); }
@@ -255,7 +254,7 @@
 .ring { position: relative; width: 58px; height: 58px; flex: none; }
 .ring svg { width: 100%; height: 100%; transform: rotate(-90deg); }
 .ring circle { fill: none; stroke: rgba(255, 255, 255, 0.08); stroke-width: 3; }
-.ring circle.arc { stroke: var(--accent); stroke-linecap: round; stroke-dasharray: 97.4; stroke-dashoffset: 0; animation: countdown 30s linear infinite; filter: drop-shadow(0 0 4px rgba(52, 214, 92, 0.7)); }
+.ring circle.arc { stroke: var(--accent); stroke-linecap: round; stroke-dasharray: 97.4; stroke-dashoffset: 0; animation: countdown 30s linear infinite; }
 @keyframes countdown { to { stroke-dashoffset: 97.4; } }
 .ring span { position: absolute; inset: 0; display: grid; place-items: center; font: 600 0.72rem/1 var(--mono); }
 .mc-amt { font: 600 1.1rem/1.2 var(--display); }
@@ -324,7 +323,7 @@
 .dev-copy h2 { font-size: clamp(2rem, 4.4vw, 3.25rem); margin: 0.9rem 0 1rem; }
 .dev-copy .checks { margin: 1.8rem 0 2rem; }
 .dev-code { position: relative; }
-.dev-code::before { content: ''; position: absolute; inset: -40px; z-index: -1; background: radial-gradient(closest-side, rgba(52, 214, 92, 0.16), transparent); filter: blur(20px); }
+.dev-code::before { content: ''; position: absolute; inset: -40px; z-index: -1; background: radial-gradient(closest-side, rgba(52, 214, 92, 0.14), transparent); }
 @media (max-width: 960px) { .dev { grid-template-columns: minmax(0, 1fr); } }
 
 /* ---------- Custody modes ---------- */
@@ -351,7 +350,7 @@
 .feed-wrap { display: grid; grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr); gap: clamp(32px, 5vw, 72px); align-items: center; }
 .feed-copy h2 { font-size: clamp(2rem, 4.4vw, 3.25rem); margin: 0.9rem 0 1rem; }
 .feed-copy .checks { margin-top: 1.8rem; }
-.feed { border-radius: var(--r-xl); border: 1px solid var(--line-2); background: linear-gradient(180deg, rgba(16, 22, 18, 0.9), rgba(8, 11, 9, 0.9)); box-shadow: var(--shadow), 0 0 90px -40px rgba(52, 214, 92, 0.5); overflow: hidden; }
+.feed { border-radius: var(--r-xl); border: 1px solid var(--line-2); background: linear-gradient(180deg, rgba(16, 22, 18, 0.9), rgba(8, 11, 9, 0.9)); box-shadow: var(--shadow), 0 0 50px -30px rgba(52, 214, 92, 0.5); overflow: hidden; }
 .feed-head, .feed-foot { display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: 0.9rem 1.2rem; font-size: 0.86rem; font-weight: 600; }
 .feed-head .row { gap: 0.55rem; color: var(--accent); }
 .feed-head { border-bottom: 1px solid var(--line); }
@@ -414,13 +413,12 @@
 .final-card .lead { max-width: 620px; margin: 0 auto; }
 .final-card .eyebrow::after { content: ''; width: 18px; height: 1px; background: currentColor; opacity: 0.7; }
 .final-cta { justify-content: center; margin-top: 2.2rem; }
-.final-glow { position: absolute; left: 50%; top: -40%; width: 900px; height: 600px; margin-left: -450px; z-index: -1; background: radial-gradient(closest-side, rgba(52, 214, 92, 0.35), transparent); filter: blur(30px); animation: breathe 6s ease-in-out infinite; }
-@keyframes breathe { 50% { opacity: 0.6; transform: scale(1.08); } }
+.final-glow { position: absolute; left: 50%; top: -40%; width: 900px; height: 600px; margin-left: -450px; z-index: -1; background: radial-gradient(closest-side, rgba(52, 214, 92, 0.3), transparent); animation: breathe 6s ease-in-out infinite; }
+@keyframes breathe { 50% { opacity: 0.6; } }
 .final-rings { position: absolute; left: 50%; bottom: -520px; width: 1000px; height: 1000px; margin-left: -500px; z-index: -1; perspective: 800px; }
-.final-rings i { position: absolute; inset: 0; border-radius: 50%; border: 1px solid rgba(52, 214, 92, 0.22); transform: rotateX(72deg); animation: ring-pulse 6s var(--ease) infinite; }
-.final-rings i:nth-child(2) { inset: 120px; animation-delay: -2s; }
-.final-rings i:nth-child(3) { inset: 240px; animation-delay: -4s; }
-@keyframes ring-pulse { 0% { opacity: 0; transform: rotateX(72deg) scale(0.7); } 40% { opacity: 1; } 100% { opacity: 0; transform: rotateX(72deg) scale(1.15); } }
+.final-rings i { position: absolute; inset: 0; border-radius: 50%; border: 1px solid rgba(52, 214, 92, 0.2); transform: rotateX(72deg); }
+.final-rings i:nth-child(2) { inset: 120px; opacity: 0.7; }
+.final-rings i:nth-child(3) { inset: 240px; opacity: 0.45; }
 .final-meta { display: flex; justify-content: center; flex-wrap: wrap; gap: 0.8rem 1.8rem; margin-top: 2.4rem; color: var(--muted); font-size: 0.86rem; }
 .final-meta span { display: inline-flex; align-items: center; gap: 0.45rem; }
 .final-meta svg { width: 16px; height: 16px; color: var(--accent); }
