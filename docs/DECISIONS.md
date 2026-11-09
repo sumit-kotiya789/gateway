@@ -696,3 +696,17 @@ Web3 projects give each user one address to deposit to, any amount, any time; it
 - **SDK**: `depositAccounts.create/retrieve/list`, `payouts.create/retrieve/list`; invoice and event types carry `kind`
   and `customer_ref`.
 
+
+## D-103 Website redesign: guides, API reference, 3D hero (2026-11-09, owner)
+- **Pages**: product, how it works (status explorer, confirmations, custody comparison, payouts, webhook retry
+  schedule, architecture), security, pricing (exact fee calculator in bigint micro-units, the ledger's round-down rule),
+  guides and a full API reference (every merchant endpoint with parameters, cURL / Node samples and example responses,
+  error codes, event types, a webhook signature playground that computes HMACs locally with Web Crypto).
+  Reference content lives in `apps/website/src/content/api.ts`; keep it in step with the route schemas.
+- **Self-contained styles** (`apps/website/src/styles`, Inter / Space Grotesk / JetBrains Mono via fontsource): the
+  site no longer imports the dashboard stylesheet, so the image no longer copies `apps/dashboard/src`.
+- **3D**: the hero is a three.js scene in a lazy chunk (~140 kB gzip), loaded after first paint, paused off-screen and
+  in hidden tabs, a still frame for `prefers-reduced-motion`, a CSS orb without WebGL. Everything else is CSS 3D.
+- **Same CSP** as before (`script-src 'self'; style-src 'self'; font-src 'self'`): no inline style attributes (runtime
+  values go through the CSSOM), no textures from URLs, and `assetsInlineLimit: 0` because Vite would otherwise inline
+  small font subsets as `data:` URIs, which `font-src 'self'` blocks.

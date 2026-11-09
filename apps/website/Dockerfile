@@ -7,8 +7,6 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc tsconfig.base.json .
 COPY apps/website/package.json apps/website/
 RUN pnpm install --frozen-lockfile --filter @gw/website
 COPY apps/website apps/website
-# Shared styles (React resolves from apps/website, see vite.config.ts).
-COPY apps/dashboard/src apps/dashboard/src
 ARG VITE_DASHBOARD_URL=http://localhost:8080
 ARG VITE_DEMO_URL=http://localhost:8083
 ENV VITE_DASHBOARD_URL=$VITE_DASHBOARD_URL VITE_DEMO_URL=$VITE_DEMO_URL

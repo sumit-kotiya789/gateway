@@ -41,7 +41,7 @@ also pays users out (`POST /v1/payouts`, within the merchant's own limits). Loca
 |---|---|
 | http://localhost:8080 | merchant dashboard |
 | http://localhost:8081/admin/ | admin console |
-| http://localhost:8082 | public site: product, pricing, developer docs (`apps/website`) |
+| http://localhost:8082 | public site: product, how it works, security, pricing, guides, API reference (`apps/website`) |
 | http://localhost:8083 | demo game wallet (`apps/demo`, profile `demo`): set `DEMO_API_KEY` (test key with `read`, `invoices:write`, `payouts:write`), then `docker compose --profile demo up -d --build demo` |
 
 ## Scripts
