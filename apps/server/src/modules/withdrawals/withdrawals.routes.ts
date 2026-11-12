@@ -1,6 +1,7 @@
-// Withdrawal routes (M7d, D-090): dashboard (payout addresses, requests, own limits), merchant API (requests with a
-// `withdrawals:write` key; payouts to the merchant's users with a `payouts:write` key, D-100), admin console
-// (approve / reject). Every change is audited.
+// Withdrawal routes (M7d, D-090): dashboard (payout wallets, self withdrawals, own limits), merchant API (reading
+// withdrawals; payouts to any address of the merchant's users with a `payouts:write` key, D-100), admin console
+// (approve / reject). A self withdrawal is requested in the dashboard only, never with an API key (D-114). Every change
+// is audited.
 import { AppError } from '@gw/core';
 import { and, desc, eq, inArray, lt } from 'drizzle-orm';
 import type { FastifyRequest } from 'fastify';
@@ -130,12 +131,20 @@ export function withdrawalDashboardRoutes(deps: Deps): FastifyPluginAsyncZod {
       '/',
       {
         preHandler: [requirePermission('withdrawals:request'), requireVerifiedEmailForLive(deps), requireTotp(deps)],
-        schema: { body: z.strictObject({ livemode: z.boolean().default(false), token: TokenId, amount: Amount }) },
+        // payout_address_id: which saved wallet (D-114, self withdrawal); omitted = the current one.
+        schema: { body: z.strictObject({ livemode: z.boolean().default(false), token: TokenId, amount: Amount, payout_address_id: z.uuid().optional() }) },
       },
       async (req, reply) => {
         const u = authedUser(req);
         const out = await withTenant(deps.db, u.merchantId, async (tx) => {
-          const w = await requestWithdrawal(deps, tx, { merchantId: u.merchantId, livemode: req.body.livemode, tokenId: req.body.token, amount: req.body.amount, requestedBy: `user:${u.id}` });
+          const w = await requestWithdrawal(deps, tx, {
+            merchantId: u.merchantId,
+            livemode: req.body.livemode,
+            tokenId: req.body.token,
+            amount: req.body.amount,
+            requestedBy: `user:${u.id}`,
+            payoutAddressId: req.body.payout_address_id,
+          });
           await audit(tx, { actorType: 'merchant_user', actorId: u.id, merchantId: u.merchantId, action: 'withdrawal.requested', targetType: 'withdrawal', targetId: w.id, after: { amount: req.body.amount, token: w.tokenId, to: w.toAddress, livemode: w.livemode } }, req);
           return (await viewMany(tx, [w]))[0];
         });
@@ -174,7 +183,7 @@ export function withdrawalDashboardRoutes(deps: Deps): FastifyPluginAsyncZod {
       },
     );
 
-    // Cancelling only keeps the current address: no step-up needed.
+    // Cancelling a pending address or removing an active one (D-114) only narrows where money can go: no step-up.
     app.post('/payout-addresses/:id/cancel', { preHandler: requirePermission('payouts:manage'), schema: { params: IdParams } }, async (req) => {
       const u = authedUser(req);
       return withTenant(deps.db, u.merchantId, async (tx) => {
@@ -186,24 +195,13 @@ export function withdrawalDashboardRoutes(deps: Deps): FastifyPluginAsyncZod {
   };
 }
 
-/** Merchant API: request and read withdrawals with a secret key (the key's mode). Address changes stay in the dashboard. */
+
+/**
+ * Merchant API (the key's mode): read withdrawals, and send payouts to the merchant's users at any address. The
+ * merchant's own withdrawals are requested in the dashboard only (owner/finance + 2FA, D-114).
+ */
 export function withdrawalRoutes(deps: Deps): FastifyPluginAsyncZod {
   return async (app) => {
-    app.post(
-      '/withdrawals',
-      { preHandler: requireApiKey(deps, 'withdrawals:write'), schema: { body: z.strictObject({ token: TokenId, amount: Amount }) } },
-      async (req, reply) => {
-        const k = req.apiKey;
-        if (!k) throw new AppError('unauthorized', 'API key required');
-        const res = await withIdempotency(deps, k, idempotencyKeyOf(req), requestHash('POST', '/v1/withdrawals', req.body), async (tx) => {
-          const w = await requestWithdrawal(deps, tx, { merchantId: k.merchantId, livemode: k.livemode, tokenId: req.body.token, amount: req.body.amount, requestedBy: `api_key:${k.id}` });
-          await audit(tx, { actorType: 'api_key', actorId: k.id, merchantId: k.merchantId, action: 'withdrawal.requested', targetType: 'withdrawal', targetId: w.id, after: { amount: req.body.amount, token: w.tokenId, to: w.toAddress, livemode: w.livemode } }, req);
-          return { status: 201, body: (await viewMany(tx, [w]))[0] };
-        });
-        return sendStored(reply, res);
-      },
-    );
-
     app.get('/withdrawals', { preHandler: requireApiKey(deps, 'read'), schema: { querystring: z.strictObject({ starting_after: z.uuid().optional(), limit: z.coerce.number().int().min(1).max(100).default(20) }) } }, async (req) => {
       const k = req.apiKey;
       if (!k) throw new AppError('unauthorized', 'API key required');

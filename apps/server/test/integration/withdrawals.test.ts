@@ -91,14 +91,11 @@ describe('withdrawals: test mode end to end', () => {
     expect(ev.data[0]?.data.amount).toBe('12.5');
   });
 
-  it('API key withdrawals are idempotent; signer limits make big ones wait, a paused signer too', async () => {
+  it('signer limits make big withdrawals wait, a paused signer too; no API key can request one (D-114)', async () => {
     const m = await funded(100n * E18);
     await payout(m, false);
-    const k = { 'idempotency-key': 'payout-1' };
-    const a = await m.api('POST', '/v1/withdrawals', { token: 'evm-local:usdt', amount: '55' }, k);
+    const a = await withdraw(m, false, '55');
     expect(a.statusCode).toBe(201);
-    const again = await m.api('POST', '/v1/withdrawals', { token: 'evm-local:usdt', amount: '55' }, k);
-    expect(again.json<{ id: string }>().id).toBe(a.json<{ id: string }>().id);
     expect(await bal(m)).toMatchObject({ available: '45', withdrawing: '55' });
     chain.token.set(custody.hot.toLowerCase(), 1000n * E18);
     chain.native.set(custody.hot.toLowerCase(), E18);
@@ -107,21 +104,26 @@ describe('withdrawals: test mode end to end', () => {
     expect(row.rows[0]).toEqual({ status: 'approved', last_error: 'over_limit' });
 
     // SIGNER_PAUSED (this signer only), not the global admin switch other test files would see.
-    const b = await m.api('POST', '/v1/withdrawals', { token: 'evm-local:usdt', amount: '1' });
+    const b = await withdraw(m, false, '1');
     expect(b.statusCode).toBe(201);
     clock.advance(31 * 60_000);
     await advanceWithdrawals(deps, custodyEnv(pool, chain, { SIGNER_PAUSED: 'true' }), { merchantId: m.merchantId });
     expect((await owner.query('select last_error from withdrawals where id = $1', [b.json<{ id: string }>().id])).rows[0]).toEqual({ last_error: 'paused' });
-    // read-only keys cannot withdraw
-    const ro = await m.mintKey(['read']);
-    expect((await m.api('POST', '/v1/withdrawals', { token: 'evm-local:usdt', amount: '1' }, {}, ro)).statusCode).toBe(403);
+    // Self withdrawals are dashboard-only: there is no API route, and no key can be given a withdrawal scope.
+    expect((await m.api('POST', '/v1/withdrawals', { token: 'evm-local:usdt', amount: '1' })).statusCode).toBe(404);
+    expect((await m.api('GET', '/v1/payout-addresses')).statusCode).toBe(404);
+    step();
+    const scoped = await m.agent.req('POST', '/v1/dashboard/api-keys/', { name: 'k', kind: 'secret', livemode: false, scopes: ['withdrawals:write'] }, code(m));
+    expect(scoped.statusCode).toBe(400);
+    expect((await m.api('GET', '/v1/withdrawals')).statusCode).toBe(200); // reading stays
   });
 
-  it('a payout address changed after the request: the signer refuses, the withdrawal fails and the hold is released', async () => {
+  it('the payout wallet removed after the request: the signer refuses, the withdrawal fails and the hold is released', async () => {
     const m = await funded(10n * E18);
-    await payout(m, false);
+    const first = (await payout(m, false)).json<{ id: string }>();
     const w = (await withdraw(m, false, '4')).json<{ id: string }>();
-    await payout(m, false, OTHER); // test mode: active at once, supersedes the first
+    await payout(m, false, OTHER); // a newer wallet does not stop it (D-114): it still goes to the one it named
+    expect((await m.agent.req('POST', `/v1/dashboard/withdrawals/payout-addresses/${first.id}/cancel`)).json()).toMatchObject({ status: 'cancelled' });
     chain.token.set(custody.hot.toLowerCase(), 1000n * E18);
     expect(await tick(m)).toEqual({ failed: 1 });
     expect((await owner.query('select status, last_error from withdrawals where id = $1', [w.id])).rows[0]).toEqual({ status: 'failed', last_error: 'payout_address_changed' });
@@ -204,7 +206,7 @@ describe('withdrawals: live mode controls', () => {
     expect((await nc.agent.req('POST', '/v1/dashboard/withdrawals/', { livemode: false, token: 'evm-local:usdt', amount: '1' }, { 'x-totp-code': totpNow(nc.secret, clock()) })).statusCode).toBe(403);
   });
 
-  it('database guards: only to the current address, approvals only grow once per admin, final states are final', async () => {
+  it('database guards: only to an active wallet of the merchant, approvals only grow once per admin, final states are final', async () => {
     const m = await liveReady(10n * E18);
     const w = (await withdraw(m, true, '2')).json<{ id: string }>();
     await expect(owner.query("update withdrawals set to_address = $2 where id = $1", [w.id, OTHER])).rejects.toThrow(/immutable/);
@@ -217,7 +219,7 @@ describe('withdrawals: live mode controls', () => {
          select gen_random_uuid(), merchant_id, livemode, chain_id, token_id, 1, payout_address_id, $2, 'pending_approval', 1, 'x' from withdrawals where id = $1`,
         [w.id, OTHER],
       ),
-    ).rejects.toThrow(/current payout address/);
+    ).rejects.toThrow(/active payout addresses/);
   });
 
   it('reconciliation stays clean', async () => {
@@ -227,13 +229,16 @@ describe('withdrawals: live mode controls', () => {
 });
 
 describe('withdrawals: refusals and recovery', () => {
-  it('payout addresses: listed with their status; an active one cannot be cancelled', async () => {
+  it('payout wallets: listed with their status; an active one can be removed, once', async () => {
     const m = await funded(1n * E18);
     const a = (await payout(m, false)).json<{ id: string }>();
     await payout(m, false, OTHER);
-    const list = (await m.agent.req('GET', '/v1/dashboard/withdrawals/payout-addresses?livemode=false')).json<{ data: { id: string; status: string }[] }>().data;
-    expect(list.map((x) => x.status)).toEqual(['current', 'superseded']);
+    const list = async () => (await m.agent.req('GET', '/v1/dashboard/withdrawals/payout-addresses?livemode=false')).json<{ data: { id: string; status: string }[] }>().data.map((x) => x.status);
+    expect(await list()).toEqual(['current', 'active']);
+    expect((await m.agent.req('POST', `/v1/dashboard/withdrawals/payout-addresses/${a.id}/cancel`)).statusCode).toBe(200);
+    expect(await list()).toEqual(['current', 'cancelled']);
     expect((await m.agent.req('POST', `/v1/dashboard/withdrawals/payout-addresses/${a.id}/cancel`)).statusCode).toBe(409);
+    await expect(owner.query('update payout_addresses set address = $2 where id = $1', [a.id, PAYOUT])).rejects.toThrow(/immutable/);
     expect((await m.agent.req('GET', '/v1/dashboard/withdrawals/?livemode=false')).json()).toMatchObject({ data: [], has_more: false });
   });
 
@@ -344,5 +349,52 @@ describe('withdrawals: refusals and recovery', () => {
     const results = await Promise.all(ids.map((id) => tight.signer.sign('withdrawal', id)));
     expect(results.filter((r) => r.ok)).toHaveLength(1);
     expect(results.find((r) => !r.ok)).toMatchObject({ code: 'over_limit' });
+  });
+});
+
+// After every other describe: its payouts are signed and count toward the signer's 24 h total in this database.
+describe('self withdrawal to a chosen wallet (D-114)', () => {
+  it('any active wallet can be picked in the dashboard; a pending, removed or foreign one cannot', async () => {
+    const m = await funded(20n * E18);
+    const first = (await payout(m, false)).json<{ id: string }>();
+    const second = (await payout(m, false, OTHER)).json<{ id: string; status: string }>();
+    expect(second.status).toBe('current');
+    const to = (id: string, amount = '2') => {
+      step();
+      return m.agent.req('POST', '/v1/dashboard/withdrawals/', { livemode: false, token: tokenOf(false), amount, payout_address_id: id }, code(m));
+    };
+    // The older wallet is still a valid destination.
+    const a = await to(first.id);
+    expect(a.statusCode).toBe(201);
+    expect(a.json()).toMatchObject({ to_address: '0x00000000000000000000000000000000000bEEf1' });
+    // Without a choice: the current (newest) wallet.
+    expect((await withdraw(m, false, '1')).json()).toMatchObject({ to_address: '0x00000000000000000000000000000000000bEEf2' });
+    const listed = (await m.agent.req('GET', '/v1/dashboard/withdrawals/payout-addresses?livemode=false')).json<{ data: { id: string; status: string }[] }>().data;
+    expect(listed.map((x) => [x.id, x.status])).toEqual([[second.id, 'current'], [first.id, 'active']]);
+
+    // Signed and sent to the wallet it named. Own signer limits: the tests above share the file's 24 h budget.
+    chain.token.set(custody.hot.toLowerCase(), 1000n * E18);
+    chain.native.set(custody.hot.toLowerCase(), E18);
+    clock.advance(31 * 60_000);
+    const roomy = custodyEnv(pool, chain, { SIGNER_LIMITS: JSON.stringify({ 'evm-local:usdt': { per_tx: '50', per_day: '1000000' } }) });
+    expect((await advanceWithdrawals(deps, roomy, { merchantId: m.merchantId })).sent).toBe(2);
+
+    // Removed, another merchant's, or unknown: refused before anything is held.
+    expect((await m.agent.req('POST', `/v1/dashboard/withdrawals/payout-addresses/${first.id}/cancel`)).statusCode).toBe(200);
+    expect((await to(first.id)).json().error.details).toMatchObject({ reason: 'payout_address_inactive' });
+    const other = await funded(1n * E18);
+    const foreign = (await payout(other, false)).json<{ id: string }>();
+    expect((await to(foreign.id)).json().error.details).toMatchObject({ reason: 'payout_address_inactive' });
+    expect((await to('00000000-0000-7000-8000-000000000000')).statusCode).toBe(409);
+    expect(await bal(m)).toMatchObject({ withdrawing: '3' });
+  });
+
+  it('a live wallet can only be picked once its 24 hours are over', async () => {
+    const m = await funded(10n * E18, true);
+    const fresh = (await payout(m, true, OTHER)).json<{ id: string; status: string }>();
+    expect(fresh.status).toBe('pending');
+    step();
+    const r = await m.agent.req('POST', '/v1/dashboard/withdrawals/', { livemode: true, token: tokenOf(true), amount: '1', payout_address_id: fresh.id }, code(m));
+    expect(r.json().error.details).toMatchObject({ reason: 'payout_address_inactive' });
   });
 });

@@ -102,7 +102,7 @@ export function ApiKeyDetail(props: { id: string; canManage: boolean }) {
       {back}
       <header className="hero-head">
         <div>
-          <div className="eyebrow">{k.kind === 'secret' ? 'Secret key' : 'Publishable key'} · {k.livemode ? 'live' : 'test'}</div>
+          <div className="eyebrow">{k.kind === 'secret' ? 'Secret key' : 'Publishable key'}</div>
           <h2>{k.name} <span className={`badge s-${state === 'active' ? 'active' : 'failed'}`}>{state}</span></h2>
           <p className="muted"><code>{k.prefix}…</code> · created {fmtDate(k.created_at)} · last used {ago(k.last_used_at)}</p>
         </div>

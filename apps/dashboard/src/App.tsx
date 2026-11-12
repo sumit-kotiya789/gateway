@@ -27,19 +27,11 @@ function useHash(): string {
   return hash;
 }
 
-const MODE_KEY = 'gw_livemode';
-function storedMode(): boolean {
-  try {
-    return localStorage.getItem(MODE_KEY) === 'true';
-  } catch {
-    return false;
-  }
-}
-
 export function App() {
   const [me, setMe] = useState<Me | null>();
   const [error, setError] = useState<string>();
-  const [livemode, setLivemode] = useState(storedMode);
+  // Live only: mainnets (BNB Smart Chain, plus Ethereum and Polygon PoS once turned on, D-112); test mode is not offered.
+  const livemode = true;
   const hash = useHash();
 
   const loadMe = () => {
@@ -49,15 +41,6 @@ export function App() {
     });
   };
   useEffect(loadMe, []);
-
-  const switchMode = (live: boolean) => {
-    setLivemode(live);
-    try {
-      localStorage.setItem(MODE_KEY, String(live));
-    } catch {
-      // storage unavailable: mode lasts for this page only
-    }
-  };
 
   // Emailed links work signed in or out.
   if (hash.startsWith('#/verify-email')) return <VerifyEmail token={linkToken(hash)} onDone={loadMe} />;
@@ -110,7 +93,7 @@ export function App() {
   else body = <Overview livemode={livemode} me={me} />;
 
   return (
-    <div className={livemode ? 'app live' : 'app test'}>
+    <div className="app live">
       <aside className="sidebar">
         <div className="brand">
           <BrandMark />
@@ -161,15 +144,10 @@ export function App() {
         </div>
       </aside>
       <div className="shell-main">
-        {!livemode && <div className="test-banner">You are in test mode: testnet tokens only, no real funds move.</div>}
         <header className="topbar">
           <div className="title">
             <span className="workspace">{me.merchant.name}</span>
-            <span className={`mode-pill ${livemode ? 'live' : 'test'}`}>{livemode ? 'Live' : 'Test'}</span>
-          </div>
-          <div className="mode" role="group" aria-label="Mode">
-            <button className={livemode ? '' : 'on'} aria-pressed={!livemode} onClick={() => { switchMode(false); }}>Test</button>
-            <button className={livemode ? 'on' : ''} aria-pressed={livemode} onClick={() => { switchMode(true); }}>Live</button>
+            <span className="mode-pill live">Live</span>
           </div>
         </header>
         <main>
@@ -179,8 +157,7 @@ export function App() {
               Protect your account: <a href="#/settings/security">enable two-factor authentication</a>. It is required for API keys, webhooks, payout wallet and team changes.
             </Alert>
           )}
-          {/* key: switching mode remounts the page so no state from the other mode leaks into forms or lists */}
-          <div key={String(livemode)}>{body}</div>
+          {body}
         </main>
       </div>
       <Toaster />

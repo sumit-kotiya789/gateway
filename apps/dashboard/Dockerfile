@@ -4,9 +4,12 @@ FROM node:24-alpine@sha256:a34ab6d7f6f4813f4d0c5469d74685604b962fbdbf5793a7bc7b4
 WORKDIR /src
 RUN corepack enable
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc tsconfig.base.json ./
+# Workspace packages the app imports (official network names and logos, D-112).
+COPY packages/networks/package.json packages/networks/
 COPY apps/dashboard/package.json apps/dashboard/
 RUN pnpm install --frozen-lockfile --filter @gw/dashboard
 COPY apps/dashboard apps/dashboard
+COPY packages/networks packages/networks
 RUN pnpm --filter @gw/dashboard build
 
 # Unprivileged image: runs as uid 101 on :8080; pid and temp files live in /tmp (tmpfs in compose).

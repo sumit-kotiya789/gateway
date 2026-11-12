@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Amount, Asset, NetworkName, tokenOptionText } from '../../dashboard/src/asset';
 import { Alert, CopyField, EmptyState, ErrorBox, Field, Icon, Modal, Skeleton, Stat, StatusBadge, Submit, TotpInput, fmtDate, short, toast, useAction, useLoad, type IconName } from '../../dashboard/src/ui';
 import { RISK_FLAGS, api, totpHeader, type AdminAccount, type AdminSettings, type AdminCredentials, type AdminRole, type AdminWithdrawal, type AuditRow, type CustodyOverview, type Forward, type HotWalletPolicy, type TreasuryTransfer, type FeeTopup, type Invoice, type Merchant, type MerchantDetail as MerchantData, type Page, type Registry as RegistryData } from './api';
 
@@ -40,6 +41,18 @@ function More(props: { next: string | null; busy: boolean; load: (after: string)
 }
 
 /** Table body states shared by the paged lists: skeleton on first load, empty state when nothing matched. */
+/** Token by official ticker and network from the registry, instead of typing ids like "bsc:usdt" (D-112). */
+function TokenSelect(props: { value: string; onChange: (id: string) => void; disabled?: boolean }) {
+  const reg = useLoad(() => api<RegistryData>('GET', '/registry'), []);
+  const list = reg.data?.tokens ?? [];
+  return (
+    <select value={props.value} onChange={(e) => { props.onChange(e.target.value); }} disabled={props.disabled} required>
+      {!list.some((t) => t.id === props.value) && <option value={props.value}>{props.value || 'Choose a token'}</option>}
+      {list.map((t) => <option key={t.id} value={t.id}>{tokenOptionText(t.id, t.symbol)}{t.enabled ? '' : ' (off)'}</option>)}
+    </select>
+  );
+}
+
 function ListState(props: { busy: boolean; count: number; icon: IconName; empty: string; children?: string }) {
   if (props.count > 0) return null;
   if (props.busy) return <Skeleton />;
@@ -246,8 +259,9 @@ function FeeSettings(props: { merchant: MerchantData; onSaved: () => void }) {
 
 /** Prepaid fee top-ups: record one after the merchant paid, and the history. */
 function FeeTopups(props: { merchantId: string; manage: boolean; onSaved: () => void }) {
-  const [livemode, setLivemode] = useState(true);
-  const [token, setToken] = useState('');
+  // Live only (BNB Smart Chain mainnet); test mode is not offered.
+  const livemode = true;
+  const [token, setToken] = useState('bsc:usdt');
   const [amount, setAmount] = useState('');
   const [reference, setReference] = useState('');
   const list = useLoad(() => api<{ data: FeeTopup[] }>('GET', `/merchants/${props.merchantId}/fee-topups?livemode=${String(livemode)}`), [props.merchantId, livemode]);
@@ -255,21 +269,17 @@ function FeeTopups(props: { merchantId: string; manage: boolean; onSaved: () => 
     <div className="card">
       <header className="card-head">
         <h3>Prepaid fee top-ups</h3>
-        <div className="mode" role="group" aria-label="Mode">
-          <button type="button" className={livemode ? 'on' : ''} aria-pressed={livemode} onClick={() => { setLivemode(true); }}>Live</button>
-          <button type="button" className={livemode ? '' : 'on'} aria-pressed={!livemode} onClick={() => { setLivemode(false); }}>Test</button>
-        </div>
       </header>
       <ErrorBox error={list.error} />
       {(list.data?.data ?? []).length === 0 ? (
-        <p className="muted">{list.data ? `No ${livemode ? 'live' : 'test'} top-ups yet.` : 'Loading…'}</p>
+        <p className="muted">{list.data ? 'No top-ups yet.' : 'Loading…'}</p>
       ) : (
         <div className="table-wrap flat">
           <table>
             <thead><tr><th>Date</th><th>Token</th><th>Amount</th><th>Reference</th></tr></thead>
             <tbody>
               {(list.data?.data ?? []).map((t) => (
-                <tr key={t.id}><td>{fmtDate(t.created_at)}</td><td>{t.token}</td><td className="num">{t.amount} {t.symbol}</td><td><code>{t.reference}</code></td></tr>
+                <tr key={t.id}><td>{fmtDate(t.created_at)}</td><td><Asset token={t.token} symbol={t.symbol} /></td><td className="num"><Amount value={t.amount} token={t.token} symbol={t.symbol} tag={false} /></td><td><code>{t.reference}</code></td></tr>
               ))}
             </tbody>
           </table>
@@ -280,16 +290,16 @@ function FeeTopups(props: { merchantId: string; manage: boolean; onSaved: () => 
           <h4>Record a top-up</h4>
           <p className="muted">Only after the payment has arrived. It cannot be edited or removed.</p>
           <div className="form-grid">
-            <Field label="Token id"><input value={token} onChange={(e) => { setToken(e.target.value); }} placeholder="bsc:usdt" /></Field>
+            <Field label="Token"><TokenSelect value={token} onChange={setToken} /></Field>
             <Field label="Amount"><input value={amount} onChange={(e) => { setAmount(e.target.value); }} inputMode="decimal" /></Field>
             <Field label="Reference" hint="Transaction hash or bank reference."><input value={reference} onChange={(e) => { setReference(e.target.value); }} /></Field>
           </div>
           <div className="card-actions">
             <ReasonAction
-              label={`Record ${livemode ? 'live' : 'test'} top-up`}
+              label="Record top-up"
               totp
               primary
-              message={`Credits ${amount.trim() || '?'} ${token.trim() || '?'} of prepaid fees (${livemode ? 'live' : 'test'} mode).`}
+              message={`Credits ${amount.trim() || '?'} ${token.trim() || '?'} of prepaid fees.`}
               onSubmit={async (reason, h) => {
                 await api('POST', `/merchants/${props.merchantId}/fee-topups`, { livemode, token: token.trim(), amount: amount.trim(), reference: reference.trim(), reason }, h);
                 setAmount('');
@@ -324,6 +334,7 @@ export function MerchantDetail(props: { id: string; manage: boolean }) {
       <dl className="details card">
         <dt>Merchant id</dt><dd><CopyField value={d.id} /></dd>
         <dt>Custody mode</dt><dd>{label(d.custody_mode)}</dd>
+        <dt>Network</dt><dd>{d.network ? <NetworkName chain={d.network} /> : 'Every enabled network'} <small className="muted">(the merchant&apos;s choice)</small></dd>
         <dt>Platform fee</dt><dd>{d.fee_bps} bps + {d.fee_fixed} fixed · grace {d.fee_grace} · payout fee {d.payout_fee}</dd>
         <dt>Underpay tolerance</dt><dd>{d.underpay_tolerance_bps} bps</dd>
         <dt>Risk flags</dt><dd>{d.risk_flags.length > 0 ? d.risk_flags.map((f) => <span key={f} className="badge s-low">{label(f)}</span>) : '—'}</dd>
@@ -368,10 +379,10 @@ export function MerchantDetail(props: { id: string; manage: boolean }) {
               {balances.map((b) => (
                 <tr key={`${String(b.livemode)}:${b.token}`}>
                   <td><span className={`mode-pill ${b.livemode ? 'live' : 'test'}`}>{b.livemode ? 'live' : 'test'}</span></td>
-                  <td>{b.token}</td>
-                  <td className="num">{b.received} {b.symbol}</td>
-                  <td className="num">{b.fees_charged} {b.symbol}</td>
-                  <td className="num">{b.prepaid_fees} {b.symbol}</td>
+                  <td><Asset token={b.token} symbol={b.symbol} /></td>
+                  <td className="num">{b.received}</td>
+                  <td className="num">{b.fees_charged}</td>
+                  <td className="num">{b.prepaid_fees}</td>
                   <td><StatusBadge status={b.fee_status} /></td>
                 </tr>
               ))}
@@ -458,8 +469,8 @@ export function Invoices(props: { merchantId?: string | undefined }) {
                   <td><a href={`#/invoices/${i.id}`}>{fmtDate(i.created_at)}</a></td>
                   <td>{i.merchant_name}</td>
                   <td><StatusBadge status={i.status} /></td>
-                  <td className="num">{i.amount} {i.symbol}</td>
-                  <td className="num">{i.amount_received} {i.symbol}</td>
+                  <td className="num"><Amount value={i.amount} token={i.token} symbol={i.symbol} /></td>
+                  <td className="num"><Amount value={i.amount_received} token={i.token} symbol={i.symbol} tag={false} /></td>
                   <td><span className={`mode-pill ${i.livemode ? 'live' : 'test'}`}>{i.livemode ? 'live' : 'test'}</span></td>
                 </tr>
               ))}
@@ -486,8 +497,9 @@ export function InvoiceDetail(props: { id: string; manage: boolean }) {
         <dt>Invoice id</dt><dd><CopyField value={i.id} /></dd>
         <dt>Merchant</dt><dd><a href={`#/merchants/${i.merchant_id}`}><code>{i.merchant_id}</code></a></dd>
         <dt>Mode</dt><dd>{i.livemode ? 'live' : 'test'} · {label(i.custody_mode)}</dd>
-        <dt>Expected</dt><dd className="num">{i.amount} {i.symbol} on {i.network}</dd>
-        <dt>Received</dt><dd className="num">{i.amount_received} {i.symbol}</dd>
+        <dt>Expected</dt><dd className="num"><Amount value={i.amount} token={i.token} symbol={i.symbol} /></dd>
+        <dt>Network</dt><dd><NetworkName chain={i.chain} label={i.network} /></dd>
+        <dt>Received</dt><dd className="num"><Amount value={i.amount_received} token={i.token} symbol={i.symbol} /></dd>
         <dt>Platform fee</dt><dd className="num">{i.fee_amount ?? '—'}</dd>
         <dt>Deposit address</dt><dd><CopyField value={i.deposit_address} /></dd>
         <dt>Order id</dt><dd>{i.external_order_id ?? '—'}</dd>
@@ -621,7 +633,7 @@ export function Registry(props: { manage: boolean; superadmin: boolean }) {
           <tbody>
             {r.data.chains.map((c) => (
               <tr key={c.id}>
-                <td><code>{c.id}</code> <span className="muted">{c.name}</span></td>
+                <td><NetworkName chain={c.id} label={c.name} /> <code>{c.id}</code></td>
                 <td>{c.testnet ? 'testnet' : 'mainnet'}</td>
                 <td><OnOff on={c.enabled} yes="enabled" no="disabled" /></td>
                 <td>{toggle('chain', c.id, c.enabled)}</td>
@@ -639,8 +651,8 @@ export function Registry(props: { manage: boolean; superadmin: boolean }) {
           <tbody>
             {r.data.tokens.map((t) => (
               <tr key={t.id}>
-                <td><code>{t.id}</code> <span className="muted">{t.symbol}</span></td>
-                <td>{t.chain_id}</td>
+                <td><Asset token={t.id} symbol={t.symbol} /> <code>{t.id}</code></td>
+                <td><NetworkName chain={t.chain_id} /></td>
                 <td><OnOff on={t.enabled} yes="enabled" no="disabled" /></td>
                 <td>{toggle('token', t.id, t.enabled)}</td>
               </tr>
@@ -702,7 +714,7 @@ export function WithdrawalQueue(props: { selfId: string; canApprove: boolean }) 
                 <tr key={w.id}>
                   <td>{fmtDate(w.created_at)} {w.livemode ? <span className="badge s-active">live</span> : <span className="badge">test</span>}</td>
                   <td><a href={`#/merchants/${w.merchant_id}`}>{w.merchant_name}</a></td>
-                  <td className="num">{w.amount} {w.symbol}{w.fee !== '0' && <small className="muted"> + fee {w.fee}</small>}</td>
+                  <td className="num"><Amount value={w.amount} token={w.token} symbol={w.symbol} />{w.fee !== '0' && <small className="muted"> + fee {w.fee}</small>}</td>
                   <td>
                     <code>{short(w.to_address)}</code>
                     {w.kind === 'customer' && <small className="muted"> user {w.customer_ref}</small>}
@@ -716,7 +728,7 @@ export function WithdrawalQueue(props: { selfId: string; canApprove: boolean }) 
                     {props.canApprove && w.status === 'pending_approval' && (
                       <div className="row">
                         {!w.approved_by.includes(props.selfId) && (
-                          <ReasonAction label="Approve" totp sm primary message={`Send ${w.amount} ${w.symbol} to ${w.to_address}.`} onSubmit={async (reason, h) => { await api('POST', `/withdrawals/${w.id}/approve`, { reason }, h); r.reload(); }} />
+                          <ReasonAction label="Approve" totp sm primary message={`Send ${w.amount} ${tokenOptionText(w.token, w.symbol)} to ${w.to_address}.`} onSubmit={async (reason, h) => { await api('POST', `/withdrawals/${w.id}/approve`, { reason }, h); r.reload(); }} />
                         )}
                         <ReasonAction label="Reject" danger sm message="The amount becomes available to the merchant again." onSubmit={async (reason) => { await api('POST', `/withdrawals/${w.id}/reject`, { reason }); r.reload(); }} />
                       </div>
@@ -768,13 +780,7 @@ function NewTreasury(props: { onDone: () => void }) {
               </select>
             </Field>
             <div className="row">
-              <Field label="Mode">
-                <select value={String(form.livemode)} onChange={(e) => { setForm({ ...form, livemode: e.target.value === 'true' }); }}>
-                  <option value="true">live</option>
-                  <option value="false">test</option>
-                </select>
-              </Field>
-              <Field label="Token"><input value={form.token} onChange={(e) => { setForm({ ...form, token: e.target.value }); }} required /></Field>
+              <Field label="Token"><TokenSelect value={form.token} onChange={(id) => { setForm({ ...form, token: id }); }} /></Field>
               <Field label="Amount"><input value={form.amount} onChange={(e) => { setForm({ ...form, amount: e.target.value }); }} inputMode="decimal" required /></Field>
             </div>
             {form.direction === 'to_hot' && (
@@ -799,7 +805,8 @@ function NewTreasury(props: { onDone: () => void }) {
 /** Cap and low-balance alert of the hot wallet for one mode and token (D-105). Empty = off. */
 function HotWalletPolicyForm(props: { initial?: HotWalletPolicy; onDone: () => void; label: string; sm?: boolean }) {
   const init = props.initial;
-  const blank = { livemode: init?.livemode ?? false, token: init?.token ?? 'bsc-testnet:usdt', max_balance: init?.max_balance ?? '', low_balance: init?.low_balance ?? '', reason: '' };
+  // Live (mainnets) unless editing an existing policy.
+  const blank = { livemode: init?.livemode ?? true, token: init?.token ?? 'bsc:usdt', max_balance: init?.max_balance ?? '', low_balance: init?.low_balance ?? '', reason: '' };
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState(blank);
   const [code, setCode] = useState('');
@@ -836,13 +843,7 @@ function HotWalletPolicyForm(props: { initial?: HotWalletPolicy; onDone: () => v
             }}
           >
             <div className="row">
-              <Field label="Mode">
-                <select value={String(form.livemode)} disabled={Boolean(init)} onChange={(e) => { setForm({ ...form, livemode: e.target.value === 'true' }); }}>
-                  <option value="false">test</option>
-                  <option value="true">live</option>
-                </select>
-              </Field>
-              <Field label="Token"><input value={form.token} readOnly={Boolean(init)} onChange={(e) => { setForm({ ...form, token: e.target.value }); }} required spellCheck={false} /></Field>
+              <Field label="Token"><TokenSelect value={form.token} disabled={Boolean(init)} onChange={(id) => { setForm({ ...form, token: id }); }} /></Field>
             </div>
             <div className="row">
               <Field label="Cap (move the rest to cold)" hint="Above this, the excess goes to cold storage automatically. Empty = off.">
@@ -924,7 +925,7 @@ export function Custody(props: { selfId: string; manage: boolean; superadmin: bo
           <tbody>
             {d.balances.map((b) => (
               <tr key={`${String(b.livemode)}:${String(b.token)}`}>
-                <td><code>{String(b.token)}</code> {b.livemode ? <span className="badge s-active">live</span> : <span className="badge">test</span>}</td>
+                <td><Asset token={String(b.token)} symbol={typeof b.symbol === 'string' ? b.symbol : null} /> {b.livemode ? <span className="badge s-active">live</span> : <span className="badge">test</span>}</td>
                 <td className="num">{String(b.platform_deposits ?? '0')}</td>
                 <td className="num">{String(b.platform_hot ?? '0')}</td>
                 <td className="num">{String(b.platform_cold ?? '0')}</td>
@@ -951,7 +952,7 @@ export function Custody(props: { selfId: string; manage: boolean; superadmin: bo
                     <tr key={x.id}>
                       <td>{fmtDate(x.created_at)}</td>
                       <td><a href={`#/invoices/${x.invoice_id}`}><code>{short(x.invoice_id)}</code></a> {x.livemode ? <span className="badge s-active">live</span> : <span className="badge">test</span>}</td>
-                      <td className="num">{x.amount} {x.symbol}</td>
+                      <td className="num"><Amount value={x.amount} token={x.token} symbol={x.symbol} /></td>
                       <td className="num">{x.to_merchant ?? '—'}</td>
                       <td className="num">{x.fee ?? '—'}</td>
                       <td><StatusBadge status={x.status} />{x.last_error && <small className="muted"> {x.last_error}</small>}</td>
@@ -981,8 +982,8 @@ export function Custody(props: { selfId: string; manage: boolean; superadmin: bo
             <tbody>
               {hp.data.data.map((p) => (
                 <tr key={`${String(p.livemode)}:${p.token}`}>
-                  <td><code>{p.token}</code> {p.livemode ? <span className="badge s-active">live</span> : <span className="badge">test</span>}</td>
-                  <td className="num">{p.last_balance ?? '—'} {p.symbol} {p.state && <span className={POLICY_STATE[p.state][0]}>{POLICY_STATE[p.state][1]}</span>}</td>
+                  <td><Asset token={p.token} symbol={p.symbol} /> {p.livemode ? <span className="badge s-active">live</span> : <span className="badge">test</span>}</td>
+                  <td className="num">{p.last_balance ?? '—'} {p.state && <span className={POLICY_STATE[p.state][0]}>{POLICY_STATE[p.state][1]}</span>}</td>
                   <td className="num">{p.max_balance ?? <span className="muted">off</span>}</td>
                   <td className="num">{p.low_balance ?? <span className="muted">off</span>}</td>
                   <td>{p.last_checked_at ? fmtDate(p.last_checked_at) : <span className="muted">not yet</span>}</td>
@@ -1028,7 +1029,7 @@ export function Custody(props: { selfId: string; manage: boolean; superadmin: bo
                 <tr key={x.id}>
                   <td>{fmtDate(x.created_at)} {x.livemode ? <span className="badge s-active">live</span> : <span className="badge">test</span>}</td>
                   <td>{x.direction === 'to_cold' ? 'hot → cold' : 'cold → hot'} {x.auto && <span className="badge">auto</span>}</td>
-                  <td className="num">{x.amount} <code>{x.token}</code></td>
+                  <td className="num"><Amount value={x.amount} token={x.token} /></td>
                   <td><StatusBadge status={x.status} />{x.last_error && <small className="muted"> {x.last_error}</small>}</td>
                   <td>{x.reason}</td>
                   <td>
@@ -1335,7 +1336,7 @@ function RiskLimits(props: { merchantId: string; manage: boolean }) {
             <tbody>
               {limits.data.data.map((l) => (
                 <tr key={l.asset}>
-                  <td><code>{l.asset}</code></td>
+                  <td><Asset token={l.asset} /> <code>{l.asset}</code></td>
                   <td className="num">{l.per_invoice ?? '—'}</td>
                   <td className="num">{l.per_day ?? '—'}</td>
                   <td>{fmtDate(l.updated_at)}</td>
@@ -1348,7 +1349,7 @@ function RiskLimits(props: { merchantId: string; manage: boolean }) {
       {props.manage && (
         <>
           <div className="form-grid">
-            <Field label="Token"><input value={asset} onChange={(e) => { setAsset(e.target.value); }} /></Field>
+            <Field label="Token"><TokenSelect value={asset} onChange={setAsset} /></Field>
             <Field label="Per invoice (token units)"><input value={perInvoice} onChange={(e) => { setPerInvoice(e.target.value); }} inputMode="decimal" placeholder="no limit" /></Field>
             <Field label="Per day (token units)"><input value={perDay} onChange={(e) => { setPerDay(e.target.value); }} inputMode="decimal" placeholder="no limit" /></Field>
           </div>
@@ -1460,7 +1461,8 @@ interface SettingsDraft {
   /** '' = the server limit. */
   withdrawal_two_person_min: string;
   signup_enabled: boolean;
-  merchant_defaults: { fee_bps: string; fee_fixed: string; fee_grace: string; payout_fee: string; underpay_tolerance_bps: string };
+  /** network: '' = every network. */
+  merchant_defaults: { fee_bps: string; fee_fixed: string; fee_grace: string; payout_fee: string; underpay_tolerance_bps: string; network: string };
   whitelist_activation_hours: number;
   whitelist_disable_hours: number;
 }
@@ -1479,6 +1481,7 @@ const draftOf = (s: AdminSettings): SettingsDraft => ({
     fee_grace: s.merchant_defaults.fee_grace,
     payout_fee: s.merchant_defaults.payout_fee,
     underpay_tolerance_bps: String(s.merchant_defaults.underpay_tolerance_bps),
+    network: s.merchant_defaults.network ?? '',
   },
   whitelist_activation_hours: s.whitelist_activation_hours,
   whitelist_disable_hours: s.whitelist_disable_hours,
@@ -1575,6 +1578,7 @@ const SETTINGS_SECTIONS: [string, string][] = [
 
 export function Settings(props: { superadmin: boolean }) {
   const r = useLoad(() => api<AdminSettings>('GET', '/settings'), []);
+  const reg = useLoad(() => api<RegistryData>('GET', '/registry'), []);
   const [draft, setDraft] = useState<SettingsDraft | null>(null);
   const [newIp, setNewIp] = useState({ cidr: '', label: '' });
   if (r.error) return <ErrorBox error={r.error} />;
@@ -1717,7 +1721,7 @@ export function Settings(props: { superadmin: boolean }) {
           <div className="setting-text">
             <strong>Two admins from <span className="badge s-pending">now {saved.withdrawal_two_person_effective} tokens</span></strong>
             <span>
-              A live withdrawal of this many tokens or more needs two different admins; a smaller one needs one admin; test mode needs none. At most {p.withdrawal_two_person_max} (the server's limit), so the console can
+              A live withdrawal of this many tokens or more needs two different admins; a smaller one needs one admin. At most {p.withdrawal_two_person_max} (the server's limit), so the console can
               only make this stricter. Applies to withdrawals requested after saving.
             </span>
           </div>
@@ -1756,6 +1760,13 @@ export function Settings(props: { superadmin: boolean }) {
             <Field label="Fee grace" hint="How far live prepaid fees may go below zero."><input value={cur.merchant_defaults.fee_grace} onChange={(e) => { setDefault('fee_grace', e.target.value); }} inputMode="decimal" disabled={locked} /></Field>
             <Field label="Payout fee" hint="Per payout to a merchant's user, token units."><input value={cur.merchant_defaults.payout_fee} onChange={(e) => { setDefault('payout_fee', e.target.value); }} inputMode="decimal" disabled={locked} /></Field>
             <Field label="Underpay tolerance (bps)" hint="Paid this much short still counts as paid. 50 = 0.5%."><input value={cur.merchant_defaults.underpay_tolerance_bps} onChange={(e) => { setDefault('underpay_tolerance_bps', e.target.value); }} inputMode="numeric" disabled={locked} /></Field>
+            <Field label="Network" hint="The chain a new merchant receives payments on. The merchant can change it in Settings > Network.">
+              <select value={cur.merchant_defaults.network} onChange={(e) => { setDefault('network', e.target.value); }} disabled={locked}>
+                <option value="">Every enabled network</option>
+                {(reg.data?.chains ?? []).filter((c) => !c.testnet).map((c) => <option key={c.id} value={c.id}>{c.name}{c.enabled ? '' : ' (off)'}</option>)}
+                {cur.merchant_defaults.network && !(reg.data?.chains ?? []).some((c) => c.id === cur.merchant_defaults.network) && <option value={cur.merchant_defaults.network}>{cur.merchant_defaults.network}</option>}
+              </select>
+            </Field>
           </div>
         </div>
       </div>
@@ -1765,7 +1776,7 @@ export function Settings(props: { superadmin: boolean }) {
         <div className="setting-row">
           <div className="setting-text">
             <strong>New live payout address usable after</strong>
-            <span>A whitelisted address added in live mode waits this long before payouts can go there; owners are emailed at once. Test mode: no wait.</span>
+            <span>A newly whitelisted payout address waits this long before payouts can go there; owners are emailed at once.</span>
           </div>
           <Presets label="New live payout address usable after" values={withValue(WL_PRESETS, cur.whitelist_activation_hours)} value={cur.whitelist_activation_hours} disabled={locked} fmt={(h) => `${String(h)} h`} onChange={(v) => { set({ whitelist_activation_hours: v }); }} />
         </div>
@@ -1809,6 +1820,7 @@ export function Settings(props: { superadmin: boolean }) {
                       fee_grace: d.fee_grace.trim(),
                       payout_fee: d.payout_fee.trim(),
                       underpay_tolerance_bps: Number(d.underpay_tolerance_bps),
+                      network: d.network || null,
                     },
                     whitelist_activation_hours: cur.whitelist_activation_hours,
                     whitelist_disable_hours: cur.whitelist_disable_hours,

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { api, download, type Balance, type FeeTopup, type Invoice, type Page, type Token } from './api';
+import { Amount, Asset, NetworkName, TokenPicker } from './asset';
 import { SellerSelect } from './sellers';
 import { ConfirmButton, CopyField, EmptyState, ErrorBox, Field, Icon, Skeleton, Stat, StatusBadge, Submit, fmtDate, short, toast, useAction, useLoad } from './ui';
 
@@ -31,9 +32,9 @@ export function Invoices(props: { livemode: boolean; canWrite: boolean; canExpor
           {(balances.data?.data ?? []).map((b) => (
             <Stat
               key={b.token}
-              label={`Received · ${b.token}`}
+              label="Received"
               value={b.received}
-              unit={b.symbol}
+              unit={<Asset token={b.token} symbol={b.symbol} />}
               icon="trend"
               {...(b.fee_status === 'blocked' ? { tone: 'bad' as const } : b.fee_status === 'low' ? { tone: 'warn' as const } : {})}
             >
@@ -93,7 +94,7 @@ export function Invoices(props: { livemode: boolean; canWrite: boolean; canExpor
               {rows.map((i) => (
                 <tr key={i.id} className="clickable" onClick={() => { location.hash = `#/invoices/${i.id}`; }}>
                   <td>{fmtDate(i.created_at)}</td>
-                  <td className="num">{i.amount} {i.symbol}</td>
+                  <td><Amount value={i.amount} token={i.token} symbol={i.symbol} /></td>
                   <td><StatusBadge status={i.status} /></td>
                   <td>{i.external_order_id ?? '—'}</td>
                   <td><code>{short(i.deposit_address)}</code></td>
@@ -124,7 +125,8 @@ export function Invoices(props: { livemode: boolean; canWrite: boolean; canExpor
 }
 
 function NewInvoice(props: { livemode: boolean; onCancel: () => void; onCreated: (inv: Invoice) => void }) {
-  const tokens = useLoad(() => api<{ data: Token[] }>('GET', `/tokens/?livemode=${String(props.livemode)}`), [props.livemode]);
+  // network: the chain this account receives on (D-113, its own choice); null = every enabled chain.
+  const tokens = useLoad(() => api<{ data: Token[]; network: string | null }>('GET', `/tokens/?livemode=${String(props.livemode)}`), [props.livemode]);
   const [form, setForm] = useState({ token: '', amount: '', description: '', external_order_id: '', minutes: '30', seller: '' });
   const a = useAction();
   const list = tokens.data?.data ?? [];
@@ -146,22 +148,19 @@ function NewInvoice(props: { livemode: boolean; onCancel: () => void; onCreated:
             ...(form.external_order_id.trim() ? { external_order_id: form.external_order_id.trim() } : {}),
             ...(form.seller ? { sub_merchant: form.seller } : {}),
           });
-          toast.success('Invoice created', `${inv.amount} ${inv.symbol} · share the checkout link with your customer.`);
+          toast.success('Invoice created', `${inv.amount} ${inv.symbol} on ${inv.network} · share the checkout link with your customer.`);
           props.onCreated(inv);
         });
       }}
     >
-      <h3>New {props.livemode ? 'live' : 'test'} invoice</h3>
+      <h3>New invoice</h3>
       <ErrorBox error={tokens.error} />
-      {tokens.data && list.length === 0 && <p className="muted">No tokens are enabled for {props.livemode ? 'live' : 'test'} mode.</p>}
+      {tokens.data && list.length === 0 && <p className="muted">No tokens are enabled right now.</p>}
+      {tokens.data?.network && (
+        <p className="muted">Your account receives payments on <NetworkName chain={tokens.data.network} /> only. Change it in <a href="#/settings/network">Settings · Network</a>.</p>
+      )}
+      {list.length > 0 && <TokenPicker label="Token" name="invoice-token" tokens={list} value={token} onChange={(id) => { setForm({ ...form, token: id }); }} />}
       <div className="grid">
-        <Field label="Token">
-          <select value={token} onChange={(e) => { setForm({ ...form, token: e.target.value }); }} required>
-            {list.map((t) => (
-              <option key={t.id} value={t.id}>{t.symbol} · {t.chain_id}</option>
-            ))}
-          </select>
-        </Field>
         <Field label="Amount" {...(min ? { hint: `Minimum ${min}` } : {})}>
           <input value={form.amount} onChange={(e) => { setForm({ ...form, amount: e.target.value }); }} inputMode="decimal" placeholder="25.00" pattern="\d+(\.\d+)?" required />
         </Field>
@@ -196,7 +195,7 @@ export function InvoiceDetail(props: { id: string; canWrite: boolean }) {
       {i && (
         <>
           <header className="page-head">
-            <h2>{i.amount} {i.symbol} <StatusBadge status={i.status} /></h2>
+            <h2><Amount value={i.amount} token={i.token} symbol={i.symbol} /> <StatusBadge status={i.status} /></h2>
             {props.canWrite && i.status === 'pending' && (
               <ConfirmButton
                 label="Cancel invoice"
@@ -208,11 +207,10 @@ export function InvoiceDetail(props: { id: string; canWrite: boolean }) {
             )}
           </header>
           <ErrorBox error={a.error} />
-          {!i.livemode && <p className="muted">Test invoice: pay it with testnet tokens only.</p>}
           <dl className="details card">
             <dt>Invoice id</dt><dd><CopyField value={i.id} /></dd>
-            <dt>Received</dt><dd>{i.amount_received} {i.symbol}</dd>
-            <dt>Network</dt><dd>{i.network}</dd>
+            <dt>Received</dt><dd><Amount value={i.amount_received} token={i.token} symbol={i.symbol} /></dd>
+            <dt>Network</dt><dd><NetworkName chain={i.chain} label={i.network} /></dd>
             <dt>Deposit address</dt><dd><CopyField value={i.deposit_address} /></dd>
             <dt>Checkout</dt>
             <dd className="row">
@@ -239,7 +237,7 @@ export function InvoiceDetail(props: { id: string; canWrite: boolean }) {
                     <tr key={p.tx_hash + p.block_number}>
                       <td><code>{short(p.tx_hash, 8)}</code></td>
                       <td><code>{short(p.from)}</code></td>
-                      <td className="num">{p.amount} {i.symbol}</td>
+                      <td><Amount value={p.amount} token={i.token} symbol={i.symbol} tag={false} /></td>
                       <td>{p.block_number}</td>
                       <td>{p.status === 'detected' ? `waiting for ${String(p.confirmations_required)} confirmations` : p.status}</td>
                     </tr>
@@ -265,8 +263,8 @@ export function InvoiceDetail(props: { id: string; canWrite: boolean }) {
                               f.explorer_url ? <a href={f.explorer_url} target="_blank" rel="noopener noreferrer"><code>{short(f.tx_hash, 8)}</code> <Icon name="external" size={12} /></a> : <code>{short(f.tx_hash, 8)}</code>
                             ) : <span className="muted">—</span>}
                           </td>
-                          <td className="num">{f.to_merchant ?? '—'}{f.to_merchant && ` ${i.symbol}`}</td>
-                          <td className="num">{f.fee ?? '—'}{f.fee && ` ${i.symbol}`}</td>
+                          <td className="num">{f.to_merchant ? <Amount value={f.to_merchant} token={i.token} symbol={i.symbol} tag={false} /> : '—'}</td>
+                          <td className="num">{f.fee ? <Amount value={f.fee} token={i.token} symbol={i.symbol} tag={false} /> : '—'}</td>
                           <td><StatusBadge status={f.status} /></td>
                         </tr>
                       ))}
@@ -307,7 +305,7 @@ function FeeTopups(props: { livemode: boolean }) {
           <thead><tr><th>Date</th><th>Amount</th><th>Reference</th></tr></thead>
           <tbody>
             {rows.map((t) => (
-              <tr key={t.id}><td>{fmtDate(t.created_at)}</td><td className="num">{t.amount} {t.symbol} <small className="muted">{t.token}</small></td><td><code>{t.reference}</code></td></tr>
+              <tr key={t.id}><td>{fmtDate(t.created_at)}</td><td><Amount value={t.amount} token={t.token} symbol={t.symbol} /></td><td><code>{t.reference}</code></td></tr>
             ))}
           </tbody>
         </table>

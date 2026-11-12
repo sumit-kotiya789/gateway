@@ -48,6 +48,36 @@ export async function resolveToken(tx: Tx, tokenId: string, livemode: boolean): 
   return r;
 }
 
+/**
+ * The chain a merchant may receive live payments on (D-113): set by the platform per merchant; null = every enabled
+ * chain. Test mode is never restricted.
+ */
+export async function merchantNetwork(tx: Tx, merchantId: string, livemode: boolean): Promise<{ id: string; name: string } | null> {
+  if (!livemode) return null;
+  const [r] = await tx
+    .select({ id: chains.id, name: chains.name })
+    .from(merchants)
+    .innerJoin(chains, eq(chains.id, merchants.allowedChainId))
+    .where(eq(merchants.id, merchantId));
+  return r ?? null;
+}
+
+/**
+ * resolveToken for something new that RECEIVES money (an invoice, a payment link, a deposit account): also refuses a
+ * token outside the merchant's network (D-113). Withdrawals and payouts move funds already held and are not limited.
+ */
+export async function resolveReceivingToken(tx: Tx, merchantId: string, tokenId: string, livemode: boolean): Promise<{ token: TokenRow; chain: ChainRow }> {
+  const r = await resolveToken(tx, tokenId, livemode);
+  const net = await merchantNetwork(tx, merchantId, livemode);
+  if (net && net.id !== r.chain.id) {
+    throw new AppError('validation_error', `token ${tokenId} is not available for this account: it receives payments on ${net.name} only`, {
+      field: 'token',
+      network: net.id,
+    });
+  }
+  return r;
+}
+
 /** Parses an amount for a token: exact decimals, positive, at or above the token's dust threshold. */
 export function parseInvoiceAmount(amount: string, token: Pick<TokenRow, 'decimals' | 'minAmount' | 'symbol'>): bigint {
   const minor = toMinorUnits(amount, token.decimals);
@@ -63,7 +93,7 @@ async function setReason(tx: Tx, reason: string): Promise<void> {
 }
 
 export async function createInvoice(deps: Deps, tx: Tx, merchantId: string, livemode: boolean, input: CreateInvoiceInput): Promise<InvoiceRow> {
-  const { token, chain } = await resolveToken(tx, input.token, livemode);
+  const { token, chain } = await resolveReceivingToken(tx, merchantId, input.token, livemode);
   const amountExpected = parseInvoiceAmount(input.amount, token);
   const expiresIn = input.expiresInSeconds ?? EXPIRY_S.default;
   if (!Number.isInteger(expiresIn) || expiresIn < EXPIRY_S.min || expiresIn > EXPIRY_S.max) {

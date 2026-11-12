@@ -77,6 +77,8 @@ export interface Merchant {
   payout_fee: string;
   underpay_tolerance_bps: number;
   risk_flags: string[];
+  /** The one mainnet it receives live payments on (D-113, chosen by the merchant); null = every enabled chain. */
+  network: string | null;
   created_at: string;
 }
 
@@ -105,7 +107,9 @@ export interface Invoice {
   custody_mode: string;
   amount: string;
   amount_received: string;
+  token: string;
   symbol: string;
+  chain: string;
   network: string;
   deposit_address: string;
   external_order_id: string | null;
@@ -132,7 +136,8 @@ export interface AdminSettings {
   withdrawal_two_person_min: string | null;
   withdrawal_two_person_effective: string;
   signup_enabled: boolean;
-  merchant_defaults: { fee_bps: number; fee_fixed: string; fee_grace: string; payout_fee: string; underpay_tolerance_bps: number };
+  /** network: the chain a new merchant receives on (D-113, BNB Smart Chain by default); null = every enabled one. */
+  merchant_defaults: { fee_bps: number; fee_fixed: string; fee_grace: string; payout_fee: string; underpay_tolerance_bps: number; network: string | null };
   /** Merchant whitelists (D-109): hours until a new live payout address works, and until a switch-off applies. */
   whitelist_activation_hours: number;
   whitelist_disable_hours: number;

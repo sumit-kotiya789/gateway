@@ -175,7 +175,7 @@ describe('payouts to users (D-100)', () => {
     expect(await bad('0x00000000000000000000000000000000000cAFE1')).toMatchObject({ field: 'to_address' }); // checksum typo
     expect((await pay(m, key, { amount: '19.5' })).json().error.details.reason).toBe('insufficient_balance'); // 19.5 + 1 > 20
     expect((await pay(m, key, { amount: '0' })).statusCode).toBe(400);
-    expect((await pay(m, await m.mintKey(['read', 'withdrawals:write']))).statusCode).toBe(403);
+    expect((await pay(m, await m.mintKey(['read', 'invoices:write']))).statusCode).toBe(403);
     expect(await bal(m)).toMatchObject({ available: '20', withdrawing: '0' });
   });
 

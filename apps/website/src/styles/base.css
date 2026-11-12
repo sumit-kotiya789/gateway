@@ -400,3 +400,11 @@ table.t .no { color: var(--faint); }
   .reveal { opacity: 1; transform: none; }
   .tilt { transform: none; }
 }
+
+/* Supported networks by official logo (D-112). */
+.networks { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 0.35rem 0.75rem; vertical-align: middle; }
+.networks .network { display: inline-flex; align-items: center; gap: 0.35rem; white-space: nowrap; }
+.networks img, .usdt-mark { width: 16px; height: 16px; border-radius: 50%; flex: none; box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.12); }
+.badge .networks { gap: 0.2rem; }
+.badge .usdt-mark, .badge .networks img { width: 14px; height: 14px; }
+.hero-meta li .networks { margin-left: 0.1rem; }

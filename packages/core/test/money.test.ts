@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AppError, MAX_UINT256, fromMinorUnits, toMinorUnits } from '../src/index.js';
+import { AppError, MAX_UINT256, fromMinorUnits, sumUnits, toMinorUnits } from '../src/index.js';
 
 describe('toMinorUnits', () => {
   it.each([
@@ -74,5 +74,14 @@ describe('fromMinorUnits', () => {
     for (const s of ['0', '1', '0.1', '25.5', '999999.999999', '0.000001']) {
       expect(fromMinorUnits(toMinorUnits(s, 6), 6)).toBe(s);
     }
+  });
+});
+
+describe('sumUnits', () => {
+  it('adds amounts of different precision exactly (USDT on BSC, 18 decimals, plus Ethereum, 6)', () => {
+    expect(sumUnits(['12.5', '0.000000000000000001', '7.25'])).toBe('19.750000000000000001');
+    expect(sumUnits(['0.1', '0.2'])).toBe('0.3');
+    expect(sumUnits(['5'])).toBe('5');
+    expect(sumUnits([])).toBe('0');
   });
 });

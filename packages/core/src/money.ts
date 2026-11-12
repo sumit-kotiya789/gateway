@@ -49,3 +49,15 @@ export function fromMinorUnits(value: bigint, decimals: number): string {
 export function fromSignedMinorUnits(value: bigint, decimals: number): string {
   return value < 0n ? `-${fromMinorUnits(-value, decimals)}` : fromMinorUnits(value, decimals);
 }
+
+/**
+ * Exact sum of decimal strings in token units, e.g. one symbol's amounts across chains whose tokens have different
+ * decimals (USDT: 18 on BSC, 6 on Ethereum and Polygon). For display totals only, never for booking.
+ */
+export function sumUnits(values: readonly string[]): string {
+  const places = Math.max(0, ...values.map((v) => v.split('.')[1]?.length ?? 0));
+  return fromMinorUnits(
+    values.reduce((s, v) => s + toMinorUnits(v, places), 0n),
+    places,
+  );
+}

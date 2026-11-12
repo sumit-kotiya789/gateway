@@ -26,6 +26,7 @@
     "@fastify/swagger": "9.9.2",
     "@gw/chains": "workspace:*",
     "@gw/core": "workspace:*",
+    "@gw/networks": "workspace:*",
     "bullmq": "6.5.3",
     "drizzle-orm": "0.45.4",
     "fastify": "5.12.7",

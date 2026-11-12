@@ -87,7 +87,6 @@ function parseCsv(text: string): { address: string; label: string }[] {
 }
 
 export function WhitelistAddresses(props: { livemode: boolean; canManage: boolean; totp: boolean }) {
-  const mode = props.livemode ? 'live' : 'test';
   const state = useLoad(() => api<WhitelistState>('GET', `/security/whitelist/?livemode=${String(props.livemode)}`), [props.livemode]);
   const [q, setQ] = useState('');
   const [query, setQuery] = useState('');
@@ -112,10 +111,10 @@ export function WhitelistAddresses(props: { livemode: boolean; canManage: boolea
 
   return (
     <section>
-      <header className="page-head"><h2>Whitelist addresses</h2><span className={`mode-pill ${props.livemode ? 'live' : 'test'}`}>{mode}</span></header>
+      <header className="page-head"><h2>Whitelist addresses</h2></header>
       <p className="lede-sm">
-        Payouts to your users go only to addresses on this list while it is on. New {mode} addresses
-        {props.livemode ? ` become usable ${String(s?.activation_hours ?? 24)} hours after you add them` : ' work at once'}; switching the whitelist off takes {String(s?.disable_hours ?? 48)} hours.
+        Payouts to your users go only to addresses on this list while it is on. New addresses become usable {String(s?.activation_hours ?? 24)} hours after
+        you add them; switching the whitelist off takes {String(s?.disable_hours ?? 48)} hours.
       </p>
       {!props.totp && props.canManage && <Needs2fa />}
       <ErrorBox error={state.error} />
@@ -231,7 +230,7 @@ export function WhitelistAddresses(props: { livemode: boolean; canManage: boolea
 
       {manual && (
         <TotpDialog
-          title={`Whitelist a ${mode} address`}
+          title="Whitelist an address"
           submit="Add address"
           onClose={() => { setManual(false); setForm({ address: '', label: '' }); }}
           onSubmit={async (h) => { await add([{ address: form.address.trim(), label: form.label.trim() }], h); setForm({ address: '', label: '' }); }}

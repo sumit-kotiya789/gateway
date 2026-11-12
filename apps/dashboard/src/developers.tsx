@@ -5,7 +5,7 @@ import { Sparkline } from './charts';
 import { ago, fmtCompact, fmtPct } from './format';
 import { Alert, ConfirmButton, EmptyState, ErrorBox, Field, Icon, SecretOnce, Skeleton, StatusBadge, Submit, TotpInput, fmtDate, short, toast, useAction, useLoad } from './ui';
 
-const SECRET_SCOPES = ['read', 'invoices:write', 'refunds:write', 'withdrawals:write', 'payouts:write', 'webhooks:write'];
+const SECRET_SCOPES = ['read', 'invoices:write', 'refunds:write', 'payouts:write', 'webhooks:write'];
 
 const Needs2fa = () => (
   <Alert tone="warning">
@@ -73,7 +73,7 @@ export function ApiKeys(props: { livemode: boolean; totp: boolean }) {
           </table>
         </div>
       ) : keys.data ? (
-        <EmptyState icon="key" title={`No ${props.livemode ? 'live' : 'test'} keys yet`}>
+        <EmptyState icon="key" title="No API keys yet">
           <p>Create one below to call the API from your server.</p>
         </EmptyState>
       ) : (
@@ -99,7 +99,7 @@ export function ApiKeys(props: { livemode: boolean; totp: boolean }) {
           });
         }}
       >
-        <h3>Create {props.livemode ? 'live' : 'test'} key</h3>
+        <h3>Create key</h3>
         {!props.totp && <Needs2fa />}
         <div className="grid">
           <Field label="Name">
@@ -279,7 +279,7 @@ export function Webhooks(props: { livemode: boolean; totp: boolean }) {
           </table>
         </div>
       ) : list.data ? (
-        <EmptyState icon="zap" title={`No ${props.livemode ? 'live' : 'test'} endpoints`}>
+        <EmptyState icon="zap" title="No webhook endpoints yet">
           <p>Add an endpoint below to be notified the moment an invoice is paid.</p>
         </EmptyState>
       ) : (
@@ -311,7 +311,7 @@ export function Webhooks(props: { livemode: boolean; totp: boolean }) {
           });
         }}
       >
-        <h3>Add {props.livemode ? 'live' : 'test'} endpoint</h3>
+        <h3>Add endpoint</h3>
         {!props.totp && <Needs2fa />}
         <Field label="Endpoint URL" hint="https:// in production. Must be reachable from the internet (private addresses are refused).">
           <input type="url" value={form.url} onChange={(e) => { setForm({ ...form, url: e.target.value }); }} maxLength={2000} placeholder="https://shop.example/webhooks/gateway" required />

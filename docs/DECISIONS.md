@@ -828,3 +828,85 @@ Web3 projects give each user one address to deposit to, any amount, any time; it
 - Charts are plain SVG (no library, no style attributes: the dashboard CSP is style-src 'self'); amounts are drawn
   as numbers for display only.
 
+
+## D-111 Live only: BNB Smart Chain mainnet and BSC USDT (2026-11-09, owner)
+- **Ask**: remove "test" everywhere; BSC network and BSC USDT by default; only the "shop" merchant stays.
+- **Dashboard and admin console**: no Test/Live switch, test banner or test options; everything is live. The invoice
+  form offers the enabled live tokens, so BSC USDT is the default (and the only one) while it is the only one enabled.
+- **Registry**: `bsc-testnet` (chain and token) disabled with the kill switch, `evm-local:usdt` and `nexis:usdt`
+  tokens disabled too (their chains were already off). Re-enabling needs a superadmin + 2FA as usual.
+- **Merchants**: the five E2E test merchants are suspended, not deleted: their ledger and audit entries are immutable
+  (deleting would break the audit hash chain). Reactivation needs an admin + 2FA.
+- **Kept on purpose**: the API and database still understand `livemode` (test API keys, test invoices) so history
+  stays readable and the test suites keep running; the hosted checkout still labels any test invoice as TEST MODE.
+  The public website's developer docs still describe test keys.
+
+## D-112 USDT on Ethereum and Polygon PoS; official logos everywhere (2026-11-10, owner)
+- **Ask**: add USDT on Tron, Polygon and Ethereum, and use the official symbols (logos) of tokens and chains everywhere.
+  Owner chose Ethereum + Polygon now; **Tron later** as its own piece of work (a new chain family: base58 addresses,
+  its own signing and broadcast, energy/bandwidth fees; deriver, watcher, signer, address checks and DB constraints are
+  EVM-only today).
+- **Registry**: chains `eth` (chain id 1, finality tag, 12 confirmations, reorg window 64) and `polygon` ("Polygon PoS",
+  chain id 137, native POL, finality tag, 64 confirmations, reorg window 128: Polygon reorganised deeply before
+  milestones). Tokens `eth:usdt` (0xdAC17F958D2ee523a2206206994597C13D831ec7) and `polygon:usdt`
+  (0xc2132D05D31c914a87C6611C10748AEb04B58e8F, upgraded in place to USDT0 by Tether in 2025; on-chain symbol "USDT0",
+  shown as USDT), both 6 decimals; tiers 30/60 (Ethereum) and 128/256 (Polygon) confirmations from 10k / 100k USDT.
+  Both chains **seeded off**: an operator sets `ETH_RPC_URL` / `POLYGON_RPC_URL`, enables the chain (superadmin +
+  TOTP) and restarts the watchers (RUNBOOK). Seeding them on would have made a watcher without the RPC env retry
+  verification forever and offered the token before anyone watches it.
+- **One EVM address for all three**: payout addresses, platform wallets and whitelists are per family (`evm`), so the
+  same 0x address receives on BSC, Ethereum and Polygon. The dashboard now says so and warns against exchange deposit
+  addresses (they may support one network only).
+- **Signer**: `SIGNER_GAS_LIMITS` (JSON, per chain id: `max_gas_price_gwei`, `max_gas_topup`) overrides the global
+  ceilings. Polygon gas runs at tens to hundreds of gwei and 1 POL is worth far less than 1 ETH or 1 BNB, so one
+  global number cannot fit. Signer environment, not admin Settings: the signer's limits must not be changeable by
+  anyone who only controls the app or its database (D-088).
+- **Display**: new package `@gw/networks` holds the official network names, native tickers, the tag payers match
+  (BEP-20, ERC-20, Polygon) and the official logos (from `@web3icons/core` 4.0.58, MIT, clipped round; trademarks of
+  their owners). Logos render as `<img>` data: URIs (every CSP here allows `img-src data:`; inline SVG ids could
+  collide). Only the real Tether contracts get the Tether mark, never a mock that shares the symbol. Dashboard, admin
+  console, hosted checkout and website show token logo + network badge + ticker + tag wherever an amount, token or
+  network appears; the invoice form picks the token by logo; admin token-id text inputs became registry selects.
+  The checkout warning names the standard: "Send only USDT (ERC-20) on Ethereum."
+- **Fix**: dashboard home summed volume per symbol by overwriting: two USDT tokens would have shown only one. Now an
+  exact sum across decimals (`sumUnits`, display only).
+- **Not changed**: prepaid fee balances stay per token (D-076): a merchant on prepaid fees needs a top-up or grace per
+  new token.
+
+## D-113 One network per merchant, the merchant's choice (2026-11-10, owner)
+- **Ask**: merchant 1 on BSC, merchant 2 on Ethereum, merchant 3 on Polygon: one chain per merchant at a time, not all.
+  First built as an admin control; the owner then decided **the merchant sets it, not an admin**.
+- **Setting**: `merchants.allowed_chain_id`, chosen in the dashboard (Settings > Network) by the owner or an admin of
+  the merchant (`settings:manage`) with a fresh 2FA code, audited as `settings.network`. One enabled mainnet, or null =
+  every enabled chain. The admin console shows it read-only. The database only accepts a mainnet (trigger).
+- **Default: BSC USDT** (owner, same day). `admin_settings.default_network` (admin console > Settings > Merchants >
+  Network, BNB Smart Chain unless changed; null = every network) is what a merchant gets at signup, when that chain is
+  registered as a mainnet. Migration 0061 moved every existing merchant without a network to `bsc`. Merchants can still
+  change theirs. The test suite sets the default to null (it takes live payments on simulated mainnets).
+- **What it limits**: anything new that RECEIVES money in live mode: invoices (API, dashboard, payment-link checkout),
+  payment links, user deposit accounts (`resolveReceivingToken`). `/v1/chains`, `/v1/tokens` and the dashboard token
+  list show only that network; a payment link on another chain shows as inactive.
+- **What it does not limit**: invoices already created and deposit addresses already handed out stay watched and are
+  credited (the watcher's deposit invoices skip the check on purpose: refusing them would lose user funds).
+  Withdrawals, payouts, treasury and hot-wallet operations move funds already held and are not limited. Test mode is
+  never restricted.
+- **RPC (same day)**: NodeReal for BSC and Ethereum (`BSC_RPC_URL`, `ETH_RPC_URL`); Polygon on publicnode for now (no
+  NodeReal endpoint). Public witnesses re-checked: `polygon-rpc.com` now refuses keyless calls (401) and
+  `eth.llamarpc.com` was down (525); replaced by drpc, 1rpc and publicnode. A URL listed twice counts as one provider
+  (`resolveRpcUrls` dedupes), so one provider can never cast two confirmation votes.
+
+## D-114 Self withdrawal to a chosen wallet (2026-11-10, owner)
+- **Ask**: a "Self withdrawal" option that lets the merchant pick which of its added wallets to withdraw to; then
+  (same day) **self withdrawals from the dashboard only, never by API**, while the API keeps paying out to any address
+  (`POST /v1/payouts`, `payouts:write`, D-100). So `POST /v1/withdrawals` and the `withdrawals:write` scope are gone
+  (older keys may still carry the scope; nothing accepts it); `GET /v1/withdrawals[/:id]` stays for reading.
+- **Model change**: payout addresses become a set of saved wallets. Before, only the newest active address was usable
+  and older ones were "superseded"; now every active one (activated, not removed) is a valid destination. The newest
+  stays the `current`/default one: forwarders pay it (D-097) and a withdrawal without a choice goes there.
+- **Unchanged safety**: adding a wallet needs the owner + 2FA; a live one works only 24 h later and owners are emailed;
+  wallets are managed in the dashboard only. A wallet can
+  now also be removed (immediate: it only narrows where money goes); a withdrawal to it that is not sent yet is
+  refused by the signer and released.
+- **Enforced three times**: `requestWithdrawal` (`payout_address_id`, dashboard), the `withdrawal_guard` DB
+  trigger (migration 0062: the merchant's own wallet, its mode, the chain's family, activated, not removed, same
+  address) and the signer (`payout_address_changed` when the wallet is no longer active).

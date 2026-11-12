@@ -1,6 +1,7 @@
 // Public hosted checkout. Unauthenticated: the unguessable invoice id (UUIDv7, 74 random bits) is the capability.
 // Exposes only what a payer needs: merchant name, amount, token, network, address, status. Never metadata or order ids.
 import { fromMinorUnits } from '@gw/core';
+import { logoUri, networkOf, tokenLogo } from '@gw/networks';
 import { eq } from 'drizzle-orm';
 import QRCode from 'qrcode';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
@@ -125,6 +126,20 @@ const CLIENT_JS = `
 })();
 `;
 
+/**
+ * Official token and network marks (D-112): the payer must pick the right network in their wallet, and recognises it
+ * by its logo. data: URIs of our own constant SVGs (CSP img-src 'self' data:); decorative, the names are written out.
+ */
+function marks(r: Loaded) {
+  const net = networkOf(r.chain.id);
+  const mark = tokenLogo(r.token.id);
+  const asset = html`<span class="asset">${mark ? html`<span class="ticon"><img src="${logoUri(mark)}" alt="" />${net ? html`<img class="tbadge" src="${logoUri(net.logo)}" alt="" />` : ''}</span>` : ''}<span>${r.token.symbol}</span></span>`;
+  const network = html`<span class="net">${net ? html`<img src="${logoUri(net.logo)}" alt="" />` : ''}<span>${r.chain.name}</span>${net?.standard ? html`<small>${net.standard}</small>` : ''}</span>`;
+  // "USDT (ERC-20)": the standard where wallets show one; Polygon PoS names the network only.
+  const named = net?.standard ? `${r.token.symbol} (${net.standard})` : r.token.symbol;
+  return { asset, network, named };
+}
+
 /** The checkout page for one invoice. `parentOrigin`: the allowlisted page embedding it (widget), if any. */
 export async function checkoutPage(r: Loaded, parentOrigin: string | undefined): Promise<PageOpts> {
   const S = STRINGS.en;
@@ -157,6 +172,7 @@ export async function checkoutPage(r: Loaded, parentOrigin: string | undefined):
   const done = DONE.has(v.status);
   const final = v.status === 'settled';
   const shortRef = `${r.inv.id.slice(0, 8)}…${r.inv.id.slice(-4)}`;
+  const m = marks(r);
   return {
     title: `${S.pay} ${r.merchantName}`,
     ...(parentOrigin ? { frameAncestor: parentOrigin } : {}),
@@ -167,13 +183,13 @@ export async function checkoutPage(r: Loaded, parentOrigin: string | undefined):
   <header class="merchant"><span class="avatar" aria-hidden="true">${(Array.from(r.merchantName)[0] ?? '').toUpperCase()}</span><div><h1>${r.merchantName}</h1><div class="muted">${S.pay}</div></div></header>
   <div id="paybody"${final ? raw(' hidden') : ''}>
 <div class="label">${S.sendExactly}</div>
-<div class="amount">${v.amount} ${r.token.symbol}</div>
+<div class="amount"><span class="figure">${v.amount}</span> ${m.asset}</div>
 <div class="facts">
-  <div class="row"><span class="muted">${S.network}</span><span>${r.chain.name}</span></div>
+  <div class="row"><span class="muted">${S.network}</span>${m.network}</div>
   <div class="row"><span class="muted">${S.received}</span><span id="received">${v.amount_received}</span></div>
   <div class="row"><span class="muted">${S.remaining}</span><span id="remaining">${v.remaining}</span></div>
 </div>
-<div class="warn" id="warnbox">${S.warning(r.token.symbol, r.chain.name)}</div>
+<div class="warn" id="warnbox">${S.warning(m.named, r.chain.name)}</div>
 <div id="payarea">
   <div class="qr">${qrSvg}</div>
   <div class="label">${S.toAddress}</div>
@@ -193,7 +209,7 @@ ${HERO}
 <p class="done-msg">${S.doneMessage(v.amount, r.token.symbol, r.merchantName)}</p>
 <div class="facts receipt">
   <div class="row"><span class="muted">${S.paidLabel}</span><span id="donepaid">${v.amount_received} ${r.token.symbol}</span></div>
-  <div class="row"><span class="muted">${S.network}</span><span>${r.chain.name}</span></div>
+  <div class="row"><span class="muted">${S.network}</span>${m.network}</div>
   <div class="row"><span class="muted">${S.reference}</span><span><code>${shortRef}</code></span></div>
 </div>
 <p class="muted close-hint">${S.closeHint}</p>

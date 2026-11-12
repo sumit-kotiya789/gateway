@@ -142,10 +142,12 @@ Per mode and token an admin sets a **cap** (`max_balance`) and an **alert level*
 ## Withdrawals (M7d, D-090)
 Only while custody is on (`FEATURE_CUSTODIAL`): with it off, requests and approvals are refused (`custody_off`) and the
 dashboard says withdrawals are paused; balances stay, and cancelling or rejecting still releases a hold.
-1. **Payout address** (dashboard, owner + TOTP): EIP-55 checksum checked; live addresses become current 24 h after
-   they are added (owners emailed; cancellable meanwhile); test addresses at once. Withdrawals always go to the
-   current one; a newer address or a cancellation stops older requests (the signer re-checks).
-2. **Request** (dashboard: owner/finance + TOTP; API: `withdrawals:write`): at most the available balance, held at
+1. **Payout wallets** (dashboard, owner + TOTP, D-114): EIP-55 checksum checked; a live wallet becomes usable 24 h
+   after it is added (owners emailed; cancellable meanwhile); test wallets at once. A self withdrawal goes to the
+   wallet the merchant picks among its active ones (default: the newest); removing a wallet stops requests to it that
+   are not sent yet (the database guard and the signer re-check).
+2. **Request** (dashboard only, Self withdrawal: owner/finance + TOTP; no API key can request one, D-114): at most the
+   available balance, held at
    once (`withdrawal_hold`). Refused while suspended or `payouts_frozen`. Test mode: approved at once.
 3. **Approval** (admin console, `withdrawals:approve` + TOTP): live needs one admin; at or above
    `WITHDRAWAL_TWO_PERSON_MIN` (token units) two different admins. Rejecting (or the merchant cancelling) releases.

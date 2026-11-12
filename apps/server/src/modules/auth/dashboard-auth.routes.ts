@@ -9,7 +9,7 @@ import { PASSWORD_MAX, PASSWORD_MIN, burnPasswordCheck, hashPassword, verifyPass
 import { sha256Hex } from '../../common/crypto/random.js';
 import { generateTotpSecret, totpUri, verifyTotp } from '../../common/crypto/totp.js';
 import { withSystem, withTenant, type Tx } from '../../common/db.js';
-import { merchantUsers, merchants, recoveryCodes, sessions } from '../../db/schema.js';
+import { chains, merchantUsers, merchants, recoveryCodes, sessions } from '../../db/schema.js';
 import type { Deps } from '../../deps.js';
 import { loadAdminSettings } from '../admin/settings.js';
 import { enqueueEmail } from '../email/outbox.js';
@@ -74,9 +74,20 @@ export function dashboardAuthRoutes(deps: Deps): FastifyPluginAsyncZod {
           const s = await loadAdminSettings(tx);
           if (!s.signupEnabled) throw new AppError('forbidden', 'signup is disabled');
           const d = s.merchantDefaults;
+          // The default network (D-113, BNB Smart Chain unless changed), if that chain is registered as a mainnet; the
+          // merchant can change it later (Settings > Network).
+          const [net] = d.network ? await tx.select({ id: chains.id }).from(chains).where(and(eq(chains.id, d.network), eq(chains.testnet, false))) : [];
           const [m] = await tx
             .insert(merchants)
-            .values({ name: merchant_name, feeBps: d.feeBps, feeFixed: d.feeFixed, feeGrace: d.feeGrace, payoutFee: d.payoutFee, underpayToleranceBps: d.underpayToleranceBps })
+            .values({
+              name: merchant_name,
+              feeBps: d.feeBps,
+              feeFixed: d.feeFixed,
+              feeGrace: d.feeGrace,
+              payoutFee: d.payoutFee,
+              underpayToleranceBps: d.underpayToleranceBps,
+              allowedChainId: net?.id ?? null,
+            })
             .returning();
           if (!m) throw new Error('merchant insert failed');
           const [u] = await tx.insert(merchantUsers).values({ merchantId: m.id, email, passwordHash, role: 'owner' }).returning();
@@ -193,7 +204,8 @@ export function dashboardAuthRoutes(deps: Deps): FastifyPluginAsyncZod {
         return {
           user: { id: u.id, email: u.email, email_verified: u.emailVerifiedAt !== null, role: u.role, totp_enabled: u.totpEnabledAt !== null, session_mfa: user.mfa },
           // withdrawals_enabled: custody is on for this platform (FEATURE_CUSTODIAL); withdrawals need it (D-098).
-          merchant: { id: m.id, name: m.name, status: m.status, custody_mode: m.custodyMode, withdrawals_enabled: deps.config.FEATURE_CUSTODIAL },
+          // network: the one mainnet the platform limited this merchant to (D-113); null = every enabled chain.
+          merchant: { id: m.id, name: m.name, status: m.status, custody_mode: m.custodyMode, withdrawals_enabled: deps.config.FEATURE_CUSTODIAL, network: m.allowedChainId },
           // Where the hosted checkout and widget.js live (snippets in the dashboard).
           api_origin: deps.config.PUBLIC_BASE_URL,
         };

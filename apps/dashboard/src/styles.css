@@ -790,3 +790,45 @@ td .badge + .badge { margin-left: 0.3rem; }
 .insights span { font-size: 0.7rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.07em; }
 .insights strong { font-size: 1.2rem; font-weight: 600; font-variant-numeric: tabular-nums; }
 .insights small { font-size: 0.72rem; color: var(--faint); }
+
+/* Official token and network marks (D-112): a token logo with its network's logo as a corner badge, the ticker and the
+   network tag (BEP-20, ERC-20, Polygon). Logos are <img> elements; sizes live here (no inline styles). */
+.asset, .amount, .network { display: inline-flex; align-items: center; gap: 0.38rem; vertical-align: middle; white-space: nowrap; }
+.amount { gap: 0.45rem; }
+.asset-sym { font-weight: 500; color: var(--text); }
+.asset-tag {
+  font-size: 0.68rem; font-weight: 500; color: var(--text-2); letter-spacing: 0.02em; line-height: 1.55;
+  padding: 0 0.42rem; border: 1px solid var(--border-strong); border-radius: var(--pill); background: rgba(255, 255, 255, 0.03);
+}
+.token-icon { position: relative; display: inline-block; flex: none; width: 18px; height: 18px; }
+/* A faint ring: some marks (ETH) sit on a black disc that would vanish into the dark surfaces. */
+.token-icon .ti-main { display: block; width: 18px; height: 18px; border-radius: 50%; box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.1); }
+.token-icon .ti-badge { position: absolute; right: -3px; bottom: -3px; width: 10px; height: 10px; border-radius: 50%; box-shadow: 0 0 0 1.5px var(--surface); }
+.token-icon.lg, .token-icon.lg .ti-main { width: 32px; height: 32px; }
+.token-icon.lg .ti-badge { width: 15px; height: 15px; right: -4px; bottom: -4px; box-shadow: 0 0 0 2px var(--surface-2); }
+.logo-generic { display: grid; place-items: center; background: var(--surface-3); color: var(--text-2); font-size: 0.6rem; font-weight: 600; line-height: 1; }
+.token-icon.lg .logo-generic { font-size: 0.9rem; }
+.net-logo { width: 16px; height: 16px; border-radius: 50%; flex: none; box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.1); }
+.stat .stat-value small .asset { font-size: 0.85rem; }
+.stat .stat-value small .asset-sym { color: var(--muted); }
+
+.token-picker { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 0.6rem; }
+.token-option {
+  position: relative; display: flex; align-items: center; gap: 0.75rem; padding: 0.7rem 0.85rem; cursor: pointer;
+  border: 1px solid var(--border-strong); border-radius: var(--r); background: var(--surface-2);
+  transition: border-color 0.15s var(--ease), background 0.15s var(--ease);
+}
+.token-option:hover { border-color: var(--accent-line); }
+.token-option.on { border-color: var(--accent); background: linear-gradient(180deg, var(--accent-soft), transparent), var(--surface-2); box-shadow: var(--accent-glow); }
+.token-option input { position: absolute; opacity: 0; width: 1px; height: 1px; margin: 0; pointer-events: none; }
+.token-option:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+.token-option .to-text { display: grid; gap: 0.05rem; min-width: 0; }
+.token-option .to-text b { font-weight: 600; color: #fff; }
+.token-option .to-text small { font-size: 0.75rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.field-value { display: flex; align-items: center; min-height: 2.5rem; color: var(--text-2); }
+/* Network choice (D-113): reuses the token picker cards. */
+.net-option-logo { width: 32px; height: 32px; border-radius: 50%; flex: none; box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.1); }
+.net-stack { display: inline-flex; flex: none; }
+.net-stack img { width: 24px; height: 24px; border-radius: 50%; box-shadow: 0 0 0 2px var(--surface-2); }
+.net-stack img + img { margin-left: -8px; }
+.token-option:has(input:disabled) { cursor: default; }

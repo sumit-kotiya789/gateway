@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { DASHBOARD, DEMO, PAGES, SIGNUP, href, type PageId } from '../router';
 import { useScrollState } from './effects';
+import { Networks, UsdtMark } from './bits';
 import { IArrow, IArrowUpRight, IMenu, IX, Logo } from './icons';
 
 export function Header(props: { page: PageId }) {
@@ -95,7 +96,7 @@ export function Footer() {
               <span className="badge green">
                 <span className="dot live" /> Test mode open
               </span>
-              <span className="badge">BSC · USDT BEP-20</span>
+              <span className="badge"><UsdtMark /> USDT <Networks names={false} /></span>
             </div>
           </div>
           <div>
@@ -133,7 +134,7 @@ export function Footer() {
       <p className="foot-mark" aria-hidden="true">Gateway</p>
       <div className="container">
         <div className="foot-base">
-          <span>© {new Date().getFullYear()} Gateway. Crypto payments on BNB Smart Chain.</span>
+          <span>© {new Date().getFullYear()} Gateway. USDT payments on BNB Smart Chain, Ethereum and Polygon.</span>
           <span>Test mode runs on BSC testnet with a test token: no real money moves.</span>
         </div>
       </div>

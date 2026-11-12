@@ -55,6 +55,10 @@ export default async function setup(project: TestProject) {
   await c.connect();
   // Idempotent: with TEST_PG_URL both test projects set up the same database.
   await c.query(`DO $$ BEGIN CREATE ROLE gateway_app LOGIN PASSWORD 'app' IN ROLE gw_app; EXCEPTION WHEN duplicate_object THEN NULL; END $$`);
+  // New merchants start on every network here (production default: BNB Smart Chain, D-113): tests take live payments on
+  // simulated mainnets, and the BSC row only exists once a test file seeds the registry. platform-settings.test.ts
+  // covers the default itself.
+  await c.query('update admin_settings set default_network = null');
   await c.end();
   const appUrl = new URL(ownerUrl);
   appUrl.username = 'gateway_app';

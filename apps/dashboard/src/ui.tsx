@@ -395,7 +395,7 @@ export function Skeleton() {
   );
 }
 
-export function Stat(props: { label: string; value: string; unit?: string | null; icon?: IconName; tone?: 'warn' | 'bad'; children?: ReactNode }) {
+export function Stat(props: { label: string; value: string; unit?: ReactNode; icon?: IconName; tone?: 'warn' | 'bad'; children?: ReactNode }) {
   return (
     <div className={`stat${props.tone ? ` ${props.tone}` : ''}`}>
       <span className="stat-label">

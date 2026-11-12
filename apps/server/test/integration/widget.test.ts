@@ -64,7 +64,15 @@ describe('widget', () => {
       expect((await put(bad)).statusCode).toBe(400);
     }
     expect((await put([SHOP, SHOP, 'http://localhost:5173'])).json()).toEqual({ widget_origins: [SHOP, 'http://localhost:5173'] });
-    expect((await m.agent.req('GET', '/v1/dashboard/settings/')).json()).toEqual({ widget_origins: [SHOP, 'http://localhost:5173'], receiving_mode: 'non_custodial_xpub', forwarder_available: false, custodial_available: false });
+    expect((await m.agent.req('GET', '/v1/dashboard/settings/')).json()).toEqual({
+      widget_origins: [SHOP, 'http://localhost:5173'],
+      receiving_mode: 'non_custodial_xpub',
+      forwarder_available: false,
+      custodial_available: false,
+      // D-113: no network chosen; the enabled mainnets to choose from (other test files add their own).
+      network: null,
+      networks: expect.any(Array),
+    });
     const a = await owner.query("select after from audit_logs where merchant_id = $1 and action = 'settings.widget_origins'", [m.merchantId]);
     expect(a.rows[0]?.after).toEqual({ widget_origins: [SHOP, 'http://localhost:5173'] });
   });

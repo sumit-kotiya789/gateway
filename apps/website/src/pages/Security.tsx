@@ -208,7 +208,7 @@ export function Security() {
             </table>
           </div>
           <div className="grid g3 sec-notes">
-            <div className="mini reveal"><span className="mini-ico"><IKey /></span><h4>API key scopes</h4><p><code>read</code>, <code>invoices:write</code>, <code>payouts:write</code>, <code>withdrawals:write</code>, <code>refunds:write</code>, <code>webhooks:write</code>.</p></div>
+            <div className="mini reveal"><span className="mini-ico"><IKey /></span><h4>API key scopes</h4><p><code>read</code>, <code>invoices:write</code>, <code>payouts:write</code>, <code>refunds:write</code>, <code>webhooks:write</code>. Withdrawing your own balance is dashboard-only: no key can do it.</p></div>
             <div className="mini reveal d1"><span className="mini-ico"><IUsers /></span><h4>Invitations</h4><p>Seven-day invite links; admins can invite developer, finance and read-only members.</p></div>
             <div className="mini reveal d2"><span className="mini-ico"><IServer /></span><h4>Tenant isolation</h4><p>Row-level security in Postgres: every query runs in its merchant's context.</p></div>
           </div>

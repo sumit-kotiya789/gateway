@@ -22,7 +22,8 @@ export interface AdminSettings {
   /** Whole token units; null = the server ceiling. */
   withdrawalTwoPersonMin: string | null;
   signupEnabled: boolean;
-  merchantDefaults: { feeBps: number; feeFixed: string; feeGrace: string; payoutFee: string; underpayToleranceBps: number };
+  /** network: the chain a new merchant receives live payments on (D-113); null = every enabled chain. */
+  merchantDefaults: { feeBps: number; feeFixed: string; feeGrace: string; payoutFee: string; underpayToleranceBps: number; network: string | null };
   /** Merchant whitelists (D-109): hours until a new live address works, and until a switch-off takes effect. */
   whitelistActivationHours: number;
   whitelistDisableHours: number;
@@ -55,6 +56,7 @@ export async function loadAdminSettings(tx: Tx): Promise<AdminSettings> {
       feeGrace: canonicalUnits(s.defaultFeeGrace),
       payoutFee: canonicalUnits(s.defaultPayoutFee),
       underpayToleranceBps: s.defaultUnderpayToleranceBps,
+      network: s.defaultNetwork,
     },
     whitelistActivationHours: s.whitelistActivationHours,
     whitelistDisableHours: s.whitelistDisableHours,

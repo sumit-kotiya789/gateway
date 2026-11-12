@@ -64,7 +64,7 @@ export function PageHero(props: { eyebrow: string; title: ReactNode; lead: strin
 
 const STEPS: { icon: ReactNode; title: string; who: 'you' | 'gateway' | 'user'; body: string; code?: string }[] = [
   { icon: <IKey />, who: 'you', title: 'Ask for the user’s address', body: 'Your backend calls `POST /v1/deposit-accounts` with your own user id as `customer_ref` and the token. The first call creates the account (201); every later call returns the same address (200).', code: 'POST /v1/deposit-accounts' },
-  { icon: <IWallet />, who: 'user', title: 'The user sends USDT', body: 'Any amount, any number of times, from any wallet or exchange that supports BEP-20. Show the network next to the address: BNB Smart Chain.' },
+  { icon: <IWallet />, who: 'user', title: 'The user sends USDT', body: 'Any amount, any number of times, from any wallet or exchange on the account’s network. Show the network next to the address: BNB Smart Chain (BEP-20), Ethereum (ERC-20) or Polygon PoS.' },
   { icon: <IActivity />, who: 'gateway', title: 'The transfer is detected', body: 'The watcher scans each block for `Transfer` logs of the exact token contract to your addresses. A missed block is rescanned from the cursor: an outage delays crediting, it never loses a payment.' },
   { icon: <IRefresh />, who: 'gateway', title: 'Confirmations and finality', body: 'The deposit waits until it is deep enough (15 blocks for USDT, more for large amounts) and at or below the chain’s finalized block. A reorg moves it back to `pending` and you get `invoice.pending`.' },
   { icon: <IDatabase />, who: 'gateway', title: 'Booked in one transaction', body: 'Invoice status, payment, ledger journal and the outgoing event are written in a single database transaction: they can never disagree. Database triggers reject unbalanced journals.' },
@@ -257,7 +257,7 @@ function Confirmations() {
           <article className="card spot reveal d1">
             <span className="ico-wrap violet"><IScale /></span>
             <h3>Exact amounts</h3>
-            <p>USDT on BSC has 18 decimals. Amounts are integers internally and decimal strings at the API: no float ever touches money.</p>
+            <p>USDT has 18 decimals on BNB Smart Chain and 6 on Ethereum and Polygon. Amounts are integers internally and decimal strings at the API: no float ever touches money.</p>
           </article>
           <article className="card spot reveal d2">
             <span className="ico-wrap red"><IShield /></span>

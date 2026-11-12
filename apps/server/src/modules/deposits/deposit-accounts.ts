@@ -11,7 +11,7 @@ import { chains, depositAccounts, depositAddresses, forwarderParams, invoices, m
 import type { Deps } from '../../deps.js';
 import { allocateDepositAddress } from '../custody/custody.js';
 import { currentPayoutAddress } from '../custody/payout-addresses.js';
-import { resolveToken, transitionInvoice, type InvoiceRow } from '../invoices/invoices.js';
+import { resolveReceivingToken, transitionInvoice, type InvoiceRow } from '../invoices/invoices.js';
 import { assertFeeBalance } from '../ledger/fee-balance.js';
 import { rowToChain } from '../registry/registry.js';
 
@@ -46,7 +46,9 @@ export async function openDepositAccount(
   tx: Tx,
   p: { merchantId: string; livemode: boolean; customerRef: string; tokenId: string },
 ): Promise<{ account: DepositAccountRow; created: boolean }> {
-  const { token, chain } = await resolveToken(tx, p.tokenId, p.livemode);
+  // Only the merchant's network (D-113): an existing account on another chain is no longer handed out (it is still
+  // watched and credited, so nothing sent to it is lost).
+  const { token, chain } = await resolveReceivingToken(tx, p.merchantId, p.tokenId, p.livemode);
   // One request per (user, token) at a time: two concurrent calls must not both allocate an address.
   await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`deposit-account:${p.merchantId}:${String(p.livemode)}:${p.customerRef}:${token.id}`}))`);
   const [m] = await tx.select({ mode: merchants.custodyMode, feeBps: merchants.feeBps, feeGrace: merchants.feeGrace }).from(merchants).where(eq(merchants.id, p.merchantId));

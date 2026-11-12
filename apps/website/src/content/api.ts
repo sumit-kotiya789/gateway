@@ -223,7 +223,7 @@ export const RESOURCES: Resource[] = [
   {
     id: 'chains-tokens',
     title: 'Chains & tokens',
-    intro: ['What a key can use. Test keys see testnets only, live keys mainnets only. A token id is `<chain>:<token>`, e.g. `bsc:usdt` or `bsc-testnet:usdt`.'],
+    intro: ['What a key can use. Test keys see testnets only, live keys mainnets only. A token id is `<chain>:<token>`, e.g. `bsc:usdt`, `eth:usdt`, `polygon:usdt` or `bsc-testnet:usdt`. An account can limit itself to one network (dashboard, Settings > Network): these lists then show only what it can receive on, and other tokens are refused with `validation_error`.'],
     endpoints: [
       {
         id: 'chains-list',
@@ -248,7 +248,7 @@ export const RESOURCES: Resource[] = [
         curl: curl('GET', '/v1/tokens'),
         status: '200 OK',
         response: j({ data: [{ id: 'bsc-testnet:usdt', chain_id: 'bsc-testnet', symbol: 'sastaUSDT', name: 'sastaUSDT (BSC testnet mock)', contract_address: '0x6a1F0c2B9e8D4a3C7b5E1f0D9c8B7a6E5d4C3b2A', decimals: 18, min_amount: '0.01', min_confirmations: 15 }] }),
-        notes: ['USDT on BNB Smart Chain has **18 decimals** (not 6 as on Ethereum or Tron).'],
+        notes: ['USDT on BNB Smart Chain has **18 decimals**; on Ethereum (`eth:usdt`) and Polygon PoS (`polygon:usdt`) it has **6**.'],
       },
     ],
   },
@@ -516,25 +516,8 @@ export const RESOURCES: Resource[] = [
   {
     id: 'withdrawals',
     title: 'Withdrawals',
-    intro: ['Your own balance to your current payout address (custody on). Held at once, then approved by the platform: large amounts need two different admins. Events: `withdrawal.<status>`.'],
+    intro: ['Your own balance to one of your payout wallets (custody on). Requested in the dashboard only (Withdrawals > Self withdrawal, owner or finance + 2FA), never with an API key; the API reads them. Held at once, then approved by the platform: large amounts need two different admins. Events: `withdrawal.<status>`. To send money to any address from your app, use payouts.'],
     endpoints: [
-      {
-        id: 'withdrawals-create',
-        method: 'POST',
-        path: '/v1/withdrawals',
-        title: 'Create a withdrawal',
-        auth: 'withdrawals:write',
-        desc: ['Requests a withdrawal of `amount` to your payout address. Send an `Idempotency-Key`.'],
-        body: [
-          { name: 'token', type: 'string', req: true, desc: 'Token id.' },
-          { name: 'amount', type: 'decimal string', req: true, desc: 'At most your `available` balance.' },
-        ],
-        returns: 'The withdrawal (`201`), `pending_approval`.',
-        curl: curl('POST', '/v1/withdrawals', { idem: 'wd-2026-11-09', body: { token: 'bsc-testnet:usdt', amount: '1000' } }),
-        status: '201 Created',
-        response: j(withdrawal),
-        notes: ['Statuses: `pending_approval`, `approved`, `sent`, `confirmed`, `failed`, `rejected`, `cancelled`.'],
-      },
       {
         id: 'withdrawals-retrieve',
         method: 'GET',

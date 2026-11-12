@@ -18,5 +18,7 @@ describe('resolveRpcUrls', () => {
 
   it('drops non-http(s)/ws(s) results', () => {
     expect(resolveRpcUrls(['${U}'], { U: 'file:///etc/passwd' }).urls).toEqual([]);
+    // The same provider twice is one provider (confirmation quorum, D-112).
+    expect(resolveRpcUrls(['${P}', 'https://public.example', 'https://other.example'], { P: 'https://public.example' }).urls).toEqual(['https://public.example', 'https://other.example']);
   });
 });

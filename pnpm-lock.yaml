@@ -38,6 +38,9 @@ importers:
       '@fontsource/poppins':
         specifier: 5.3.0
         version: 5.3.0
+      '@gw/networks':
+        specifier: workspace:*
+        version: link:../../packages/networks
       react:
         specifier: 19.3.1
         version: 19.3.1
@@ -60,6 +63,9 @@ importers:
       '@fontsource/poppins':
         specifier: 5.3.0
         version: 5.3.0
+      '@gw/networks':
+        specifier: workspace:*
+        version: link:../../packages/networks
       react:
         specifier: 19.3.1
         version: 19.3.1
@@ -110,6 +116,9 @@ importers:
       '@gw/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@gw/networks':
+        specifier: workspace:*
+        version: link:../../packages/networks
       bullmq:
         specifier: 6.5.3
         version: 6.5.3(ioredis@6.0.0)(pg@8.23.1)
@@ -223,6 +232,9 @@ importers:
       '@fontsource-variable/space-grotesk':
         specifier: 5.3.0
         version: 5.3.0
+      '@gw/networks':
+        specifier: workspace:*
+        version: link:../../packages/networks
       react:
         specifier: 19.3.1
         version: 19.3.1
@@ -279,6 +291,8 @@ importers:
       '@types/node':
         specifier: 22.20.5
         version: 22.20.5
+
+  packages/networks: {}
 
   packages/sdk-node:
     devDependencies:

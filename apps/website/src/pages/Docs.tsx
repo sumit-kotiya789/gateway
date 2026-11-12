@@ -90,7 +90,7 @@ export function Docs() {
           <div><span>Token id</span><b><code>bsc-testnet:usdt</code></b></div>
           <div><span>Token</span><b>A test USDT (BEP-20, 18 decimals)</b></div>
           <div><span>Gas</span><b>tBNB from the BNB Chain testnet faucet</b></div>
-          <div><span>Live token id</span><b><code>bsc:usdt</code> (BNB Smart Chain, chain id 56)</b></div>
+          <div><span>Live token ids</span><b><code>bsc:usdt</code> (BNB Smart Chain, BEP-20, 18 decimals), <code>eth:usdt</code> (Ethereum, ERC-20, 6 decimals), <code>polygon:usdt</code> (Polygon PoS, 6 decimals)</b></div>
         </div>
         <p>
           List what your key can use with <code>GET /v1/tokens</code>: each token has its <code>min_amount</code> and <code>min_confirmations</code>.
@@ -115,8 +115,7 @@ export function Docs() {
             <tbody>
               <tr><td><code>read</code></td><td>Retrieve and list everything: invoices, deposit accounts, payouts, balances, events, exports.</td></tr>
               <tr><td><code>invoices:write</code></td><td>Deposit accounts, invoices, payment links, sub-merchants.</td></tr>
-              <tr><td><code>payouts:write</code></td><td>Payouts to your users (custody on).</td></tr>
-              <tr><td><code>withdrawals:write</code></td><td>Withdrawals of your balance to your payout address (custody on).</td></tr>
+              <tr><td><code>payouts:write</code></td><td>Payouts to your users at any address (custody on). Withdrawing your own balance is done in the dashboard only.</td></tr>
             </tbody>
           </table>
         </div>
@@ -133,7 +132,7 @@ export function Docs() {
         <ul className="doc-list">
           <li><code>201</code> the first time, <code>200</code> with the same address afterwards. Calling it on every page view is fine.</li>
           <li><code>customer_ref</code> is your own user id (1–200 characters). Use something stable and not personal, like an internal id.</li>
-          <li>Show the address with its network: <strong>BNB Smart Chain (BEP-20)</strong>. Tokens sent on another network do not arrive.</li>
+          <li>Show the address with its network: <strong>BNB Smart Chain (BEP-20)</strong>, <strong>Ethereum (ERC-20)</strong> or <strong>Polygon PoS</strong>. Tokens sent on another network do not arrive.</li>
           <li>If you change your payout wallet (forwarder) or custody mode, old accounts are retired and the next call issues a new address.</li>
         </ul>
       </section>
@@ -287,7 +286,7 @@ try {
             'Create live keys with only the scopes you need; store them in your secret manager.',
             'Add a live webhook endpoint and verify signatures with the live secret.',
             'Custody on: set one-time and daily limits for every token you pay out.',
-            'Switch the token id from bsc-testnet:usdt to bsc:usdt and show "BNB Smart Chain (BEP-20)" next to addresses.',
+            'Switch the token id from bsc-testnet:usdt to a live one (bsc:usdt, eth:usdt or polygon:usdt) and show its network ("BNB Smart Chain (BEP-20)", "Ethereum (ERC-20)", "Polygon PoS") next to addresses.',
             'Credit exactly once by invoice id, and refund users on payout.failed.',
             'Invite your team with the least role they need, all with 2FA.',
           ].map((t) => (

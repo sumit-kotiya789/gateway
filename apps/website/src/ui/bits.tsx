@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from 'react';
 import { IAlert, IChevron, IInfo, IShield } from './icons';
+import { NETWORKS, logoUri } from '@gw/networks';
 
 /** Inline formatting for content strings: `code`, **bold**, [label](href). */
 export function Rich(props: { text: string }) {
@@ -37,6 +38,31 @@ export function Callout(props: { kind?: 'info' | 'warn' | 'danger' | 'ok'; child
       <div>{props.children}</div>
     </div>
   );
+}
+
+/** Mainnets where USDT is accepted (D-112), in the order shown. */
+export const LIVE_NETWORKS = ['bsc', 'eth', 'polygon'] as const;
+
+/** The supported networks by official logo and name: "[logo] BNB Smart Chain [logo] Ethereum [logo] Polygon PoS". */
+export function Networks(props: { names?: boolean; className?: string }) {
+  return (
+    <span className={`networks${props.className ? ` ${props.className}` : ''}`}>
+      {LIVE_NETWORKS.map((id) => {
+        const n = NETWORKS[id];
+        return n ? (
+          <span key={id} className="network" title={`USDT on ${n.name} (${n.tag})`}>
+            <img src={logoUri(n.logo)} alt={props.names === false ? n.name : ''} width={16} height={16} />
+            {props.names !== false && <span>{n.name}</span>}
+          </span>
+        ) : null;
+      })}
+    </span>
+  );
+}
+
+/** The USDT mark (official Tether logo). */
+export function UsdtMark() {
+  return <img className="usdt-mark" src={logoUri('USDT')} alt="" width={16} height={16} />;
 }
 
 export interface Qa { q: string; a: string }

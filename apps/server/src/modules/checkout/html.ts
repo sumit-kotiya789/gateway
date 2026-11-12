@@ -128,8 +128,16 @@ background:linear-gradient(135deg,#7dff9b,#0d7f2a);box-shadow:0 8px 24px -8px rg
 h1{font-size:17px;font-weight:600;margin:0;letter-spacing:-.01em}
 .merchant .muted{font-size:13px}
 .label{font-size:11.5px;letter-spacing:.09em;text-transform:uppercase;color:var(--muted)}
-.amount{font-size:34px;font-weight:700;letter-spacing:-.02em;margin:2px 0 16px;font-variant-numeric:tabular-nums;
-background:linear-gradient(90deg,#fff,#b8ffc8);-webkit-background-clip:text;background-clip:text;color:transparent}
+.amount{display:flex;align-items:center;flex-wrap:wrap;gap:4px 12px;font-size:34px;font-weight:700;letter-spacing:-.02em;margin:2px 0 16px;
+font-variant-numeric:tabular-nums}
+.amount .figure{background:linear-gradient(90deg,#fff,#b8ffc8);-webkit-background-clip:text;background-clip:text;color:transparent}
+.asset{display:inline-flex;align-items:center;gap:9px;color:var(--fg)}
+.ticon{position:relative;display:inline-block;flex:none;width:30px;height:30px}
+.ticon img{display:block;width:30px;height:30px;border-radius:50%;box-shadow:0 0 0 1px rgba(255,255,255,.12)}
+.ticon img.tbadge{position:absolute;right:-4px;bottom:-4px;width:15px;height:15px;box-shadow:0 0 0 2px var(--card)}
+.net{display:inline-flex;align-items:center;gap:7px}
+.net img{width:18px;height:18px;border-radius:50%;flex:none;box-shadow:0 0 0 1px rgba(255,255,255,.12)}
+.net small{font-size:11px;font-weight:500;color:var(--fg2);border:1px solid var(--line2);border-radius:999px;padding:0 7px;line-height:1.6}
 .facts{border:1px solid var(--line);border-radius:16px;padding:2px 14px;background:rgba(255,255,255,.015)}
 .row{display:flex;justify-content:space-between;align-items:center;gap:12px;font-size:14px;padding:9px 0}
 .facts .row+.row{border-top:1px solid var(--line)}
@@ -164,7 +172,7 @@ a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
 .desc{color:var(--fg2);margin:0 0 4px}
 .foot{display:flex;align-items:center;justify-content:center;gap:8px;margin-top:18px;font-size:12px;color:var(--muted)}
 .foot svg{width:16px;height:16px}
-@media (max-width:420px){main{padding:16px 12px}.card{padding:20px 18px;border-radius:20px}.amount{font-size:28px}}
+@media (max-width:420px){main{padding:16px 12px}.card{padding:20px 18px;border-radius:20px}.amount{font-size:28px}.ticon,.ticon img{width:26px;height:26px}}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 `;
 

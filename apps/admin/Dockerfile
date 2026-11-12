@@ -4,9 +4,12 @@ FROM node:24-alpine@sha256:a34ab6d7f6f4813f4d0c5469d74685604b962fbdbf5793a7bc7b4
 WORKDIR /src
 RUN corepack enable
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc tsconfig.base.json ./
+# Workspace packages the app imports (official network names and logos, D-112).
+COPY packages/networks/package.json packages/networks/
 COPY apps/admin/package.json apps/admin/
 RUN pnpm install --frozen-lockfile --filter @gw/admin
 COPY apps/admin apps/admin
+COPY packages/networks packages/networks
 # Shared UI kit and styles (React resolves from apps/admin, see vite.config.ts).
 COPY apps/dashboard/src apps/dashboard/src
 RUN pnpm --filter @gw/admin build

@@ -57,6 +57,27 @@ describe('merchant sign-ups and new-merchant defaults', () => {
   });
 });
 
+describe('default network (D-113)', () => {
+  it('new merchants start on the default network; a mainnet only; null = every network', async () => {
+    const md = { fee_bps: 100, fee_fixed: '0', fee_grace: '0', payout_fee: '0', underpay_tolerance_bps: 50 };
+    const merchant = async (id: string) => (await sa.agent.req('GET', `${B}/merchants/${id}`)).json<{ network: string | null }>().network;
+    expect((await put({ merchant_defaults: { ...md, network: 'evm-local' } })).statusCode).toBe(400); // a testnet
+    expect((await put({ merchant_defaults: { ...md, network: 'nope' } })).statusCode).toBe(400);
+    try {
+      expect((await put({ merchant_defaults: { ...md, network: 'evm-mainsim' } })).json()).toMatchObject({ merchant_defaults: { network: 'evm-mainsim' } });
+      // Saving the other defaults without `network` keeps it.
+      expect((await put({ merchant_defaults: md })).json()).toMatchObject({ merchant_defaults: { network: 'evm-mainsim' } });
+      expect(await merchant((await signup(app)).merchantId)).toBe('evm-mainsim');
+      // A default naming a chain that is not registered (a fresh database before seeding): every network, never a failed signup.
+      await owner.query(`update admin_settings set default_network = 'not-seeded'`);
+      expect(await merchant((await signup(app)).merchantId)).toBeNull();
+    } finally {
+      await put({ merchant_defaults: { ...md, network: null } });
+    }
+    expect(await merchant((await signup(app)).merchantId)).toBeNull();
+  });
+});
+
 describe('admin IP allowlist', () => {
   it('enforced on every admin route when on (404 elsewhere, even login); never locks out the admin switching it on', async () => {
     const outside = { 'x-forwarded-for': '198.51.100.7' };

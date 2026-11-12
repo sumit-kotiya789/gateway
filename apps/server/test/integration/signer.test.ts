@@ -175,6 +175,11 @@ describe('signer', () => {
 
     chain.gasPrice = 50n * GWEI;
     await expect(signer.sign({ kind: 'gas_topup', id: d.sweepId })).rejects.toEqual(refusal('gas_price_too_high'));
+    // Per-chain ceilings (D-112): another chain's override does not apply; this chain's own one does, field by field.
+    await expect(makeSigner({ SIGNER_GAS_LIMITS: '{"polygon":{"max_gas_price_gwei":"1000"}}' }).sign({ kind: 'gas_topup', id: d.sweepId })).rejects.toEqual(refusal('gas_price_too_high'));
+    await expect(
+      makeSigner({ SIGNER_GAS_LIMITS: '{"evm-local":{"max_gas_price_gwei":"100","max_gas_topup":"0.0000001"}}' }).sign({ kind: 'gas_topup', id: d.sweepId }),
+    ).rejects.toEqual(refusal('over_limit'));
     chain.gasPrice = 3n * GWEI;
     chain.wrongChain = true;
     await expect(signer.sign({ kind: 'gas_topup', id: d.sweepId })).rejects.toEqual(refusal('rpc_wrong_chain'));

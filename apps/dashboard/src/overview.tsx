@@ -2,6 +2,7 @@
 // previous period, an interactive volume chart, status mix, payment funnel, API traffic and the security posture.
 import { useState } from 'react';
 import { api, type Me, type Overview as OverviewData } from './api';
+import { Amount } from './asset';
 import { AreaChart, Bars, CountUp, Donut, Ring, Sparkline, type Tone } from './charts';
 import { ago, dayLabel, delta, fmt1, fmtAmount, fmtCompact, fmtPct } from './format';
 import { ErrorBox, Icon, Skeleton, StatusBadge, useLoad, type IconName } from './ui';
@@ -54,7 +55,7 @@ function Posture(props: { s: OverviewData['security']; livemode: boolean }) {
     { ok: s.totp, weight: 25, label: 'Two-factor authentication', hint: s.totp ? 'On for your account' : 'Turn it on: needed for keys, payouts and team changes', href: '#/settings/security' },
     { ok: s.team_members > 0 && s.team_with_2fa === s.team_members, weight: 15, label: 'Team 2FA', hint: `${String(s.team_with_2fa)} of ${String(s.team_members)} members`, href: '#/settings/team' },
     { ok: s.email_verified, weight: 10, label: 'Email verified', hint: s.email_verified ? 'Live mode unlocked' : 'Needed for live mode', href: '#/settings/security' },
-    { ok: s.address_whitelist, weight: 20, label: 'Payout address whitelist', hint: s.address_whitelist ? `On in ${props.livemode ? 'live' : 'test'} mode` : 'Payouts can go to any address', href: '#/settings/whitelist-addresses' },
+    { ok: s.address_whitelist, weight: 20, label: 'Payout address whitelist', hint: s.address_whitelist ? 'On: payouts only to listed addresses' : 'Payouts can go to any address', href: '#/settings/whitelist-addresses' },
     { ok: s.ip_whitelist, weight: 20, label: 'API IP whitelist', hint: s.ip_whitelist ? 'Secret keys locked to your servers' : 'Secret keys work from any IP', href: '#/settings/whitelist-ips' },
     { ok: s.webhooks > 0, weight: 10, label: 'Webhooks', hint: s.webhooks > 0 ? `${String(s.webhooks)} endpoint${s.webhooks === 1 ? '' : 's'}` : 'Get told when invoices are paid', href: '#/webhooks' },
   ];
@@ -101,7 +102,7 @@ export function Overview(props: { livemode: boolean; me: Me }) {
       <div>
         <div className="eyebrow">{greeting()}</div>
         <h2>{props.me.merchant.name}</h2>
-        <p className="muted">Your {props.livemode ? 'live' : 'test'} payments over the last {days} days.</p>
+        <p className="muted">Your payments over the last {days} days.</p>
       </div>
       <div className="hero-actions">
         <a className="btn secondary sm" href="#/invoices"><Icon name="invoice" size={15} />Invoices</a>
@@ -156,7 +157,7 @@ export function Overview(props: { livemode: boolean; me: Me }) {
           <header className="panel-head">
             <div>
               <h3>{metric === 'volume' ? 'Payment volume' : 'Payments and invoices'}</h3>
-              <span className="muted">{metric === 'volume' ? `${sym} received per day, by invoice date` : 'Paid against created, per day'}</span>
+              <span className="muted">{metric === 'volume' ? `${sym} received per day on every network, by invoice date` : 'Paid against created, per day'}</span>
             </div>
             <div className="row">
               {metric === 'volume' && symbols.length > 1 && (
@@ -175,7 +176,7 @@ export function Overview(props: { livemode: boolean; me: Me }) {
             labels={labels}
             height={260}
             format={metric === 'volume' ? fmtCompact : (v) => String(Math.round(v))}
-            empty={`No ${props.livemode ? 'live' : 'test'} payments in this period yet`}
+            empty="No payments in this period yet"
             series={
               metric === 'volume'
                 ? [{ key: 'v', label: sym, tone: 'accent', values: daily }]
@@ -253,8 +254,8 @@ export function Overview(props: { livemode: boolean; me: Me }) {
                     <td><a href={`#/invoices/${i.id}`}>{ago(i.created_at)}</a></td>
                     <td>{i.order_id ?? <span className="muted">—</span>}</td>
                     <td><StatusBadge status={i.status} /></td>
-                    <td className="num">{i.amount} {i.symbol}</td>
-                    <td className="num">{i.amount_received} {i.symbol}</td>
+                    <td className="num"><Amount value={i.amount} token={i.token} symbol={i.symbol} /></td>
+                    <td className="num"><Amount value={i.amount_received} token={i.token} symbol={i.symbol} tag={false} /></td>
                   </tr>
                 ))}
               </tbody>

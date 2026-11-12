@@ -11,7 +11,7 @@ import { invoices, paymentLinks, tokens } from '../../db/schema.js';
 import type { Deps } from '../../deps.js';
 import { requireApiKey } from '../api-keys/api-keys.js';
 import { STRINGS, html, sendPage } from '../checkout/html.js';
-import { EXPIRY_S, createInvoice, parseInvoiceAmount, resolveToken } from '../invoices/invoices.js';
+import { EXPIRY_S, createInvoice, merchantNetwork, parseInvoiceAmount, resolveReceivingToken } from '../invoices/invoices.js';
 import { Metadata, TokenId, idempotencyKeyOf, redirectUrl, sendStored } from '../invoices/invoices.routes.js';
 
 export const PAY_RATE_LIMIT = { max: 5, timeWindow: '10 minutes' } as const;
@@ -70,7 +70,7 @@ export function paymentLinkRoutes(deps: Deps): FastifyPluginAsyncZod {
       if (!k) throw new AppError('unauthorized', 'API key required');
       const b = req.body;
       const res = await withIdempotency(deps, k, idempotencyKeyOf(req), requestHash('POST', '/v1/payment-links', b), async (tx) => {
-        const { token } = await resolveToken(tx, b.token, k.livemode);
+        const { token } = await resolveReceivingToken(tx, k.merchantId, b.token, k.livemode);
         const [l] = await tx
           .insert(paymentLinks)
           .values({
@@ -179,10 +179,13 @@ export function publicPayRoutes(deps: Deps): FastifyPluginAsyncZod {
 
   const loadPublic = async (id: string) => {
     if (!z.uuid().safeParse(id).success) return undefined;
-    const [r] = await withSystem(deps.db, (tx) =>
-      tx.select({ link: paymentLinks, token: tokens }).from(paymentLinks).innerJoin(tokens, eq(tokens.id, paymentLinks.tokenId)).where(eq(paymentLinks.id, id)),
-    );
-    return r;
+    return withSystem(deps.db, async (tx) => {
+      const [r] = await tx.select({ link: paymentLinks, token: tokens }).from(paymentLinks).innerJoin(tokens, eq(tokens.id, paymentLinks.tokenId)).where(eq(paymentLinks.id, id));
+      if (!r) return undefined;
+      // A link on a chain outside the merchant's network (D-113) no longer takes payments: shown as inactive.
+      const net = await merchantNetwork(tx, r.link.merchantId, r.link.livemode);
+      return { ...r, usable: r.link.active && (!net || net.id === r.token.chainId) };
+    });
   };
 
   const notAvailable = (reply: Parameters<typeof sendPage>[0], msg: string, status: number) =>
@@ -196,7 +199,7 @@ export function publicPayRoutes(deps: Deps): FastifyPluginAsyncZod {
 
     app.get('/pay/:id', { config: { rateLimit: { max: 60, timeWindow: '1 minute' } }, schema: { params: Params, hide: true } }, async (req, reply) => {
       const r = await loadPublic(req.params.id);
-      if (!r?.link.active) return notAvailable(reply, S.linkInactive, 404);
+      if (!r?.usable) return notAvailable(reply, S.linkInactive, 404);
       return sendPage(reply, {
         title: S.pay,
         body: () => html`<div class="card">
@@ -211,7 +214,7 @@ export function publicPayRoutes(deps: Deps): FastifyPluginAsyncZod {
 
     app.post('/pay/:id', { config: { rateLimit: PAY_RATE_LIMIT }, schema: { params: Params, hide: true } }, async (req, reply) => {
       const r = await loadPublic(req.params.id);
-      if (!r?.link.active) return notAvailable(reply, S.linkInactive, 404);
+      if (!r?.usable) return notAvailable(reply, S.linkInactive, 404);
       const link = r.link;
       const invoiceId = await withTenant(deps.db, link.merchantId, async (tx) => {
         // Lock the link row: the pending-count check and the insert are atomic per link.

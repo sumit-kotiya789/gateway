@@ -87,7 +87,7 @@ describe('custody on / off, chosen by the merchant (D-098)', () => {
   });
 
   it('custody off on the platform: custody cannot be turned on, and withdrawals can be neither requested nor approved', async () => {
-    const m = await merchantWithKey(off.app, off.clock, owner, { scopes: ['read', 'withdrawals:write'] });
+    const m = await merchantWithKey(off.app, off.clock, owner, { scopes: ['read'] });
     expect((await m.agent.req('GET', '/v1/dashboard/settings/')).json()).toMatchObject({ custodial_available: false });
     const refused = await setMode(off, m, 'custodial');
     expect(refused.statusCode).toBe(403);
@@ -100,9 +100,6 @@ describe('custody on / off, chosen by the merchant (D-098)', () => {
     const dash = await m.agent.req('POST', '/v1/dashboard/withdrawals/', { livemode: false, token: 'evm-local:usdt', amount: '1' }, code(off, m));
     expect(dash.statusCode).toBe(403);
     expect(dash.json().error.details.reason).toBe('custody_off');
-    const viaApi = await m.api('POST', '/v1/withdrawals', { token: 'evm-local:usdt', amount: '1' });
-    expect(viaApi.statusCode).toBe(403);
-    expect(viaApi.json().error.details.reason).toBe('custody_off');
     const admin = await adminAgent(off, owner);
     const approve = await admin.agent.req('POST', `/admin/v1/withdrawals/${crypto.randomUUID()}/approve`, { reason: 'looks fine' }, admin.stepUp());
     expect(approve.statusCode).toBe(403);

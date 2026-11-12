@@ -4,9 +4,12 @@ FROM node:24-alpine@sha256:a34ab6d7f6f4813f4d0c5469d74685604b962fbdbf5793a7bc7b4
 WORKDIR /src
 RUN corepack enable
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc tsconfig.base.json ./
+# Workspace packages the app imports (official network names and logos, D-112).
+COPY packages/networks/package.json packages/networks/
 COPY apps/website/package.json apps/website/
 RUN pnpm install --frozen-lockfile --filter @gw/website
 COPY apps/website apps/website
+COPY packages/networks packages/networks
 ARG VITE_DASHBOARD_URL=http://localhost:8080
 ARG VITE_DEMO_URL=http://localhost:8083
 ENV VITE_DASHBOARD_URL=$VITE_DASHBOARD_URL VITE_DEMO_URL=$VITE_DEMO_URL

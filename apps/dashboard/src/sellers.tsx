@@ -1,6 +1,7 @@
 // Marketplace sellers (M9, D-095): sub-accounts whose invoices pay into this merchant's wallet.
 import { useState } from 'react';
 import { api } from './api';
+import { Amount } from './asset';
 import { EmptyState, ErrorBox, Field, Icon, Skeleton, StatusBadge, Submit, fmtDate, toast, useAction, useLoad } from './ui';
 
 export interface Seller {
@@ -42,7 +43,7 @@ function Totals(props: { id: string; livemode: boolean }) {
   return totals.length === 0 ? (
     <span className="muted">No paid invoices yet</span>
   ) : (
-    <>{totals.map((t) => <div key={t.token} className="num">{t.received} {t.symbol} · {t.invoices} paid</div>)}</>
+    <>{totals.map((t) => <div key={t.token} className="num"><Amount value={t.received} token={t.token} symbol={t.symbol} /> · {t.invoices} paid</div>)}</>
   );
 }
 
@@ -74,7 +75,7 @@ export function Sellers(props: { livemode: boolean; canWrite: boolean }) {
             });
           }}
         >
-          <h3>Add {props.livemode ? 'live' : 'test'} seller</h3>
+          <h3>Add seller</h3>
           <div className="grid">
             <Field label="Name"><input value={form.name} onChange={(e) => { setForm({ ...form, name: e.target.value }); }} maxLength={200} required /></Field>
             <Field label="Your reference (optional)"><input value={form.reference} onChange={(e) => { setForm({ ...form, reference: e.target.value }); }} maxLength={200} /></Field>

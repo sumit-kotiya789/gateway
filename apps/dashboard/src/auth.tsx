@@ -148,7 +148,7 @@ function Signup(props: { onDone: () => void; onBack: () => void }) {
       }}
     >
       <h1>Create your account</h1>
-      <p className="lede">Start in test mode right away. Live mode needs a confirmed email.</p>
+      <p className="lede">Confirm your email after sign-up to start accepting USDT payments.</p>
       <Field label="Business name">
         <input value={form.merchant_name} onChange={set('merchant_name')} maxLength={200} placeholder="Acme Store" autoFocus required />
       </Field>

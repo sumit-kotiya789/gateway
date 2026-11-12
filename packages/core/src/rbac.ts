@@ -29,7 +29,9 @@ export function roleCan(role: MerchantRole, permission: MerchantPermission): boo
 }
 
 /** Scopes for secret keys. Publishable keys always carry exactly ['checkout']. */
-export const SECRET_KEY_SCOPES = ['read', 'invoices:write', 'refunds:write', 'withdrawals:write', 'payouts:write', 'webhooks:write'] as const;
+// No `withdrawals:write` (D-114): a merchant's own withdrawal is requested in the dashboard only. Older keys may still
+// carry it; nothing accepts it any more.
+export const SECRET_KEY_SCOPES = ['read', 'invoices:write', 'refunds:write', 'payouts:write', 'webhooks:write'] as const;
 export const PUBLISHABLE_KEY_SCOPES = ['checkout'] as const;
 export type ApiKeyScope = (typeof SECRET_KEY_SCOPES)[number] | (typeof PUBLISHABLE_KEY_SCOPES)[number];
 

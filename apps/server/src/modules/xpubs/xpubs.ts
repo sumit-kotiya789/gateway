@@ -274,6 +274,7 @@ export async function derivationReport(tx: Tx, x: XpubRow, offset: number, limit
       status: invoices.status,
       received: invoices.amountReceived,
       decimals: tokens.decimals,
+      token: tokens.id,
       symbol: tokens.symbol,
     })
     .from(depositAddresses)
@@ -294,6 +295,7 @@ export async function derivationReport(tx: Tx, x: XpubRow, offset: number, limit
       invoice_id: r.invoiceId,
       invoice_status: r.status,
       amount_received: r.received === null || r.decimals === null ? null : fromMinorUnits(r.received, r.decimals),
+      token: r.token,
       symbol: r.symbol,
     })),
   };

@@ -15,7 +15,7 @@ import { notifyOwners } from '../email/outbox.js';
 import { templates } from '../email/templates.js';
 import { resolveToken } from '../invoices/invoices.js';
 import { holdWithdrawal, releaseWithdrawal } from '../ledger/ledger.js';
-import { currentPayoutAddress } from '../custody/payout-addresses.js';
+import { activePayoutAddress, currentPayoutAddress } from '../custody/payout-addresses.js';
 import { effectiveTwoPersonMin, readAdminSettings } from '../admin/settings.js';
 import { assertPayoutWhitelisted } from '../security/whitelist.js';
 
@@ -77,14 +77,18 @@ export async function addPayoutAddress(
   return row;
 }
 
-/** Cancels a payout address that is not active yet (the current one keeps serving). */
+/**
+ * Cancels a pending payout address, or removes an active one (D-114): it can no longer be picked for a withdrawal, and
+ * a withdrawal to it that is not sent yet is refused by the signer (and released). Removing is immediate: it only
+ * narrows where money can go. Forwarders already created keep paying the address committed in their contract.
+ */
 export async function cancelPayoutAddress(tx: Tx, merchantId: string, id: string): Promise<PayoutRow> {
   const [row] = await tx
     .update(payoutAddresses)
     .set({ cancelledAt: sql`now()` })
-    .where(and(eq(payoutAddresses.id, id), eq(payoutAddresses.merchantId, merchantId), isNull(payoutAddresses.cancelledAt), sql`${payoutAddresses.activatesAt} > now()`))
+    .where(and(eq(payoutAddresses.id, id), eq(payoutAddresses.merchantId, merchantId), isNull(payoutAddresses.cancelledAt)))
     .returning();
-  if (!row) throw new AppError('conflict', 'only a payout address that is not active yet can be cancelled');
+  if (!row) throw new AppError('conflict', 'this payout address is already removed');
   return row;
 }
 
@@ -150,7 +154,8 @@ async function assertWithinLimits(tx: Tx, p: { merchantId: string; livemode: boo
 export async function requestWithdrawal(
   deps: Deps,
   tx: Tx,
-  p: { merchantId: string; livemode: boolean; tokenId: string; amount: string; requestedBy: string },
+  /** payoutAddressId: which saved wallet (D-114); omitted = the current one. */
+  p: { merchantId: string; livemode: boolean; tokenId: string; amount: string; requestedBy: string; payoutAddressId?: string | undefined },
 ): Promise<WithdrawalRow> {
   assertCustodyOn(deps);
   // The merchant row lock serializes this merchant's withdrawals: two requests cannot both spend the same balance.
@@ -160,8 +165,14 @@ export async function requestWithdrawal(
   const { token, chain } = await resolveToken(tx, p.tokenId, p.livemode);
   const amount = toMinorUnits(p.amount, token.decimals);
   if (amount <= 0n) throw new AppError('invalid_amount', 'amount must be greater than zero');
-  const to = await currentPayoutAddress(tx, p.merchantId, p.livemode, chain.family);
-  if (!to) throw new AppError('conflict', `no active ${p.livemode ? 'live' : 'test'} payout address`, { reason: 'no_payout_address' });
+  const to = p.payoutAddressId
+    ? await activePayoutAddress(tx, p.merchantId, p.livemode, chain.family, p.payoutAddressId)
+    : await currentPayoutAddress(tx, p.merchantId, p.livemode, chain.family);
+  if (!to) {
+    throw p.payoutAddressId
+      ? new AppError('conflict', 'payout_address_id is not one of your active payout wallets in this mode', { reason: 'payout_address_inactive', field: 'payout_address_id' })
+      : new AppError('conflict', `no active ${p.livemode ? 'live' : 'test'} payout address`, { reason: 'no_payout_address' });
+  }
   const available = await availableBalance(tx, p.merchantId, p.livemode, token.id);
   if (amount > available) {
     throw new AppError('conflict', `amount exceeds the available balance (${fromMinorUnits(available, token.decimals)} ${token.symbol})`, { reason: 'insufficient_balance' });
@@ -377,10 +388,14 @@ export async function listPayoutAddresses(tx: Tx, merchantId: string, livemode: 
     .orderBy(desc(payoutAddresses.createdAt))
     .limit(50);
   const current = (await currentPayoutAddress(tx, merchantId, livemode, 'evm'))?.id ?? null;
-  return rows.map(({ a, active }) => payoutAddressView(a, a.cancelledAt ? 'cancelled' : a.id === current ? 'current' : active ? 'superseded' : 'pending'));
+  return rows.map(({ a, active }) => payoutAddressView(a, a.cancelledAt ? 'cancelled' : a.id === current ? 'current' : active ? 'active' : 'pending'));
 }
 
-export function payoutAddressView(a: PayoutRow, status: 'current' | 'pending' | 'superseded' | 'cancelled') {
+/**
+ * current: the newest active wallet (forwarders pay it, D-097; the default for withdrawals); active: an older wallet,
+ * still usable for a self withdrawal (D-114); pending: waiting out its 24 h; cancelled: removed.
+ */
+export function payoutAddressView(a: PayoutRow, status: 'current' | 'active' | 'pending' | 'cancelled') {
   return {
     id: a.id,
     livemode: a.livemode,

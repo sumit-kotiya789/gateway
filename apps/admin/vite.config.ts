@@ -5,6 +5,6 @@ import { defineConfig } from 'vite';
 export default defineConfig({
   base: '/admin/',
   // UI kit and styles come from the dashboard sources; resolve React from this app so there is one copy.
-  resolve: { dedupe: ['react', 'react-dom'] },
+  resolve: { dedupe: ['react', 'react-dom', '@gw/networks'] },
   server: { port: 5174, strictPort: true, proxy: { '/admin/v1': 'http://localhost:3000' } },
 });

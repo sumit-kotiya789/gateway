@@ -40,7 +40,7 @@ OpenAPI 3.1 is generated from route schemas and served at `GET /v1/openapi.json`
 
 | Surface | Credential | Notes |
 |---|---|---|
-| Merchant API `/v1/*` | `Authorization: Bearer sk_live_…` / `sk_test_…` | Scopes: `read`, `invoices:write`, `refunds:write`, `withdrawals:write`, `webhooks:write`. Optional IP allowlist and expiry. |
+| Merchant API `/v1/*` | `Authorization: Bearer sk_live_…` / `sk_test_…` | Scopes: `read`, `invoices:write`, `refunds:write`, `payouts:write`, `webhooks:write` (no `withdrawals:write` since D-114: self withdrawals are dashboard-only). Optional IP allowlist and expiry. |
 | Widget | `pk_live_…` / `pk_test_…` | Scope `checkout` only. |
 | Dashboard `/v1/dashboard/*` | `gw_at` cookie (10-min JWT) + `gw_rt` refresh cookie | State-changing requests need `x-csrf-token` = `gw_csrf` cookie, and an allowlisted `Origin`. |
 | Admin `/admin/v1/*` | `gw_admin_at` cookie (sliding JWT: renewed on every request, ends after the idle limit or the absolute limit from the console settings, D-106) | Password + TOTP on every login; `x-csrf-token` = `gw_admin_csrf`; optional IP allowlist. |
@@ -75,7 +75,6 @@ verified email (`403`, `details.reason = "email_unverified"`). `GET /auth/me` re
 | PATCH | `/v1/sub-merchants/:id` | API key | `invoices:write` (`name`, `active`, `metadata`) | M9 |
 | GET | `/v1/balances` | API key | `read` (per token: `received`, `fees_charged`, `fees_owed` (charged, not covered by top-ups), `prepaid_fees` (signed), `fee_status` ok / low / blocked / not_enforced; custodial: `pending` (not swept yet), `available` (withdrawable), `withdrawing`; top-level `custody_mode`; live keys also list every usable live token) | M5/M8/M7 |
 | GET | `/v1/events`, `/v1/events/:id` | API key | `read` (`limit`, `starting_after`, `type`; newest first) | M5 |
-| POST | `/v1/withdrawals` | API key | `withdrawals:write` (`token`, `amount`; custodial, and only while custody is on: else 403 `custody_off`; to the current payout address; Idempotency-Key; held at once) | M7 |
 | GET | `/v1/withdrawals`, `/v1/withdrawals/:id` | API key | `read` (the merchant's own withdrawals) | M7 |
 | POST | `/v1/payouts` | API key | `payouts:write` (`customer_ref`, `to_address` (EIP-55), `token`, `amount`; custody on; to one of your users: sent automatically within your withdrawal limits, which live mode requires (`limits_required`), refused above (`over_tx_limit`, `over_day_limit`); the flat payout fee is held with the amount (`insufficient_balance`); never to a gateway or blocked address (`bad_destination`); Idempotency-Key; events `payout.<status>`) | D-100 |
 | GET | `/v1/payouts`, `/v1/payouts/:id` | API key | `read` (`customer_ref` filter, `starting_after`, `limit`) | D-100 |

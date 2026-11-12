@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { api } from './api';
+import { Amount, Asset } from './asset';
 import { CopyField, EmptyState, ErrorBox, Field, Skeleton, StatusBadge, fmtDate, short, useLoad } from './ui';
 
 interface DepositAccount {
@@ -50,9 +51,9 @@ export function UserDeposits(props: { livemode: boolean }) {
               {rows.map((a) => (
                 <tr key={a.id} className="clickable" onClick={() => { setOpen(open === a.id ? null : a.id); }}>
                   <td><code>{a.customer_ref}</code>{a.retired_at && <span className="badge s-retired">retired</span>}</td>
-                  <td>{a.token}</td>
+                  <td><Asset token={a.token} symbol={a.symbol} /></td>
                   <td><code>{short(a.address)}</code></td>
-                  <td className="num">{a.received} {a.symbol}</td>
+                  <td className="num"><Amount value={a.received} token={a.token} symbol={a.symbol} tag={false} /></td>
                   <td>{a.custody_mode === 'custodial' ? 'custody on' : 'custody off'}</td>
                   <td>{fmtDate(a.created_at)}</td>
                 </tr>
@@ -73,10 +74,10 @@ function AccountDeposits(props: { id: string; livemode: boolean }) {
   const a = d.data;
   return (
     <div className="card">
-      <h3>{a.customer_ref} · {a.token}</h3>
+      <h3>{a.customer_ref} · <Asset token={a.token} symbol={a.symbol} /></h3>
       <dl className="details">
         <dt>Deposit address</dt><dd><CopyField value={a.address} /></dd>
-        <dt>Received</dt><dd>{a.received} {a.symbol}</dd>
+        <dt>Received</dt><dd><Amount value={a.received} token={a.token} symbol={a.symbol} /></dd>
       </dl>
       {a.deposits.length === 0 ? (
         <p className="muted">No deposits yet.</p>

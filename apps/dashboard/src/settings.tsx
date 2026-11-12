@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Amount } from './asset';
 import { api, totpHeader, type DerivationReport, type Xpub, type XpubChange, type XpubList, type XpubPreview } from './api';
 import { Alert, ConfirmButton, CopyField, ErrorBox, Field, Icon, SecretOnce, Skeleton, StatusBadge, Submit, TotpInput, fmtDate, toast, useAction, useLoad } from './ui';
 
@@ -68,7 +69,7 @@ function Addresses(props: { xpub: Xpub }) {
                     <td>{d.index}</td>
                     <td><code>{d.address}</code></td>
                     <td>{d.invoice_status ? <StatusBadge status={d.invoice_status} /> : '—'}</td>
-                    <td>{d.amount_received && d.amount_received !== '0' ? `${d.amount_received} ${d.symbol ?? ''}` : '—'}</td>
+                    <td>{d.amount_received && d.amount_received !== '0' && d.token ? <Amount value={d.amount_received} token={d.token} symbol={d.symbol} /> : '—'}</td>
                   </tr>
                 ))}
               </tbody>
@@ -98,7 +99,6 @@ export function Xpubs(props: { livemode: boolean; canManage: boolean; totp: bool
   const rows = list.data?.data ?? [];
   const pending = list.data?.pending_change ?? null;
   const active = rows.find((x) => x.status === 'active');
-  const mode = props.livemode ? 'live' : 'test';
   const needsProof = props.livemode;
   const reset = () => {
     setPreview(undefined);
@@ -126,11 +126,11 @@ export function Xpubs(props: { livemode: boolean; canManage: boolean; totp: bool
       {pending && <PendingChange change={pending} canManage={props.canManage} onChange={list.reload} />}
       {!list.data && !list.error && <Skeleton />}
       {scheduled && !pending && <Alert tone="success">Change scheduled.</Alert>}
-      {list.data && !active && <Alert tone="warning">No {mode} xpub yet: {mode} invoices cannot be created until you add one.</Alert>}
+      {list.data && !active && <Alert tone="warning">No xpub yet: invoices cannot be created until you add one.</Alert>}
       {active && (
         <>
           <dl className="details card">
-            <dt>Active {mode} xpub</dt><dd><code>{active.xpub_hint}</code></dd>
+            <dt>Active xpub</dt><dd><code>{active.xpub_hint}</code></dd>
             <dt>Fingerprint</dt><dd><code>{active.fingerprint}</code></dd>
             <dt>First address (0/0)</dt><dd><CopyField value={active.first_address} /></dd>
             <dt>Next index</dt><dd>{active.next_index} <small className="muted">(addresses used so far; unpaid invoices leave gaps)</small></dd>
@@ -173,10 +173,10 @@ export function Xpubs(props: { livemode: boolean; canManage: boolean; totp: bool
             });
           }}
         >
-          <h3>{active ? `Replace ${mode} xpub` : `Add ${mode} xpub`}</h3>
+          <h3>{active ? 'Replace xpub' : 'Add xpub'}</h3>
           <Alert tone="warning">
             Paste the <strong>account-level extended PUBLIC key</strong> (xpub/tpub, path m/44&apos;/60&apos;/0&apos;). Never paste a seed phrase or a private key
-            (xprv). Use different keys for test and live mode.
+            (xprv).
           </Alert>
           {!props.totp && <Alert tone="warning">Needs two-factor authentication. <a href="#/security">Enable it in Security.</a></Alert>}
           <Field label="Extended public key">
@@ -200,7 +200,7 @@ export function Xpubs(props: { livemode: boolean; canManage: boolean; totp: bool
               <label className="check">
                 <input type="checkbox" checked={confirmed} onChange={(e) => { setConfirmed(e.target.checked); }} /> These addresses match my wallet.
               </label>
-              <h4>Prove you control this wallet{needsProof ? '' : ' (optional in test mode)'}</h4>
+              <h4>Prove you control this wallet{needsProof ? '' : ' (optional)'}</h4>
               <p className="muted">
                 Sign this message with the wallet&apos;s first account, <code>{preview.ownership_challenge.address}</code>. Signing is free and sends no
                 transaction. The signature is valid for 15 minutes.

@@ -110,6 +110,13 @@ describe('signer config', () => {
   it('limits and cold addresses are validated; errors never echo values', () => {
     const c = loadSignerConfig({ ...base, SIGNER_LIMITS: '{"bsc:usdt":{"per_tx":"5000","per_day":"20000"}}', SIGNER_COLD_ADDRESSES: '0x' + 'A'.repeat(40) });
     expect(c.SIGNER_LIMITS['bsc:usdt']).toEqual({ per_tx: '5000', per_day: '20000' });
+    // Per-chain fee ceilings (D-112): either field may be left to the global default.
+    const g = loadSignerConfig({ ...base, SIGNER_GAS_LIMITS: '{"polygon":{"max_gas_price_gwei":"1000","max_gas_topup":"0.5"},"eth":{"max_gas_price_gwei":"50"}}' });
+    expect(g.SIGNER_GAS_LIMITS).toEqual({ polygon: { max_gas_price_gwei: '1000', max_gas_topup: '0.5' }, eth: { max_gas_price_gwei: '50' } });
+    expect(loadSignerConfig(base).SIGNER_GAS_LIMITS).toEqual({});
+    expect(() => loadSignerConfig({ ...base, SIGNER_GAS_LIMITS: '{"polygon":{"max_gas_price_gwei":"lots"}}' })).toThrow(/SIGNER_GAS_LIMITS: must be JSON like/);
+    expect(() => loadSignerConfig({ ...base, SIGNER_GAS_LIMITS: '{"polygon":{"gas":"1"}}' })).toThrow(/SIGNER_GAS_LIMITS/);
+    expect(() => loadSignerConfig({ ...base, SIGNER_GAS_LIMITS: 'nope' })).toThrow(/SIGNER_GAS_LIMITS/);
     expect(c.SIGNER_COLD_ADDRESSES).toEqual(['0x' + 'a'.repeat(40)]);
     expect(() => loadSignerConfig({ ...base, SIGNER_LIMITS: '{"bsc:usdt":{"per_tx":"-1"}}' })).toThrow(/SIGNER_LIMITS/);
     expect(() => loadSignerConfig({ ...base, SIGNER_COLD_ADDRESSES: 'not-an-address' })).toThrow(/SIGNER_COLD_ADDRESSES/);

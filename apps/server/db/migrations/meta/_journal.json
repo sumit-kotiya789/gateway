@@ -414,6 +414,34 @@
       "when": 1794233228896,
       "tag": "0058_merchant_whitelists_api_usage_security",
       "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "7",
+      "when": 1794285596038,
+      "tag": "0059_merchant_network",
+      "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "7",
+      "when": 1794285597513,
+      "tag": "0060_merchant_network_security",
+      "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "7",
+      "when": 1794287419567,
+      "tag": "0061_default_network",
+      "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "7",
+      "when": 1794288296234,
+      "tag": "0062_payout_wallets_security",
+      "breakpoints": true
     }
   ]
 }

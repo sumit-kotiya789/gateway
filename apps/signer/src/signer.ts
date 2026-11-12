@@ -74,8 +74,10 @@ const TOPUP_MARGIN_PCT = 20n;
 
 export function createSigner(deps: SignerDeps) {
   const { pool, keyring, config } = deps;
-  const maxGasPrice = parseUnits(config.SIGNER_MAX_GAS_PRICE_GWEI, 9);
-  const maxTopup = parseUnits(config.SIGNER_MAX_GAS_TOPUP, 18);
+  // Network fee ceilings per chain (D-112), the global ones for chains SIGNER_GAS_LIMITS does not list. EVM native coins
+  // all have 18 decimals.
+  const maxGasPrice = (chainId: string) => parseUnits(config.SIGNER_GAS_LIMITS[chainId]?.max_gas_price_gwei ?? config.SIGNER_MAX_GAS_PRICE_GWEI, 9);
+  const maxTopup = (chainId: string) => parseUnits(config.SIGNER_GAS_LIMITS[chainId]?.max_gas_topup ?? config.SIGNER_MAX_GAS_TOPUP, 18);
   const tokenGas = BigInt(config.SIGNER_TOKEN_TRANSFER_GAS);
 
   async function one<T extends pg.QueryResultRow>(q: string, args: unknown[], db: pg.Pool | pg.PoolClient = pool): Promise<T | undefined> {
@@ -88,7 +90,7 @@ export function createSigner(deps: SignerDeps) {
     const rpc = deps.rpcFor(chain);
     if ((await rpc.chainId()) !== chain.evm_chain_id) throw new Refusal('rpc_wrong_chain', 'RPC reports another chain id');
     const gasPrice = await rpc.gasPrice();
-    if (gasPrice > maxGasPrice) throw new Refusal('gas_price_too_high', 'network gas price is above SIGNER_MAX_GAS_PRICE_GWEI');
+    if (gasPrice > maxGasPrice(chain.id)) throw new Refusal('gas_price_too_high', `network gas price is above the ceiling for ${chain.id} (SIGNER_GAS_LIMITS or SIGNER_MAX_GAS_PRICE_GWEI)`);
     return { chain, rpc, gasPrice };
   }
 
@@ -165,7 +167,7 @@ export function createSigner(deps: SignerDeps) {
       const have = await rpc.nativeBalance(s.deposit_address);
       const value = need - have;
       if (value <= 0n) throw new Refusal('not_needed', 'deposit address already holds enough for its sweep');
-      if (value > maxTopup) throw new Refusal('over_limit', 'gas top-up above SIGNER_MAX_GAS_TOPUP');
+      if (value > maxTopup(chain.id)) throw new Refusal('over_limit', `gas top-up above the ceiling for ${chain.id} (SIGNER_GAS_LIMITS or SIGNER_MAX_GAS_TOPUP)`);
       return { chain, rpc, fromPath: gas.path, from: gas.address, txTo: s.deposit_address, recipient: s.deposit_address, value, gas: 21_000n, gasPrice, tokenId: null, amount: value };
     },
 
@@ -214,13 +216,12 @@ export function createSigner(deps: SignerDeps) {
       if (w.frozen) throw new Refusal('payouts_frozen', 'payouts are frozen for this merchant');
       const { chain, rpc, gasPrice } = await chainOf(w.chain_id);
       if (w.kind === 'merchant') {
-        // Still the merchant's current payout address (a newer one, or a cancellation, stops older requests).
-        const cur = await one<{ id: string; address: string }>(
-          `select id, address from payout_addresses where merchant_id = $1 and livemode = $2 and family = $3 and cancelled_at is null and activates_at <= now()
-           order by activates_at desc, created_at desc limit 1`,
-          [w.merchant_id, w.livemode, chain.family],
+        // Still one of the merchant's active payout wallets (D-114): removing it stops requests not sent yet.
+        const cur = await one<{ address: string }>(
+          `select address from payout_addresses where id = $1 and merchant_id = $2 and livemode = $3 and family = $4 and cancelled_at is null and activates_at <= now()`,
+          [w.payout_address_id, w.merchant_id, w.livemode, chain.family],
         );
-        if (cur?.id !== w.payout_address_id || !sameAddress(cur.address, w.to_address)) throw new Refusal('payout_address_changed', 'payout address is no longer current');
+        if (!cur || !sameAddress(cur.address, w.to_address)) throw new Refusal('payout_address_changed', 'payout address is no longer active');
       } else {
         // A payout to one of the merchant's users (D-100): never into a platform wallet, a deposit address or a blocked one.
         const d = await one<{ allowed: boolean }>('select payout_destination_allowed($1) as allowed', [w.to_address]);

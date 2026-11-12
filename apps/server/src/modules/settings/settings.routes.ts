@@ -1,13 +1,14 @@
-// Merchant settings managed from the dashboard (M10): which sites may embed the hosted checkout (widget), and how the
+// Merchant settings managed from the dashboard (M10): which sites may embed the hosted checkout (widget), how the
 // merchant receives payments: own xpub, a wallet address with per-invoice forwarders (D-097), or custody on: the
-// platform holds the funds and the merchant withdraws them (D-098). The merchant chooses, not an admin.
+// platform holds the funds and the merchant withdraws them (D-098), and which network it receives on (D-113). The
+// merchant chooses, not an admin.
 import { AppError } from '@gw/core';
-import { eq } from 'drizzle-orm';
+import { and, asc, eq } from 'drizzle-orm';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { audit } from '../../common/audit.js';
-import { withTenant } from '../../common/db.js';
-import { merchants } from '../../db/schema.js';
+import { withTenant, type Tx } from '../../common/db.js';
+import { chains, merchants } from '../../db/schema.js';
 import type { Deps } from '../../deps.js';
 import { authedUser, requirePermission, requireTotp, requireUser } from '../auth/guards.js';
 import { assertNothingInCustody } from '../custody/custody-mode.js';
@@ -22,6 +23,11 @@ export function originSchema(production: boolean) {
     .refine((o) => !URL.canParse(o) || new URL(o).protocol === 'https:' || (!production && new URL(o).protocol === 'http:'), production ? 'must be https' : 'must be http(s)');
 }
 
+/** Mainnets a merchant can receive live payments on now (enabled), for the network choice (D-113). */
+async function liveNetworks(tx: Tx): Promise<{ id: string; name: string }[]> {
+  return tx.select({ id: chains.id, name: chains.name }).from(chains).where(and(eq(chains.enabled, true), eq(chains.testnet, false))).orderBy(asc(chains.id));
+}
+
 export function settingsDashboardRoutes(deps: Deps): FastifyPluginAsyncZod {
   const Origins = z.strictObject({ widget_origins: z.array(originSchema(deps.config.NODE_ENV === 'production')).max(10) });
   return async (app) => {
@@ -29,12 +35,50 @@ export function settingsDashboardRoutes(deps: Deps): FastifyPluginAsyncZod {
 
     app.get('/', { preHandler: requirePermission('account:read') }, async (req) => {
       const user = authedUser(req);
-      const [m] = await withTenant(deps.db, user.merchantId, (tx) =>
-        tx.select({ origins: merchants.widgetOrigins, mode: merchants.custodyMode }).from(merchants).where(eq(merchants.id, user.merchantId)),
-      );
+      const { m, nets } = await withTenant(deps.db, user.merchantId, async (tx) => ({
+        m: (await tx.select({ origins: merchants.widgetOrigins, mode: merchants.custodyMode, network: merchants.allowedChainId }).from(merchants).where(eq(merchants.id, user.merchantId)))[0],
+        nets: await liveNetworks(tx),
+      }));
       if (!m) throw new AppError('not_found', 'merchant not found');
-      return { widget_origins: m.origins, receiving_mode: m.mode, forwarder_available: deps.config.FEATURE_FORWARDER, custodial_available: deps.config.FEATURE_CUSTODIAL };
+      return {
+        widget_origins: m.origins,
+        receiving_mode: m.mode,
+        forwarder_available: deps.config.FEATURE_FORWARDER,
+        custodial_available: deps.config.FEATURE_CUSTODIAL,
+        // D-113: the one mainnet live payments are received on (null = every enabled one), and the ones to choose from.
+        network: m.network,
+        networks: nets,
+      };
     });
+
+    /**
+     * Network (D-113), chosen by the merchant (owner or admin + 2FA): receive live payments on one mainnet only, or on
+     * every enabled one (null). From then on new live invoices, payment links and user deposit addresses on other chains
+     * are refused; invoices and deposit addresses that already exist keep being watched and credited, and withdrawals
+     * and payouts of funds already held are not limited. Test mode is never restricted.
+     */
+    app.put(
+      '/network',
+      {
+        preHandler: [requirePermission('settings:manage'), requireTotp(deps)],
+        schema: { body: z.strictObject({ network: z.string().min(1).max(64).nullable() }) },
+      },
+      async (req) => {
+        const user = authedUser(req);
+        const network = req.body.network;
+        return withTenant(deps.db, user.merchantId, async (tx) => {
+          if (network !== null && !(await liveNetworks(tx)).some((n) => n.id === network)) {
+            throw new AppError('validation_error', `${network} is not an enabled mainnet`, { field: 'network' });
+          }
+          const [before] = await tx.select({ network: merchants.allowedChainId }).from(merchants).where(eq(merchants.id, user.merchantId)).for('update');
+          if (!before) throw new AppError('not_found', 'merchant not found');
+          if (before.network === network) return { network };
+          await tx.update(merchants).set({ allowedChainId: network }).where(eq(merchants.id, user.merchantId));
+          await audit(tx, { actorType: 'merchant_user', actorId: user.id, merchantId: user.merchantId, action: 'settings.network', before: { network: before.network }, after: { network } }, req);
+          return { network };
+        });
+      },
+    );
 
     /**
      * Receiving mode, chosen by the merchant (owner + 2FA): `non_custodial_xpub` (own xpub, a derived address per

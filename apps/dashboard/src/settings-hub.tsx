@@ -2,6 +2,7 @@
 // the existing pages (security, team, payout wallet, widget) plus the whitelists (D-109).
 import type { ReactNode } from 'react';
 import { api, type Me, type WhitelistState } from './api';
+import { NetworkSettings } from './network';
 import { PayoutWallet } from './payout-wallet';
 import { Security } from './settings';
 import { Team } from './team';
@@ -29,6 +30,7 @@ export function SettingsHub(props: { section: string | undefined; me: Me; livemo
     { id: 'general', label: 'General', icon: 'store', group: 'Account', desc: 'Your account at a glance', show: true },
     { id: 'security', label: 'Security', icon: 'lock', group: 'Account', desc: 'Two-factor authentication and recovery codes', show: true },
     { id: 'team', label: 'Team', icon: 'users', group: 'Account', desc: 'Members, roles and invitations', show: true },
+    { id: 'network', label: 'Network', icon: 'coins', group: 'Account', desc: 'The chain your customers pay on', show: true },
     { id: 'whitelist-addresses', label: 'Whitelist addresses', icon: 'wallet', group: 'Funds security', desc: 'Where payouts may go', show: true },
     { id: 'whitelist-ips', label: 'Whitelist IPs', icon: 'globe', group: 'Funds security', desc: 'Where your secret keys work from', show: true },
     { id: 'payout-wallet', label: 'Payout wallet', icon: 'coins', group: 'Funds security', desc: 'How you receive payments', show: true },
@@ -54,6 +56,9 @@ export function SettingsHub(props: { section: string | undefined; me: Me; livemo
       break;
     case 'team':
       body = <Team me={props.me.user} totp={totp} />;
+      break;
+    case 'network':
+      body = <NetworkSettings canManage={owner || role === 'admin'} totp={totp} onChange={props.onChange} />;
       break;
     case 'whitelist-addresses':
       body = <WhitelistAddresses livemode={props.livemode} canManage={owner} totp={totp} />;

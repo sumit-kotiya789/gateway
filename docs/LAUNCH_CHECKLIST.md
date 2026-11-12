@@ -34,6 +34,7 @@ Every item needs an owner and a date before launch.
 - [ ] Seed KEK in the secret manager, delivered as `SIGNER_SEED_KEK_FILE` on tmpfs (no KMS, D-010); key ceremony performed and recorded; mnemonic backup offline
 - [ ] Signer on its own host: own DB login in `gw_signer`, mTLS certificates for signer and worker, `SIGNER_HMAC_SECRET` rotated from dev
 - [ ] `SIGNER_LIMITS` set per live token (per transaction, per 24 h) and reviewed; `SIGNER_MAX_GAS_PRICE_GWEI` / `SIGNER_MAX_GAS_TOPUP` reviewed
+- [ ] Ethereum / Polygon PoS (D-112), per chain turned on: RPC env set, `SIGNER_GAS_LIMITS` entry reviewed, gas wallet funded with ETH / POL, watchers restarted right after enabling
 - [ ] Cold wallet multisig set up, signers documented; address registered (`platform:register`) and in `SIGNER_COLD_ADDRESSES`
 - [ ] Gas wallet funded and a low-balance alert agreed; hot wallet cap set in `infra/prometheus/alerts.yml`
 - [ ] Hot wallet limits set per live token (admin console, D-105): cap and alert level agreed; `SIGNER_AUTO_TO_COLD` decided and documented; low-balance email received in a drill

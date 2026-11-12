@@ -1,6 +1,6 @@
 // Dashboard home (D-110): payments over time per token, the period against the one before it, status mix, the
 // payment funnel, recent invoices, API traffic and the account's security posture. One call, one mode. account:read.
-import { fromMinorUnits } from '@gw/core';
+import { fromMinorUnits, sumUnits } from '@gw/core';
 import { and, desc, eq, sql } from 'drizzle-orm';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -48,13 +48,19 @@ export function overviewRoutes(deps: Deps): FastifyPluginAsyncZod {
             const t = tokenId ? tok.get(tokenId) : undefined;
             return t && v ? fromMinorUnits(BigInt(v), t.decimals) : '0';
           };
+          // Keyed by symbol: one symbol on several chains (USDT on BSC, Ethereum, Polygon, D-112) adds up, never overwrites.
+          const addTo = (into: Record<string, string>, tokenId: string, v: string) => {
+            const sym = tok.get(tokenId)?.symbol ?? tokenId;
+            const prev = into[sym];
+            into[sym] = prev === undefined ? units(tokenId, v) : sumUnits([prev, units(tokenId, v)]);
+          };
           const byDay = new Map<string, { t: string; created: number; paid: number; volume: Record<string, string> }>();
           for (const r of daily) {
             const t = new Date(r.t).toISOString();
             const d = byDay.get(t) ?? { t, created: 0, paid: 0, volume: {} };
             d.created += r.created;
             d.paid += r.paid;
-            if (r.token_id && r.volume) d.volume[tok.get(r.token_id)?.symbol ?? r.token_id] = units(r.token_id, r.volume);
+            if (r.token_id && r.volume) addTo(d.volume, r.token_id, r.volume);
             byDay.set(t, d);
           }
 
@@ -70,13 +76,13 @@ export function overviewRoutes(deps: Deps): FastifyPluginAsyncZod {
             ).rows;
             const created = rows.reduce((s, r) => s + r.created, 0);
             const paid = rows.reduce((s, r) => s + r.paid, 0);
-            return {
-              created,
-              paid,
-              conversion: created > 0 ? paid / created : 0,
-              volume: Object.fromEntries(rows.filter((r) => r.volume).map((r) => [tok.get(r.token_id)?.symbol ?? r.token_id, units(r.token_id, r.volume)])),
-              fees: Object.fromEntries(rows.filter((r) => r.fees).map((r) => [tok.get(r.token_id)?.symbol ?? r.token_id, units(r.token_id, r.fees)])),
-            };
+            const volume: Record<string, string> = {};
+            const fees: Record<string, string> = {};
+            for (const r of rows) {
+              if (r.volume) addTo(volume, r.token_id, r.volume);
+              if (r.fees) addTo(fees, r.token_id, r.fees);
+            }
+            return { created, paid, conversion: created > 0 ? paid / created : 0, volume, fees };
           };
           const current = await period(from, to);
           const previous = await period(prevFrom, from);
@@ -115,6 +121,7 @@ export function overviewRoutes(deps: Deps): FastifyPluginAsyncZod {
             status: i.status,
             amount: units(i.tokenId, i.amount.toString()),
             amount_received: units(i.tokenId, i.received.toString()),
+            token: i.tokenId,
             symbol: tok.get(i.tokenId)?.symbol ?? i.tokenId,
             order_id: i.orderId,
             created_at: i.createdAt.toISOString(),

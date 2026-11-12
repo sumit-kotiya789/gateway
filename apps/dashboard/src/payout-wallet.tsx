@@ -46,10 +46,11 @@ export function PayoutWallet(props: { livemode: boolean; canManage: boolean; tot
       )}
       {s?.receiving_mode === 'non_custodial_forwarder' && (
         <>
-          <h3 className="section-title">Payout address ({props.livemode ? 'live' : 'test'})</h3>
+          <h3 className="section-title">Payout address</h3>
           <p className="muted">
             Every invoice gets its own deposit address. As soon as a payment is confirmed it is forwarded to this address automatically, minus the
-            platform fee, by a contract that can only pay you. Use an address you control on this network (MetaMask, Trust Wallet, a hardware wallet).
+            platform fee, by a contract that can only pay you. One address serves every network we support (BNB Smart Chain, Ethereum, Polygon): use a
+            wallet you control on all of them (MetaMask, Trust Wallet, a hardware wallet), not an exchange deposit address.
           </p>
           {!props.totp && <Alert tone="warning">Turn on two-factor authentication (Security) to set your payout address.</Alert>}
           <PayoutAddressSection

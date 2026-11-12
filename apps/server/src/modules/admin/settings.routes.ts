@@ -6,7 +6,7 @@ import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { audit } from '../../common/audit.js';
 import { withSystem } from '../../common/db.js';
-import { ATTENTION_STATUSES, adminSettings } from '../../db/schema.js';
+import { ATTENTION_STATUSES, adminSettings, chains } from '../../db/schema.js';
 import type { Deps } from '../../deps.js';
 import { ipAllowed, requireAdmin, requireAdminTotp, validIpEntry } from '../auth/guards.js';
 import { feeUnits } from './admin.routes.js';
@@ -29,6 +29,7 @@ const view = (s: AdminSettings, deps: Deps, requestIp: string) => ({
     fee_grace: s.merchantDefaults.feeGrace,
     payout_fee: s.merchantDefaults.payoutFee,
     underpay_tolerance_bps: s.merchantDefaults.underpayToleranceBps,
+    network: s.merchantDefaults.network,
   },
   whitelist_activation_hours: s.whitelistActivationHours,
   whitelist_disable_hours: s.whitelistDisableHours,
@@ -95,6 +96,8 @@ const Body = z
         fee_grace: feeUnits(100_000),
         payout_fee: feeUnits(1000),
         underpay_tolerance_bps: z.number().int().min(0).max(500),
+        // D-113: a mainnet id, or null for every enabled chain; left out = unchanged.
+        network: z.string().min(1).max(64).nullable().optional(),
       })
       .optional(),
     whitelist_activation_hours: z.number().int().min(1).max(168).optional(),
@@ -131,11 +134,22 @@ export function adminSettingsRoutes(deps: Deps): FastifyPluginAsyncZod {
           withdrawalTwoPersonMin: b.withdrawal_two_person_min === undefined ? before.withdrawalTwoPersonMin : b.withdrawal_two_person_min,
           signupEnabled: b.signup_enabled ?? before.signupEnabled,
           merchantDefaults: md
-            ? { feeBps: md.fee_bps, feeFixed: md.fee_fixed, feeGrace: md.fee_grace, payoutFee: md.payout_fee, underpayToleranceBps: md.underpay_tolerance_bps }
+            ? {
+                feeBps: md.fee_bps,
+                feeFixed: md.fee_fixed,
+                feeGrace: md.fee_grace,
+                payoutFee: md.payout_fee,
+                underpayToleranceBps: md.underpay_tolerance_bps,
+                network: md.network === undefined ? before.merchantDefaults.network : md.network,
+              }
             : before.merchantDefaults,
           whitelistActivationHours: b.whitelist_activation_hours ?? before.whitelistActivationHours,
           whitelistDisableHours: b.whitelist_disable_hours ?? before.whitelistDisableHours,
         };
+        if (next.merchantDefaults.network !== null && next.merchantDefaults.network !== before.merchantDefaults.network) {
+          const [c] = await tx.select({ testnet: chains.testnet }).from(chains).where(eq(chains.id, next.merchantDefaults.network));
+          if (!c || c.testnet) throw new AppError('validation_error', `merchant_defaults.network: ${next.merchantDefaults.network} is not a mainnet`);
+        }
         if (next.ipAllowlistEnabled) {
           if (next.ipAllowlist.length === 0) throw new AppError('validation_error', 'ip_allowlist: add at least one address before switching the allowlist on');
           // Never lock out the admin making the change: their own address must stay allowed.
@@ -156,6 +170,7 @@ export function adminSettingsRoutes(deps: Deps): FastifyPluginAsyncZod {
           defaultFeeGrace: next.merchantDefaults.feeGrace,
           defaultPayoutFee: next.merchantDefaults.payoutFee,
           defaultUnderpayToleranceBps: next.merchantDefaults.underpayToleranceBps,
+          defaultNetwork: next.merchantDefaults.network,
           whitelistActivationHours: next.whitelistActivationHours,
           whitelistDisableHours: next.whitelistDisableHours,
           updatedBy: adminId,

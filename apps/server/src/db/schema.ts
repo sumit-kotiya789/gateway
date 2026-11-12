@@ -58,6 +58,9 @@ export const merchants = pgTable(
     riskFlags: merchantRiskFlag('risk_flags').array().notNull().default(sql`'{}'`),
     // Sites allowed to embed the hosted checkout (widget, M10): exact origins. Empty = never framed.
     widgetOrigins: text('widget_origins').array().notNull().default(sql`'{}'`),
+    // The one mainnet this merchant receives live payments on (D-113), chosen by the merchant in the dashboard; null =
+    // every enabled chain. The database only allows a mainnet.
+    allowedChainId: text('allowed_chain_id').references((): AnyPgColumn => chains.id),
     createdAt: createdAt(),
   },
   (t) => [
@@ -1213,6 +1216,9 @@ export const adminSettings = pgTable(
     defaultFeeGrace: numeric('default_fee_grace', { precision: 20, scale: 6 }).notNull().default('0'),
     defaultPayoutFee: numeric('default_payout_fee', { precision: 20, scale: 6 }).notNull().default('0'),
     defaultUnderpayToleranceBps: integer('default_underpay_tolerance_bps').notNull().default(50),
+    // The network a new merchant receives live payments on (D-113): BNB Smart Chain unless an admin changes it; null =
+    // every enabled chain. No foreign key: migrations run before the registry is seeded. Signup checks the chain.
+    defaultNetwork: text('default_network').default('bsc'),
     // Merchant whitelists (D-109): a new live payout address is usable this many hours after it was added; switching a
     // whitelist off takes effect this many hours after the request.
     whitelistActivationHours: integer('whitelist_activation_hours').notNull().default(24),

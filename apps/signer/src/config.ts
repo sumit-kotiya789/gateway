@@ -8,6 +8,26 @@ const decimal = z.string().regex(/^\d+(\.\d+)?$/, 'a plain decimal');
 
 /** Per-token limits in token units (D-088). A token without limits cannot be withdrawn or moved to treasury. */
 const Limits = z.record(z.string().regex(/^[a-z0-9-]+:[a-z0-9-]+$/), z.strictObject({ per_tx: decimal, per_day: decimal }));
+/**
+ * Per-chain network fee ceilings (D-112): native coins are worth very different amounts (1 ETH, 1 BNB, 1 POL) and gas
+ * prices differ by orders of magnitude (Polygon runs at tens of gwei and more), so one global ceiling cannot fit every
+ * chain. A chain not listed uses SIGNER_MAX_GAS_PRICE_GWEI / SIGNER_MAX_GAS_TOPUP.
+ */
+const GasLimits = z.record(z.string().regex(/^[a-z0-9-]+$/), z.strictObject({ max_gas_price_gwei: decimal.optional(), max_gas_topup: decimal.optional() }));
+
+/** A JSON env var parsed with `shape`; the message shows the expected form, never the value. */
+const jsonOf = <T extends z.ZodType>(shape: T, example: string) =>
+  z
+    .string()
+    .default('{}')
+    .transform((s, ctx): z.infer<T> => {
+      try {
+        return shape.parse(JSON.parse(s));
+      } catch {
+        ctx.addIssue({ code: 'custom', message: `must be JSON like ${example}` });
+        return z.NEVER;
+      }
+    });
 
 const schema = z
   .object({
@@ -31,17 +51,7 @@ const schema = z
     SIGNER_TLS_CERT_FILE: z.string().optional(),
     SIGNER_TLS_KEY_FILE: z.string().optional(),
     SIGNER_TLS_CLIENT_CA_FILE: z.string().optional(),
-    SIGNER_LIMITS: z
-      .string()
-      .default('{}')
-      .transform((s, ctx) => {
-        try {
-          return Limits.parse(JSON.parse(s));
-        } catch {
-          ctx.addIssue({ code: 'custom', message: 'must be JSON like {"bsc:usdt":{"per_tx":"5000","per_day":"20000"}}' });
-          return z.NEVER;
-        }
-      }),
+    SIGNER_LIMITS: jsonOf(Limits, '{"bsc:usdt":{"per_tx":"5000","per_day":"20000"}}'),
     // Comma-separated cold wallet addresses treasury transfers may go to.
     SIGNER_COLD_ADDRESSES: z
       .string()
@@ -56,6 +66,7 @@ const schema = z
     // Network fee ceilings: refuse to sign above them (protects the gas wallet from a spiking or lying RPC).
     SIGNER_MAX_GAS_PRICE_GWEI: decimal.default('20'),
     SIGNER_MAX_GAS_TOPUP: decimal.default('0.005'), // native coin units per top-up
+    SIGNER_GAS_LIMITS: jsonOf(GasLimits, '{"polygon":{"max_gas_price_gwei":"1000","max_gas_topup":"0.5"}}'),
     SIGNER_TOKEN_TRANSFER_GAS: z.coerce.number().int().min(21_000).max(500_000).default(100_000),
     // Forwarder flushes (D-097): at most this many signed per 24 h, each at most this much gas (the gas wallet pays).
     SIGNER_MAX_FORWARDS_PER_DAY: z.coerce.number().int().min(1).max(1_000_000).default(10_000),

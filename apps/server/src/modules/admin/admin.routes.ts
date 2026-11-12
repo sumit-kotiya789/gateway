@@ -66,6 +66,8 @@ const merchantView = (m: MerchantRow) => ({
   payout_fee: units(m.payoutFee),
   underpay_tolerance_bps: m.underpayToleranceBps,
   risk_flags: m.riskFlags,
+  // The one mainnet this merchant receives live payments on (D-113, the merchant's choice); null = every enabled chain.
+  network: m.allowedChainId,
   created_at: m.createdAt.toISOString(),
 });
 

@@ -189,7 +189,7 @@ export async function fundCustodialMerchant(
   const { app, clock, deps, owner, custody } = ctx;
   const chainOf = (l: boolean) => chain ?? (l ? 'evm-mainsim' : 'evm-local');
   const tokenOf = (l: boolean) => `${chainOf(l)}:usdt`;
-  const m = await merchantWithKey(app, clock, owner, { livemode, scopes: ['read', 'invoices:write', 'withdrawals:write'] });
+  const m = await merchantWithKey(app, clock, owner, { livemode, scopes: ['read', 'invoices:write'] });
   await owner.query("update merchants set custody_mode = 'custodial', fee_bps = 0 where id = $1", [m.merchantId]);
   const inv = (await m.api('POST', '/v1/invoices', { amount: '1', token: tokenOf(livemode) })).json<{ id: string; deposit_address: string }>();
   const r = await owner.query<{ id: string }>(

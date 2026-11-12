@@ -26,6 +26,19 @@ Each procedure is written when the component it covers ships. Headings are fixed
   on-chain `decimals()` must equal config. Non-zero exit = do not start watchers; fix config or RPC first.
 - Disable a token or chain: admin console, Kill switches (reason required). Immediate for new invoices; restart the
   watchers to stop scanning a disabled chain. Re-enabling needs a superadmin + TOTP. Never delete registry rows.
+- Turn on Ethereum or Polygon PoS (D-112; seeded off):
+  1. Set `ETH_RPC_URL` / `POLYGON_RPC_URL` (address-filtered `eth_getLogs` required) in the api, worker, watcher and
+     signer environments. Custodial: add the chain to `SIGNER_GAS_LIMITS` (Polygon gas is far above the global
+     20 gwei default, so without it every Polygon sweep is refused with `gas_price_too_high`).
+  2. Custodial: fund the gas wallet with ETH / POL (same 0x address as on BSC) and the hot wallet with some for
+     withdrawals. Forwarder mode needs a ForwarderFactory on that chain (`ETH_FORWARDER_FACTORY` /
+     `POLYGON_FORWARDER_FACTORY`); without one, wallet-address merchants cannot use the chain.
+  3. `pnpm db:seed` (new rows), then enable the chain (superadmin + TOTP), then `pnpm chains:verify`.
+  4. Restart the watchers right away: they pick up chains at boot only, and a chain scanned for the first time starts
+     `reorgDepth` blocks back (Ethereum 64 blocks, about 13 min; Polygon 128 blocks, about 4 min). A payment made
+     earlier than that before the restart would never be seen.
+  5. Merchants on prepaid fees (D-076) need a top-up (or grace) in `eth:usdt` / `polygon:usdt` too: fee balances are
+     per token.
 
 ## Bootstrap the first admin
 `pnpm admin:create <email> superadmin` (compose: `docker compose run --rm api node cli/admin-create.cjs <email> superadmin`).
@@ -216,7 +229,8 @@ Setup (testnet first; mainnet only after the contract audit):
 Operations:
 - Admin console > Custody: forwards in flight / failed (24 h) and the recent forwards. Reconciliation flags
   `unforwarded` (paid more than 1 h ago, not forwarded) and `forward_fee_journal`.
-- `needs_gas` refusals: top up the gas wallet. `gas_price_too_high`: wait or raise `SIGNER_MAX_GAS_PRICE_GWEI`.
+- `needs_gas` refusals: top up the gas wallet. `gas_price_too_high`: wait or raise the chain's ceiling
+  (`SIGNER_GAS_LIMITS`, else `SIGNER_MAX_GAS_PRICE_GWEI`).
 - A failed forward is followed by a new one at the next planning round; a sent one is rebroadcast with the same bytes.
 - `factory_mismatch`, `not_our_address`, `params_mismatch`: data or factory tampering suspected. Pause the signer and
   investigate before anything else.
@@ -224,8 +238,10 @@ Operations:
 ## Stuck transaction (M7)
 - Sweeps: `select id, status, attempts, last_error, gas_tx_hash, tx_hash, next_attempt_at from sweeps where status in ('pending','gas_sent','sweep_sent') order by created_at;`
   - `last_error = paused`: the signer is paused (env `SIGNER_PAUSED` or admin kill switch). Expected during a drill.
-  - `gas_price_too_high`: network fees are above `SIGNER_MAX_GAS_PRICE_GWEI`; it resumes when they drop.
-  - `needs_gas` after a top-up was mined: fees rose since; wait, or raise `SIGNER_MAX_GAS_TOPUP` carefully.
+  - `gas_price_too_high`: network fees are above the chain's ceiling (`SIGNER_GAS_LIMITS`, else
+    `SIGNER_MAX_GAS_PRICE_GWEI`); it resumes when they drop.
+  - `needs_gas` after a top-up was mined: fees rose since; wait, or raise the chain's `max_gas_topup` in
+    `SIGNER_GAS_LIMITS` (else `SIGNER_MAX_GAS_TOPUP`) carefully.
   - Gas wallet empty: top-ups fail at broadcast (`insufficient funds` in the worker log). Fund the gas wallet.
   - `gas_sent`/`sweep_sent` for long: the worker rebroadcasts the same signed bytes every 15 s. If the RPC dropped
     it for a too-low fee, it stays stuck: a replacement at the same nonce is a manual, two-person operation.

@@ -213,8 +213,7 @@ export function Api() {
             <tbody>
               <tr><td><code>read</code></td><td>Every GET on the merchant API.</td></tr>
               <tr><td><code>invoices:write</code></td><td>Deposit accounts, invoices, payment links, sub-merchants.</td></tr>
-              <tr><td><code>payouts:write</code></td><td>Payouts to your users.</td></tr>
-              <tr><td><code>withdrawals:write</code></td><td>Withdrawals to your payout address.</td></tr>
+              <tr><td><code>payouts:write</code></td><td>Payouts to your users, at any address. (Withdrawing your own balance is dashboard-only.)</td></tr>
             </tbody>
           </table>
         </div>
@@ -227,7 +226,7 @@ export function Api() {
 
       <Sec id="amounts" title="Amounts">
         <p>Amounts are <strong>decimal strings in token units</strong>, never JSON numbers: <code>"25.5"</code>, not <code>25.5</code>. More decimals than the token supports are rejected (<code>invalid_amount</code>), never rounded. Responses use canonical form without trailing zeros: <code>"25.00"</code> comes back as <code>"25"</code>.</p>
-        <Callout kind="info">USDT on BNB Smart Chain has <strong>18 decimals</strong>. Do maths with integers or a decimal library, not floats.</Callout>
+        <Callout kind="info">USDT has <strong>18 decimals</strong> on BNB Smart Chain and <strong>6</strong> on Ethereum and Polygon PoS: read <code>decimals</code> from <code>GET /v1/tokens</code>. Do maths with integers or a decimal library, not floats.</Callout>
       </Sec>
 
       <Sec id="errors" title="Errors">

@@ -90,7 +90,7 @@ export type Role = 'owner' | 'admin' | 'developer' | 'finance' | 'read_only';
 
 export interface Me {
   user: { id: string; email: string; email_verified: boolean; role: Role; totp_enabled: boolean; session_mfa: boolean };
-  merchant: { id: string; name: string; status: string; custody_mode: string; withdrawals_enabled: boolean };
+  merchant: { id: string; name: string; status: string; custody_mode: string; withdrawals_enabled: boolean; network: string | null };
   api_origin: string;
 }
 
@@ -125,6 +125,10 @@ export interface MerchantSettings {
   forwarder_available: boolean;
   /** Custody is on for this platform: the merchant may choose to have it hold their funds (D-098). */
   custodial_available: boolean;
+  /** The one mainnet live payments are received on (D-113); null = every enabled one. */
+  network: string | null;
+  /** Enabled mainnets to choose from. */
+  networks: { id: string; name: string }[];
 }
 
 export interface Page<T> {
@@ -152,7 +156,8 @@ export interface PayoutAddress {
   livemode: boolean;
   address: string;
   label: string | null;
-  status: 'current' | 'pending' | 'superseded' | 'cancelled';
+  /** current: newest active (forwarders, default for withdrawals); active: older, still usable for a self withdrawal (D-114). */
+  status: 'current' | 'active' | 'pending' | 'cancelled';
   activates_at: string;
   created_at: string;
 }
@@ -277,7 +282,7 @@ export interface DerivationReport {
   next_index: number;
   highest_used_index: number | null;
   wallet_gap_limit: number;
-  data: { index: number; address: string; path: string; chain: string; invoice_id: string | null; invoice_status: string | null; amount_received: string | null; symbol: string | null }[];
+  data: { index: number; address: string; path: string; chain: string; invoice_id: string | null; invoice_status: string | null; amount_received: string | null; token: string | null; symbol: string | null }[];
 }
 
 /** Dashboard home (D-110). Amounts in token units, per token symbol. */
@@ -291,7 +296,7 @@ export interface Overview {
   funnel: { created: number; seen: number; paid: number; settled: number };
   open: number;
   attention: number;
-  recent: { id: string; status: string; amount: string; amount_received: string; symbol: string; order_id: string | null; created_at: string }[];
+  recent: { id: string; status: string; amount: string; amount_received: string; token: string; symbol: string; order_id: string | null; created_at: string }[];
   api: { t: string; requests: number; errors: number }[];
   security: { totp: boolean; email_verified: boolean; team_members: number; team_with_2fa: number; address_whitelist: boolean; ip_whitelist: boolean; api_keys: number; webhooks: number };
 }

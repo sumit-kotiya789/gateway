@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { homeTabs } from '../content/snippets';
 import { DEMO, SIGNUP, href } from '../router';
 import { HeroCanvas } from '../three/HeroCanvas';
-import { Faq, PseudoQr, SectionHead, type Qa } from '../ui/bits';
+import { Faq, Networks, PseudoQr, SectionHead, UsdtMark, type Qa } from '../ui/bits';
 import { CodeWindow } from '../ui/Code';
 import { prefersReducedMotion, useCountUpText, useInView, useTicker, useVisible } from '../ui/effects';
 import {
@@ -65,7 +65,7 @@ function Hero() {
             </a>
           </div>
           <ul className="hero-meta">
-            <li><ICheck /> USDT (BEP-20) on BNB Smart Chain</li>
+            <li><UsdtMark /> USDT on <Networks /></li>
             <li><ICheck /> Free test mode on BSC testnet</li>
             <li><ICheck /> No monthly fee</li>
           </ul>
@@ -594,9 +594,9 @@ function LiveFeed() {
 /* ---------------- FAQ + CTA ---------------- */
 
 const FAQ: Qa[] = [
-  { q: 'Which chains and tokens are supported?', a: 'USDT (BEP-20) on BNB Smart Chain. Test mode runs on BSC testnet with a test token. Chains and tokens are registry entries on our side, so adding one does not change your integration: you pass a different `token` id.' },
+  { q: 'Which chains and tokens are supported?', a: 'USDT on BNB Smart Chain (BEP-20, `bsc:usdt`), Ethereum (ERC-20, `eth:usdt`) and Polygon PoS (`polygon:usdt`). Test mode runs on BSC testnet with a test token. Chains and tokens are registry entries on our side, so adding one does not change your integration: you pass a different `token` id.' },
   { q: 'Do I have to let you hold my users’ funds?', a: 'No. With custody off, funds go straight to your own wallet: either through a forwarder contract that can only pay your wallet (minus the fee), or to addresses derived from your own extended public key. Custody on is optional and is what enables payouts by API.' },
-  { q: 'How fast is a deposit credited?', a: 'After 15 confirmations on BNB Smart Chain for typical amounts, and only once the block is final. Larger deposits wait longer: 30 confirmations from 10,000 USDT and 60 from 100,000 USDT.' },
+  { q: 'How fast is a deposit credited?', a: 'Only once the block is final on its network, and after a minimum number of confirmations: 15 on BNB Smart Chain (about 15 seconds), 12 on Ethereum plus finality (about 15 minutes), 64 on Polygon PoS (about 2 minutes). Larger deposits wait longer, from 10,000 and from 100,000 USDT.' },
   { q: 'What if a user sends the wrong amount?', a: 'Deposits to a permanent address accept any amount: each transfer is credited as sent. Invoices with a fixed price track `underpaid` and `overpaid`; with custody on, an invoice still underpaid at its deadline closes as `partially_paid` and what arrived is credited.' },
   { q: 'What happens when my webhook endpoint is down?', a: 'Deliveries are retried 12 times with backoff (1 m, 5 m, 30 m, 2 h, 5 h, then every 10 h). You can also list every event with `GET /v1/events` and resend any delivery from the dashboard.' },
   { q: 'How are payouts protected?', a: 'Your one-time and daily limits are checked in the app, the database and the signer. Payouts never go to a gateway or blocked address, and the signer re-checks every transaction against the ledger before signing.' },
