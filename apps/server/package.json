@@ -29,7 +29,7 @@
     "@gw/networks": "workspace:*",
     "bullmq": "6.5.3",
     "drizzle-orm": "0.45.4",
-    "fastify": "5.12.7",
+    "fastify": "5.12.8",
     "fastify-type-provider-zod": "7.0.0",
     "hash-wasm": "4.12.0",
     "ioredis": "6.0.0",
